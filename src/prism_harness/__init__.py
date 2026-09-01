@@ -23,6 +23,7 @@ from prism_harness.runtime import (
     record_approval,
 )
 from prism_harness.session import Participant, Session
+from prism_harness.skills import SkillRegistry
 from prism_harness.stores.base import Durability, SessionStore
 from prism_harness.stores.file import FileSessionStore
 from prism_harness.stores.manager import (
@@ -32,6 +33,7 @@ from prism_harness.stores.manager import (
     StoreFactory,
 )
 from prism_harness.stores.memory import MemorySessionStore
+from prism_harness.subagent_runner import SubagentResult, SubagentRunner, SubagentTool
 from prism_harness.subagents import (
     MAX_DEPTH,
     RunBudget,
@@ -91,8 +93,12 @@ __all__ = [
     "Session",
     "SessionStore",
     "SessionStoreManager",
+    "SkillRegistry",
     "StoreFactory",
     "Subagent",
+    "SubagentResult",
+    "SubagentRunner",
+    "SubagentTool",
     "Thread",
     "ThreadMessage",
     "ToolAuthorizer",

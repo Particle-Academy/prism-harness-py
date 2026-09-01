@@ -40,6 +40,8 @@ class ErrorCode(str, Enum):
     UNSAFE_AUTHORIZATION_CONFIGURATION = "unsafe_authorization_configuration"
     #: A tool call was refused by the call-time policy.
     CALL_NOT_AUTHORIZED = "call_not_authorized"
+    #: A skill file was asked for that would resolve outside its own skill.
+    SKILL_PATH_REFUSED = "skill_path_refused"
 
 
 class HarnessError(Exception):
@@ -145,6 +147,16 @@ class HarnessError(Exception):
             ErrorCode.CALL_NOT_AUTHORIZED,
             f"This call to [{tool}] was refused by the tool authorization policy.",
         )
+
+    @classmethod
+    def skill_path_refused(cls, detail: str) -> HarnessError:
+        """A skill name or path that would leave the skill directory.
+
+        Refused rather than sanitised. Silently rewriting a traversal to
+        something safe teaches a caller -- or a model -- that the request was
+        fine.
+        """
+        return cls(ErrorCode.SKILL_PATH_REFUSED, f"Refused to read a skill file: {detail}.")
 
     @classmethod
     def no_agent_runtime(cls, action: str) -> HarnessError:

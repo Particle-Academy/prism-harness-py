@@ -126,6 +126,15 @@ def test_a_subagent_defaults_its_mode_to_its_own_name() -> None:
 # -- RunBudget ---------------------------------------------------------------
 
 
+def _headroom(budget: RunBudget, ledger: RunLedger) -> int:
+    """A child budget is a TREE-ABSOLUTE ceiling, so its real headroom is the
+    ceiling minus what the tree has already spent. Expressing it as "remaining"
+    and comparing against a cumulative ledger is the reference's bug -- see
+    ``nested_within``.
+    """
+    return budget.max_steps - ledger.steps
+
+
 def test_budgets_nest_rather_than_reset() -> None:
     # A parent limited to 8 steps that may spawn subagents each entitled to a
     # fresh 8 has no bound at all -- it has a bound per node in a tree whose
@@ -138,27 +147,51 @@ def test_budgets_nest_rather_than_reset() -> None:
 
     child = RunBudget(8, 1.0).nested_within(parent, ledger)
 
-    assert child.max_steps == 2
-    assert child.max_cost_usd == pytest.approx(0.25)
+    assert _headroom(child, ledger) == 2
+    assert child.max_steps <= parent.max_steps
+    assert child.max_cost_usd == pytest.approx(1.0)
 
 
-def test_a_child_may_ask_for_less_than_remains() -> None:
-    child = RunBudget(2).nested_within(RunBudget(8), RunLedger.start("root"))
+def test_an_unspent_parent_gives_a_child_exactly_what_it_declared() -> None:
+    # The case the reference gets right, kept so the fix cannot regress it.
+    ledger = RunLedger.start("root")
+    child = RunBudget(2).nested_within(RunBudget(8), ledger)
 
-    assert child.max_steps == 2
+    assert _headroom(child, ledger) == 2
+
+
+def test_a_nearly_spent_parent_gives_a_child_exactly_what_is_left() -> None:
+    # The case the reference gets wrong: it would hand this child zero steps
+    # while the tree still had one.
+    ledger = RunLedger.start("root")
+    ledger.record_steps(7)
+
+    child = RunBudget(2).nested_within(RunBudget(8), ledger)
+
+    assert _headroom(child, ledger) == 1
+    assert ledger.exhaustion(child) is None
 
 
 def test_a_child_may_never_ask_for_more_than_remains() -> None:
     ledger = RunLedger.start("root")
     ledger.record_steps(8)
 
-    assert RunBudget(99).nested_within(RunBudget(8), ledger).max_steps == 0
+    child = RunBudget(99).nested_within(RunBudget(8), ledger)
+
+    assert _headroom(child, ledger) == 0
+    assert "step budget exhausted" in (ledger.exhaustion(child) or "")
 
 
 def test_a_parent_cap_reaches_a_child_that_declared_none() -> None:
     child = RunBudget(4).nested_within(RunBudget(8, 2.0), RunLedger.start("r"))
 
     assert child.max_cost_usd == pytest.approx(2.0)
+
+
+def test_a_child_cost_cap_tighter_than_its_parent_is_kept() -> None:
+    child = RunBudget(4, 0.25).nested_within(RunBudget(8, 2.0), RunLedger.start("root"))
+
+    assert child.max_cost_usd == pytest.approx(0.25)
 
 
 # -- RunLedger ---------------------------------------------------------------
