@@ -12,6 +12,16 @@ from prism_harness.events import (
 )
 from prism_harness.harness import PendingSession, PrismHarness
 from prism_harness.modes import AgentMode, ModeRegistry
+from prism_harness.runtime import (
+    AgentResponse,
+    AgentRuntime,
+    LlmClient,
+    LlmRequest,
+    LlmResponse,
+    LlmToolCall,
+    PendingApproval,
+    record_approval,
+)
 from prism_harness.session import Participant, Session
 from prism_harness.stores.base import Durability, SessionStore
 from prism_harness.stores.file import FileSessionStore
@@ -47,6 +57,8 @@ __all__ = [
     "SLOT_DURABLE",
     "SLOT_EPHEMERAL",
     "AgentMode",
+    "AgentResponse",
+    "AgentRuntime",
     "AuthorizedTool",
     "CallPolicy",
     "DoctorFinding",
@@ -59,10 +71,15 @@ __all__ = [
     "HarnessEvents",
     "HarnessListener",
     "HarnessTool",
+    "LlmClient",
+    "LlmRequest",
+    "LlmResponse",
+    "LlmToolCall",
     "MemorySessionStore",
     "ModeRegistry",
     "OfferPolicy",
     "Participant",
+    "PendingApproval",
     "PendingSession",
     "PrismHarness",
     "RunBudget",
@@ -83,5 +100,6 @@ __all__ = [
     "ToolProvider",
     "ToolRegistry",
     "diagnose",
+    "record_approval",
     "subagent_from_config",
 ]
