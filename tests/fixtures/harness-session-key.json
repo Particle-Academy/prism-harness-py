@@ -1,0 +1,154 @@
+{
+  "suite": "harness-session-key",
+  "schema_version": 1,
+  "corpus_version": "0.1.0",
+  "generated_by": "prism-parity:tools/generate-session-keys.php for php; the ports' own runners for ts and py. Every key is execution output.",
+  "pins_note": "A session key is an ADDRESS. It is what lets a PHP application and a TypeScript or Python agent resolve the same conversation, and it is the string a store is keyed by. If it drifts, nothing errors: each language happily reads and writes its own key, and the two simply stop seeing each other's turns. There is no failure mode louder than a conversation that appears empty.",
+  "cases": [
+    {
+      "id": "key-0001",
+      "title": "the ordinary session",
+      "participant": {
+        "type": "App\\Models\\User",
+        "id": "7"
+      },
+      "scope": "default",
+      "key": {
+        "php": "session:23bd5c8949f6:7:default",
+        "ts": "session:23bd5c8949f6:7:default",
+        "py": "session:23bd5c8949f6:7:default"
+      },
+      "notes": "The control. A Laravel morph class, a numeric id, the default scope — what the overwhelming majority of real sessions look like.",
+      "agrees": true
+    },
+    {
+      "id": "key-0002",
+      "title": "a non-default scope",
+      "participant": {
+        "type": "App\\Models\\User",
+        "id": "7"
+      },
+      "scope": "probe",
+      "key": {
+        "php": "session:23bd5c8949f6:7:probe",
+        "ts": "session:23bd5c8949f6:7:probe",
+        "py": "session:23bd5c8949f6:7:probe"
+      },
+      "notes": "Scope is the last segment and is not hashed. Pins that two scopes for one participant are different addresses — which is the whole point of scope.",
+      "agrees": true
+    },
+    {
+      "id": "key-0003",
+      "title": "a different participant id",
+      "participant": {
+        "type": "App\\Models\\User",
+        "id": "8"
+      },
+      "scope": "default",
+      "key": {
+        "php": "session:23bd5c8949f6:8:default",
+        "ts": "session:23bd5c8949f6:8:default",
+        "py": "session:23bd5c8949f6:8:default"
+      },
+      "notes": "The id is not hashed either. If it were, this suite could not tell an id collision from a type collision.",
+      "agrees": true
+    },
+    {
+      "id": "key-0004",
+      "title": "a different participant type",
+      "participant": {
+        "type": "App\\Models\\Team",
+        "id": "7"
+      },
+      "scope": "default",
+      "key": {
+        "php": "session:8b2c42dcd03b:7:default",
+        "ts": "session:8b2c42dcd03b:7:default",
+        "py": "session:8b2c42dcd03b:7:default"
+      },
+      "notes": "Same id, different type. User 7 and Team 7 must not share a conversation, and the hashed type segment is the only thing keeping them apart.",
+      "agrees": true
+    },
+    {
+      "id": "key-0005",
+      "title": "a short morph alias rather than a class name",
+      "participant": {
+        "type": "user",
+        "id": "7"
+      },
+      "scope": "default",
+      "key": {
+        "php": "session:12dea96fec20:7:default",
+        "ts": "session:12dea96fec20:7:default",
+        "py": "session:12dea96fec20:7:default"
+      },
+      "notes": "Laravel's `enforceMorphMap` makes this the common production shape, not an edge case. It also proves the hash is over the type STRING as given — a language that normalised or namespaced it would diverge here and nowhere else.",
+      "agrees": true
+    },
+    {
+      "id": "key-0006",
+      "title": "a zero id",
+      "participant": {
+        "type": "App\\Models\\User",
+        "id": "0"
+      },
+      "scope": "default",
+      "key": {
+        "php": "session:23bd5c8949f6:0:default",
+        "ts": "session:23bd5c8949f6:0:default",
+        "py": "session:23bd5c8949f6:0:default"
+      },
+      "notes": "Falsy in every language involved. A truthiness check anywhere on the id path turns this into a different address, or an empty segment.",
+      "agrees": true
+    },
+    {
+      "id": "key-0007",
+      "title": "a ULID primary key",
+      "participant": {
+        "type": "App\\Models\\User",
+        "id": "01HQ8ZK3M4N5P6Q7R8S9T0V1W2"
+      },
+      "scope": "default",
+      "key": {
+        "php": "session:23bd5c8949f6:01HQ8ZK3M4N5P6Q7R8S9T0V1W2:default",
+        "ts": "session:23bd5c8949f6:01HQ8ZK3M4N5P6Q7R8S9T0V1W2:default",
+        "py": "session:23bd5c8949f6:01HQ8ZK3M4N5P6Q7R8S9T0V1W2:default"
+      },
+      "notes": "Not every application has integer keys. Pins that a long non-numeric id is carried through whole rather than cast.",
+      "agrees": true
+    },
+    {
+      "id": "key-0008",
+      "title": "a non-ASCII type name",
+      "participant": {
+        "type": "Ünïcödé\\Mödel",
+        "id": "7"
+      },
+      "scope": "default",
+      "key": {
+        "php": "session:32b953d38c32:7:default",
+        "ts": "session:32b953d38c32:7:default",
+        "py": "session:32b953d38c32:7:default"
+      },
+      "notes": "sha1 is over BYTES, so this row pins that all three languages hash the same UTF-8 encoding of the same string. A language hashing UTF-16 code units, or one that latin-1'd it first, produces a different digest from identical-looking source.",
+      "agrees": true
+    },
+    {
+      "id": "key-0009",
+      "title": "a scope containing the segment separator",
+      "participant": {
+        "type": "App\\Models\\User",
+        "id": "7"
+      },
+      "scope": "a:b",
+      "key": {
+        "php": "session:23bd5c8949f6:7:a:b",
+        "ts": "session:23bd5c8949f6:7:a:b",
+        "py": "session:23bd5c8949f6:7:a:b"
+      },
+      "notes": "Colons are the separator and nothing escapes them. Recorded because it is the shape that makes the key AMBIGUOUS to parse — not a bug today, since nothing parses a key back into parts, but the row that would go red the moment something tried.",
+      "agrees": true
+    }
+  ],
+  "divergence_note": "Every row agrees, on the first run, with no fix needed -- the only satellite suite so far where that was true. Worth stating because it is the most consequential address in the ecosystem: if a session key drifted, nothing would error. Each language would read and write its own key perfectly happily, and a PHP application and a TypeScript agent would simply stop seeing each other's turns. A conversation that appears empty has no louder failure mode behind it."
+}
