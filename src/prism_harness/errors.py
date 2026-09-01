@@ -32,6 +32,14 @@ class ErrorCode(str, Enum):
     UNMAPPABLE_CONTENT = "unmappable_content"
     #: A session was asked to do something needing a runtime it does not have.
     NO_AGENT_RUNTIME = "no_agent_runtime"
+    #: A mode was asked for that the application has not configured.
+    MODE_NOT_CONFIGURED = "mode_not_configured"
+    #: A configured mode is malformed, or names something that does not exist.
+    MODE_MALFORMED = "mode_malformed"
+    #: A tool policy is defined but the authorizer that would consult it is off.
+    UNSAFE_AUTHORIZATION_CONFIGURATION = "unsafe_authorization_configuration"
+    #: A tool call was refused by the call-time policy.
+    CALL_NOT_AUTHORIZED = "call_not_authorized"
 
 
 class HarnessError(Exception):
@@ -99,6 +107,43 @@ class HarnessError(Exception):
     def unmappable_content(cls, description: str) -> HarnessError:
         return cls(
             ErrorCode.UNMAPPABLE_CONTENT, f"Could not rebuild stored content: {description}."
+        )
+
+    @classmethod
+    def mode_not_configured(cls, name: str) -> HarnessError:
+        return cls(ErrorCode.MODE_NOT_CONFIGURED, f"Harness mode [{name}] is not configured.")
+
+    @classmethod
+    def mode_malformed(cls, name: str, detail: str) -> HarnessError:
+        return cls(ErrorCode.MODE_MALFORMED, f"Harness mode [{name}] is malformed: {detail}.")
+
+    @classmethod
+    def policy_defined_but_disabled(cls) -> HarnessError:
+        """Both at once is the one configuration not to leave in place.
+
+        A defined policy that is never consulted looks like a control to every
+        reader and is not one -- every registered tool is offered to every run
+        while the code says otherwise.
+        """
+        return cls(
+            ErrorCode.UNSAFE_AUTHORIZATION_CONFIGURATION,
+            "A tool authorization policy was supplied, but the authorizer is disabled, so that "
+            "policy is never consulted and every registered tool is offered to every run. Either "
+            "enable the authorizer, or remove the policy so nothing suggests tool access is being "
+            "restricted.",
+        )
+
+    @classmethod
+    def call_not_authorized(cls, tool: str) -> HarnessError:
+        """Raised rather than returned as a tool result.
+
+        A refusal handed back as a result reads to the model as a failure it
+        might retry differently, and a denied action being retried is the
+        opposite of what a guard is for.
+        """
+        return cls(
+            ErrorCode.CALL_NOT_AUTHORIZED,
+            f"This call to [{tool}] was refused by the tool authorization policy.",
         )
 
     @classmethod
