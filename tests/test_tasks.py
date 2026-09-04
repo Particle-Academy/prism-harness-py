@@ -18,7 +18,7 @@ import json
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -145,7 +145,7 @@ def test_the_store_source_satisfies_the_source_contract() -> None:
     # And the whole contract round-trips off nothing but an id.
     claimed = source.claim("worker-1")
     assert claimed is not None
-    source.release(source.find("t-1") or claimed, TaskOutcome.DONE)
+    source.release(source.find("t-1") or claimed, "worker-1", TaskOutcome.DONE)
 
     settled = source.find("t-1")
     assert settled is not None
@@ -368,7 +368,7 @@ def test_release_records_the_outcome_and_clears_the_lease() -> None:
     claimed = source.claim("worker-1")
     assert claimed is not None
 
-    source.release(claimed, TaskOutcome.DONE)
+    source.release(claimed, "worker-1", TaskOutcome.DONE)
     settled = source.find(task.id)
 
     assert settled is not None
@@ -386,16 +386,16 @@ def test_done_and_failed_are_terminal() -> None:
     failed = source.claim("worker-2")
     assert done is not None and failed is not None
 
-    source.release(done, TaskOutcome.DONE)
-    source.release(failed, TaskOutcome.FAILED)
+    source.release(done, "worker-1", TaskOutcome.DONE)
+    source.release(failed, "worker-2", TaskOutcome.FAILED)
 
     # The positive control: both releases actually landed, so the refusals below
     # are about terminality rather than about the tasks never having moved.
     assert [task.state for task in source.records()] == [TaskState.DONE, TaskState.FAILED]
 
-    for task in (done, failed):
+    for task, holder in ((done, "worker-1"), (failed, "worker-2")):
         with pytest.raises(HarnessError) as failure:
-            source.release(task, TaskOutcome.DONE)
+            source.release(task, holder, TaskOutcome.DONE)
 
         assert failure.value.code == "task_already_terminal"
 
@@ -409,7 +409,7 @@ def test_a_failed_task_does_not_return_to_todo_on_its_own() -> None:
     claimed = source.claim("worker-1")
     assert claimed is not None
 
-    source.release(claimed, TaskOutcome.FAILED)
+    source.release(claimed, "worker-1", TaskOutcome.FAILED)
     clock.advance(10_000)
 
     assert source.pending() == 0
@@ -424,7 +424,9 @@ def test_releasing_a_task_this_source_does_not_hold_is_refused() -> None:
     source = a_source()
 
     with pytest.raises(HarnessError) as failure:
-        source.release(StoredTask("nope", "Do the thing", TaskState.CLAIMED), TaskOutcome.DONE)
+        source.release(
+            StoredTask("nope", "Do the thing", TaskState.CLAIMED), "worker-1", TaskOutcome.DONE
+        )
 
     assert failure.value.code == "task_not_found"
 
@@ -434,7 +436,7 @@ def test_an_unclaimed_task_cannot_be_released() -> None:
     task = source.add("Do the thing", "t-1")
 
     with pytest.raises(HarnessError) as failure:
-        source.release(task, TaskOutcome.DONE)
+        source.release(task, "worker-1", TaskOutcome.DONE)
 
     assert failure.value.code == "task_lease_not_held"
 
@@ -442,7 +444,7 @@ def test_an_unclaimed_task_cannot_be_released() -> None:
     # the refusal is about the claim and not about the task or the outcome.
     claimed = source.claim("worker-1")
     assert claimed is not None
-    source.release(claimed, TaskOutcome.DONE)
+    source.release(claimed, "worker-1", TaskOutcome.DONE)
 
     settled = source.find("t-1")
     assert settled is not None
@@ -508,7 +510,7 @@ def test_a_worker_whose_lease_expired_cannot_release_the_task() -> None:
     clock.advance(61)
 
     with pytest.raises(HarnessError) as failure:
-        source.release(claimed, TaskOutcome.DONE)
+        source.release(claimed, "worker-1", TaskOutcome.DONE)
 
     assert failure.value.code == "task_lease_not_held"
 
@@ -544,7 +546,7 @@ def test_pending_counts_what_is_claimable_and_nothing_else() -> None:
 
     done = source.claim("worker-2")
     assert done is not None
-    source.release(done, TaskOutcome.DONE)
+    source.release(done, "worker-2", TaskOutcome.DONE)
     assert source.pending() == 2, "a terminal task is not claimable"
 
     clock.advance(61)
@@ -621,7 +623,7 @@ def test_a_terminal_task_cannot_be_extended() -> None:
     source.add("Do the thing", "t-1")
     claimed = source.claim("worker-1")
     assert claimed is not None
-    source.release(claimed, TaskOutcome.DONE)
+    source.release(claimed, "worker-1", TaskOutcome.DONE)
 
     with pytest.raises(HarnessError) as failure:
         source.extend_lease(claimed, "worker-1", a_ledger(), RunBudget(max_steps=8))
@@ -1127,10 +1129,11 @@ def test_a_denied_completion_tool_leaves_the_task_claimed() -> None:
 def test_the_completion_tool_can_only_close_the_task_its_own_agent_holds() -> None:
     """What can still be invoked, not what we happened to send.
 
-    ``release()`` takes no worker -- the application releasing from evidence is
-    not a worker -- so an agent handed this tool could otherwise close ANY task
-    in the list, including one another worker is mid-way through. The tool is
-    bound to one worker and refuses everything else.
+    The source enforces this too, now that ``release()`` takes the worker. The
+    tool checks first and separately, because a third party's
+    ``AgentTaskSource`` cannot be made to -- see the unguarded-source tests at
+    the end of this file, which are where the tool's check is actually
+    observable.
     """
     source = a_source()
     source.add_many(["mine", "someone else's"], ["t-1", "t-2"])
@@ -1385,7 +1388,7 @@ def test_release_refuses_an_outcome_that_is_not_one() -> None:
     assert claimed is not None
 
     with pytest.raises(HarnessError) as failure:
-        source.release(claimed, "complete")  # type: ignore[arg-type]
+        source.release(claimed, "agent-1", "complete")  # type: ignore[arg-type]
 
     assert failure.value.code == "task_outcome_invalid"
 
@@ -1393,7 +1396,197 @@ def test_release_refuses_an_outcome_that_is_not_one() -> None:
     # accepted from a bare string, because the word is what is pinned across
     # the three languages. It is `'complete'` that is refused, not the fact
     # that a string arrived.
-    source.release(claimed, "done")  # type: ignore[arg-type]
+    source.release(claimed, "agent-1", "done")  # type: ignore[arg-type]
     settled = source.find("t-1")
     assert settled is not None
     assert settled.state is TaskState.DONE
+
+
+# -- only the holder may release ---------------------------------------------
+
+
+def test_a_lapsed_worker_cannot_overwrite_the_live_holders_claim() -> None:
+    """The sequence this argument exists for. NO ADVERSARY REQUIRED.
+
+    A takes longer than its lease. The lease expires, B legitimately reclaims
+    the task and starts work. A finishes and releases.
+
+    Without the worker on `release()`, A's report lands on B's live claim: the
+    task reads `done` while B is still working, B's work is discarded, and then
+    **B's own release fails as "already terminal"** -- the second worker blamed,
+    in the log line a person reads, for the first one's mistake. Every step here
+    is legitimate behaviour by both workers.
+    """
+    clock = Clock()
+    source = a_source(clock=clock, lease_seconds=60)
+    source.add("Do the thing", "t-1")
+
+    a_task = source.claim("worker-a")
+    assert a_task is not None
+
+    clock.advance(61)
+
+    b_task = source.claim("worker-b")
+    assert b_task is not None
+    assert b_task.id == a_task.id
+    assert b_task.claimed_by == "worker-b"
+
+    with pytest.raises(HarnessError) as failure:
+        source.release(a_task, "worker-a", TaskOutcome.DONE)
+
+    assert failure.value.code == "task_lease_not_held"
+    # The exception NAMES the holder: a developer reads this one.
+    assert "worker-b" in failure.value.message
+
+    # B's claim survived A's report untouched.
+    still_bs = source.find("t-1")
+    assert still_bs is not None
+    assert still_bs.state is TaskState.CLAIMED
+    assert still_bs.claimed_by == "worker-b"
+
+    # And B is not blamed for A's mistake: its own release goes through, which
+    # is the half of this that the "already terminal" error used to swallow.
+    source.release(b_task, "worker-b", TaskOutcome.DONE)
+
+    settled = source.find("t-1")
+    assert settled is not None
+    assert settled.state is TaskState.DONE
+
+
+def test_release_refuses_a_blank_worker() -> None:
+    source = a_source()
+    source.add("Do the thing", "t-1")
+    claimed = source.claim("worker-1")
+    assert claimed is not None
+
+    with pytest.raises(HarnessError) as failure:
+        source.release(claimed, "", TaskOutcome.DONE)
+
+    assert failure.value.code == "task_identifier_blank"
+
+    # The control: the real holder releases through the same call.
+    source.release(claimed, "worker-1", TaskOutcome.DONE)
+    settled = source.find("t-1")
+    assert settled is not None
+    assert settled.state is TaskState.DONE
+
+
+class UnguardedTaskSource:
+    """A third party's ``AgentTaskSource``, implemented the obvious way.
+
+    ``release()`` here is "find it, set the state" -- which is what the
+    signature suggests, and which a Protocol cannot prevent anyone writing. The
+    worker argument is accepted and ignored.
+
+    This exists so the completion tool's own check is tested against a source
+    that makes NO guarantees, rather than only against the one this package
+    ships. Against the shipped source the tool's check is unobservable: delete
+    it and every test still passes, because the source catches everything. That
+    is precisely why it cannot be tested there.
+    """
+
+    def __init__(self) -> None:
+        self.tasks: dict[str, StoredTask] = {}
+
+    def add(self, task: StoredTask) -> None:
+        self.tasks[task.id] = task
+
+    def claim(self, worker: str, lease_seconds: float | None = None) -> AgentTask | None:
+        for task_id, task in self.tasks.items():
+            if task.state is TaskState.TODO:
+                self.tasks[task_id] = replace(
+                    task, state=TaskState.CLAIMED, claimed_by=worker, claimed_until=None
+                )
+                return self.tasks[task_id]
+
+        return None
+
+    def release(self, task: AgentTask, worker: str, outcome: TaskOutcome) -> None:
+        # NO CHECKS AT ALL. Not terminality, not the lease, not the worker.
+        current = self.tasks[task.id]
+        self.tasks[task.id] = replace(
+            current, state=outcome.state(), claimed_by=None, claimed_until=None
+        )
+
+    def pending(self) -> int:
+        return sum(1 for task in self.tasks.values() if task.state is TaskState.TODO)
+
+    def find(self, task_id: str) -> AgentTask | None:
+        return self.tasks.get(task_id)
+
+
+class HolderlessTaskSource(UnguardedTaskSource):
+    """A source whose tasks do not expose a holder AT ALL.
+
+    Perfectly legal: :class:`AgentTask` is ``id``, ``instruction`` and
+    ``state``, and nothing on the contract promises ``claimed_by``. A consumer
+    keeping the lease in columns this package has never heard of produces
+    exactly this.
+    """
+
+    def find(self, task_id: str) -> AgentTask | None:
+        if task_id not in self.tasks:
+            return None
+
+        return ConsumerRow(task_id, "Do the thing", TaskState.CLAIMED)
+
+
+def test_the_unguarded_fixture_really_is_unguarded() -> None:
+    # The fixture has to be checked before it can be used as a control. If it
+    # quietly enforced something, the two tests below would prove nothing about
+    # the tool -- they would be measuring the fixture.
+    source = UnguardedTaskSource()
+    source.add(StoredTask("t-1", "Do the thing", TaskState.CLAIMED, "someone-else"))
+
+    contract: AgentTaskSource = source
+    contract.release(source.tasks["t-1"], "not-the-holder", TaskOutcome.DONE)
+
+    assert source.tasks["t-1"].state is TaskState.DONE
+
+
+def test_the_tool_refuses_a_task_another_worker_holds_even_on_a_naive_source() -> None:
+    # The guarantee the CONTRACT makes, tested against an implementation that
+    # does not make it. This is where the tool's own check earns its place.
+    source = UnguardedTaskSource()
+    source.add(StoredTask("t-1", "Do the thing", TaskState.CLAIMED, "someone-else"))
+    tool = TaskCompletionTool(source, "agent-1")
+
+    with pytest.raises(HarnessError) as failure:
+        tool.handle({"task_id": "t-1", "outcome": "done"})
+
+    assert failure.value.code == "task_lease_not_held"
+    # The tool's refusal NAMES NOBODY -- a model reads this one.
+    assert "someone-else" not in failure.value.message
+    assert source.tasks["t-1"].state is TaskState.CLAIMED
+
+
+def test_the_tool_refuses_when_the_holder_cannot_be_established() -> None:
+    # Unknowable is not permission. The task says `claimed` and offers no way to
+    # learn by whom, so the tool fails closed -- the same shape as refusing an
+    # absent outcome rather than reading it as `done`.
+    source = HolderlessTaskSource()
+    source.add(StoredTask("t-1", "Do the thing", TaskState.CLAIMED, "agent-1"))
+    tool = TaskCompletionTool(source, "agent-1")
+
+    with pytest.raises(HarnessError) as failure:
+        tool.handle({"task_id": "t-1", "outcome": "done"})
+
+    assert failure.value.code == "task_lease_not_held"
+    assert source.tasks["t-1"].state is TaskState.CLAIMED
+
+
+def test_the_tool_still_closes_a_task_the_worker_really_holds_on_a_naive_source() -> None:
+    # The control for both refusals above. Without it they would both pass on a
+    # tool that refused everything, which would be a guard that works by being
+    # useless.
+    source = UnguardedTaskSource()
+    source.add(StoredTask("t-1", "Do the thing", TaskState.TODO))
+    assert source.claim("agent-1") is not None
+
+    tool = TaskCompletionTool(source, "agent-1")
+
+    assert tool.handle({"task_id": "t-1", "outcome": "failed"}) == {
+        "task_id": "t-1",
+        "state": "failed",
+    }
+    assert source.tasks["t-1"].state is TaskState.FAILED

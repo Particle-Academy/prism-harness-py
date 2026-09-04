@@ -82,7 +82,7 @@ tasks.add_many(["Read the brief", "Draft the reply", "Check the numbers"])
 while (task := tasks.claim("worker-1")) is not None:
     # The APPLICATION releases, from evidence -- not the agent.
     worked = do_the_work(task.instruction)
-    tasks.release(task, TaskOutcome.DONE if worked else TaskOutcome.FAILED)
+    tasks.release(task, "worker-1", TaskOutcome.DONE if worked else TaskOutcome.FAILED)
 ```
 
 Four states — `todo`, `claimed`, `done`, `failed` — and no others, behind four
@@ -113,9 +113,15 @@ to `done`, "run until the goal is met" becomes "run until it decides it is met",
 and a stalled run ends by declaring victory. `TaskCompletionTool` exists for
 consumers who want that, and nothing registers it: you register it on your own
 `ToolRegistry` and gate it through the `ToolAuthorizer` you already have. It is
-bound to one worker and closes only the task that worker is holding — `release()`
-takes no worker, so an unbound tool would let an agent close a task somebody else
-was mid-way through.
+bound to one worker and closes only the task that worker is holding.
+
+That rule is enforced on the source, not just in the tool: `release()` takes the
+worker, and only the worker currently holding the lease may release. Without it,
+a worker whose lease lapsed mid-task overwrites the claim of whoever legitimately
+picked the task up — the task reads `done` while the second worker is still
+working, its work is discarded, and its own release then fails as "already
+terminal", blaming it for the first worker's mistake. The tool checks too, because
+a third party's `AgentTaskSource` cannot be made to.
 
 The agent must state an outcome, and it is either exactly `done` or exactly
 `failed` or refused with `task_outcome_invalid`. No case folding, no trimming,

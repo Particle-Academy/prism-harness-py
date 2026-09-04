@@ -177,8 +177,26 @@ class AgentTaskSource(Protocol):
         """
         ...
 
-    def release(self, task: AgentTask, outcome: TaskOutcome) -> None:
-        """Record what happened. Terminal, and re-releasing is an error."""
+    def release(self, task: AgentTask, worker: str, outcome: TaskOutcome) -> None:
+        """Record what happened. Terminal, and re-releasing is an error.
+
+        THE WORKER IS AN ARGUMENT, and it is the argument that stops a lapsed
+        holder overwriting a live one. No adversary is required to reach that:
+
+        1. Worker A claims a task and takes longer than its lease.
+        2. The lease expires, the task returns to ``todo``, and worker B
+           legitimately claims it and starts work.
+        3. A finishes and calls ``release``.
+
+        Without the worker, step 3 succeeds. The task reads ``done`` while B is
+        still working, B's work is thrown away, and then **B's own release fails
+        as "already terminal"** -- so the second worker is blamed for the first
+        one's mistake, in the log line a person will read.
+
+        This lived only in the completion tool at first, which was the wrong
+        place: a guard living in one tool leaves every other caller able to do
+        what the guard forbids -- a queued job, an HTTP route, a direct call.
+        """
         ...
 
     def pending(self) -> int:
@@ -485,8 +503,8 @@ class StoreTaskSource:
 
         return self._locked(take)
 
-    def release(self, task: AgentTask, outcome: TaskOutcome) -> None:
-        """Record what happened to a claimed task. TERMINAL.
+    def release(self, task: AgentTask, worker: str, outcome: TaskOutcome) -> None:
+        """Record what a WORKER found. TERMINAL.
 
         Called by the APPLICATION, from evidence -- not by the agent. If the
         model can set its own task to ``done`` then "run until the goal is met"
@@ -498,11 +516,24 @@ class StoreTaskSource:
         silent no-op there is a second worker's evidence being discarded without
         anyone finding out.
 
-        A task whose lease has expired is ``todo`` again and cannot be released.
-        The worker that held it may well have finished the work, but another
-        worker may already be redoing it, and accepting a report from a lapsed
-        holder is how two workers both mark one task done.
+        **Only the worker currently holding the lease may release**, and this
+        check lives HERE, next to the rest of the state machine, rather than in
+        the one tool that first needed it. A guard living in a tool leaves every
+        other caller able to do what the guard forbids -- a queued job, an HTTP
+        route, a direct call -- and this package ships all three shapes of
+        caller.
+
+        The sequence it stops needs no adversary. A's lease lapses mid-task; B
+        legitimately reclaims and starts work; A finishes and releases. Without
+        the check A overwrites B's live claim, the task reads ``done`` while B
+        is still working, B's work is discarded, and B's own release then fails
+        as "already terminal" -- the second worker blamed for the first one's
+        mistake.
+
+        A task whose lease has expired is ``todo`` again and cannot be released
+        by anyone, which is the same rule seen from the other side.
         """
+        _require_identifier(worker, "worker")
         # Parsed rather than trusted. A typed caller is already protected by the
         # signature, but a consumer driving this from a decoded JSON body has no
         # type checker in the way -- and the failure there was an AttributeError
@@ -524,6 +555,19 @@ class StoreTaskSource:
                     task_id,
                     "it is not claimed -- either it was never claimed, or the lease expired and "
                     "the task returned to todo",
+                )
+
+            holder = record.get("claimed_by")
+
+            if holder != worker:
+                # NAMES THE HOLDER, deliberately, and note the contrast with
+                # `TaskCompletionTool`, which refuses the same fact and names
+                # nobody. A developer reads this one and needs to know who
+                # actually has the lease; a MODEL reads the tool's, and another
+                # worker's identity is not the model's business. Same code, two
+                # audiences.
+                raise HarnessError.task_lease_not_held(
+                    task_id, f"it is held by [{holder}], not by [{worker}]"
                 )
 
             record["state"] = outcome.state().value
@@ -719,18 +763,34 @@ class TaskCompletionTool:
     same failure ``prism-human-plus`` addresses by reserving confirmation for
     the human.
 
-    **ITS OWN task, and the worker is required.** :meth:`StoreTaskSource.release`
-    takes no worker on purpose -- the application releasing from evidence is not
-    a worker and has no id to give -- so without this the tool would let an
-    agent close ANY task in the list, including one another worker is holding
-    and has not finished. The question a guard has to answer is not "what did we
-    send?" but "what can still be invoked?", and the answer here has to be "the
-    task this agent actually holds". A blank worker is refused for the same
-    reason a blank owner is: it would match nothing and be read as everything.
+    **ITS OWN task, and the worker is required.** The authoritative check is on
+    :meth:`AgentTaskSource.release`, where it belongs -- a guard living in one
+    tool leaves a queued job, an HTTP route and a direct call able to do what
+    the guard forbids.
+
+    **This tool checks anyway, and that is not redundant.** Against the source
+    this package ships, deleting the check below changes nothing observable --
+    a mutation run confirms it survives. It earns its place against the sources
+    this package does NOT ship: a Protocol cannot make an implementation check
+    anything, and a third party writing their own ``release()`` will write
+    "find it, set the state", because that is what the signature suggests. The
+    tool is the one caller here that hands a MODEL's request to someone else's
+    code, so it verifies before it delegates rather than assuming the contract
+    was honoured.
+
+    Being defensive at that seam has a consequence worth stating: through
+    :class:`AgentTaskSource`, :meth:`find` returns an :class:`AgentTask`, which
+    carries ``id``, ``instruction`` and ``state`` and NOT the holder. So the
+    tool may be unable to establish who holds a task at all -- and when it
+    cannot, it refuses. Failing closed on an unanswerable question is the only
+    safe direction when the answer decides whether an agent may close work.
     """
 
-    def __init__(self, source: StoreTaskSource, worker: str) -> None:
+    def __init__(self, source: AgentTaskSource, worker: str) -> None:
         _require_identifier(worker, "worker")
+        # Typed to the CONTRACT, not to this package's source. A consumer with
+        # their own task table gets the same tool, and the guarantees this tool
+        # depends on then have to be ones the contract actually makes.
         self._source = source
         self._worker = worker
 
@@ -750,16 +810,33 @@ class TaskCompletionTool:
         if task is None:
             raise HarnessError.task_not_found(task_id)
 
-        if task.state is not TaskState.CLAIMED or task.claimed_by != self._worker:
-            # Deliberately says nothing about who DOES hold it. A refusal from a
-            # tool comes back to the model as a result it can read, and the
-            # holder's identity is not the model's business.
+        if task.state is not TaskState.CLAIMED or self._holder_of(task) != self._worker:
+            # NAMES NOBODY, and that is the difference from the same refusal on
+            # the source. This message goes back to a MODEL as a readable tool
+            # result; another worker's identity is not the model's business. The
+            # source raises the same code with the holder named, because a
+            # DEVELOPER reads that one.
             raise HarnessError.task_lease_not_held(task_id, "this agent is not holding it")
 
         outcome = self._outcome(args)
-        self._source.release(task, outcome)
+        self._source.release(task, self._worker, outcome)
 
         return {"task_id": task_id, "state": outcome.state().value}
+
+    @staticmethod
+    def _holder_of(task: AgentTask) -> object:
+        """Who holds ``task``, or a sentinel that matches NO worker.
+
+        :class:`AgentTask` carries ``id``, ``instruction`` and ``state`` -- not
+        the holder -- so against a source outside this package the holder may
+        genuinely be unknowable. Unknowable resolves to ``_MISSING``, which
+        compares equal to no worker id, so the caller refuses.
+
+        FAILING CLOSED on an unanswerable question, rather than reading silence
+        as permission. It is the same mistake as inferring ``done`` from an
+        absent outcome, asked about a different field.
+        """
+        return getattr(task, "claimed_by", _MISSING)
 
     @staticmethod
     def _outcome(args: dict[str, Any]) -> TaskOutcome:
