@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, TypeVar
 
 from prism_harness.stores.base import SessionStore
+from prism_harness.tasks import DEFAULT_LEASE_SECONDS, StoreTaskSource
 from prism_harness.thread import Thread
 
 __all__ = ["Participant", "Session"]
@@ -110,6 +111,22 @@ class Session:
 
     def thread(self) -> Thread:
         return Thread(self._durable, f"{self.key()}:thread")
+
+    def tasks(self, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> StoreTaskSource:
+        """This session's task list, in the DURABLE half.
+
+        The same reasoning as :meth:`thread`, and the reason the address is the
+        session key with a suffix: a restarted process resolves the same session,
+        sees the same list, and finds any task its predecessor was holding either
+        still leased or expired back to ``todo``. That is what "an agent that
+        survives a reboot picks up where it left off" actually requires.
+
+        Durable by construction -- the store manager already refused a volatile
+        driver for this slot before the session existed, and
+        :class:`~prism_harness.tasks.StoreTaskSource` checks again anyway,
+        because a consumer can build one over any store it likes.
+        """
+        return StoreTaskSource(self._durable, f"{self.key()}:tasks", lease_seconds=lease_seconds)
 
     def capability(self, name: str) -> dict[str, Any] | None:
         stored = self._durable.get(self._durable_key()) or {}

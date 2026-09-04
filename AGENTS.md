@@ -15,7 +15,7 @@ python -m pytest
 Never pipe a gate into `head`/`tail`/`grep` and read `$?` — that is the
 FILTER's exit code. Redirect to a file, echo `$?`, then look.
 
-## Three things that are load-bearing
+## Four things that are load-bearing
 
 1. **`Session.key()` must stay byte-identical to PHP's.** sha1 of the
    participant type, truncated to 12. It is what lets all three languages share
@@ -23,6 +23,10 @@ FILTER's exit code. Redirect to a file, echo `$?`, then look.
 2. **A volatile store is refused for the durable slot**, at resolve time.
 3. **Thread positions are assigned inside the lock.** Read-then-write outside
    one loses a message when two turns land together, and nothing reports it.
+4. **`StoreTaskSource.claim()` is ONE call.** The read that picks the task and
+   the write that takes it are inside one store lock. Splitting them hands the
+   same task to two workers, and the test that proves the atomic version works
+   is paired with a deliberately racy one that must keep failing.
 
 ## Traps already hit here
 

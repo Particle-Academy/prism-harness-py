@@ -70,6 +70,56 @@ and writing the new messages as one operation. Two turns landing concurrently
 would otherwise both read position 4 and both write position 5, silently losing
 a message — the race the reference tracks as prism-harness#2.
 
+## Task lists
+
+An agent given a goal keeps working across many requests. `session.tasks()` is
+the list of what remains, in the durable half:
+
+```python
+tasks = session.tasks()
+tasks.add_many(["Read the brief", "Draft the reply", "Check the numbers"])
+
+while (task := tasks.claim("worker-1")) is not None:
+    # The APPLICATION releases, from evidence -- not the agent.
+    worked = do_the_work(task.instruction)
+    tasks.release(task, TaskOutcome.DONE if worked else TaskOutcome.FAILED)
+```
+
+Four states — `todo`, `claimed`, `done`, `failed` — and no others.
+
+`claim()` is **one call**, not a read followed by a mark: the read that picks the
+task and the write that takes it happen inside one store lock, so two workers get
+different tasks or one gets `None`. Never the same task twice.
+
+A claim carries an owner **and an expiry**, five minutes by default. When a lease
+lapses the task returns to `todo` — **never to `failed`**, because a worker dying
+is not the task failing, and marking it failed burns a retry that never ran. A
+worker may push its own lease out while it still holds it, bounded by what the
+run's `RunBudget` has left on the wall clock; there is deliberately no second
+timeout here to set in the place that is not enforced.
+
+`done` and `failed` are terminal, and re-releasing one raises rather than quietly
+doing nothing.
+
+**An agent cannot mark its own task complete.** If the model can set its own task
+to `done`, "run until the goal is met" becomes "run until it decides it is met",
+and a stalled run ends by declaring victory. `TaskCompletionTool` exists for
+consumers who want that, and nothing registers it: you register it on your own
+`ToolRegistry` and gate it through the `ToolAuthorizer` you already have. It is
+bound to one worker and closes only the task that worker is holding — `release()`
+takes no worker, so an unbound tool would let an agent close a task somebody else
+was mid-way through.
+
+**The list is durable state, so a task source refuses to start on a volatile
+store** — a half-finished list that vanishes on a deploy is indistinguishable
+from a finished one.
+
+No task model, no schema, no migration. `AgentTask` is a Protocol, so a record
+you already have — an ORM model, a dataclass, a row wrapper — becomes one the
+moment it exposes `id`, `instruction` and `state`. If your columns are named
+something else, `AgentTaskMixin` maps them; that is what the PHP reference
+spells as a trait on an Eloquent model.
+
 ## Synchronous, deliberately
 
 The store contract is **sync**, unlike `prism-harness-ts`. That port is async

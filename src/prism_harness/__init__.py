@@ -42,6 +42,19 @@ from prism_harness.subagents import (
     Subagent,
     subagent_from_config,
 )
+from prism_harness.tasks import (
+    DEFAULT_LEASE_SECONDS,
+    AgentTask,
+    AgentTaskMixin,
+    AgentTaskSource,
+    StoredTask,
+    StoreTaskSource,
+    TaskCompletionTool,
+    TaskOutcome,
+    TaskState,
+    canonical_task_json,
+    task_record,
+)
 from prism_harness.thread import Thread, ThreadMessage
 from prism_harness.tools import (
     AuthorizedTool,
@@ -55,12 +68,16 @@ from prism_harness.tools import (
 )
 
 __all__ = [
+    "DEFAULT_LEASE_SECONDS",
     "MAX_DEPTH",
     "SLOT_DURABLE",
     "SLOT_EPHEMERAL",
     "AgentMode",
     "AgentResponse",
     "AgentRuntime",
+    "AgentTask",
+    "AgentTaskMixin",
+    "AgentTaskSource",
     "AuthorizedTool",
     "CallPolicy",
     "DoctorFinding",
@@ -95,17 +112,24 @@ __all__ = [
     "SessionStoreManager",
     "SkillRegistry",
     "StoreFactory",
+    "StoreTaskSource",
+    "StoredTask",
     "Subagent",
     "SubagentResult",
     "SubagentRunner",
     "SubagentTool",
+    "TaskCompletionTool",
+    "TaskOutcome",
+    "TaskState",
     "Thread",
     "ThreadMessage",
     "ToolAuthorizer",
     "ToolFactory",
     "ToolProvider",
     "ToolRegistry",
+    "canonical_task_json",
     "diagnose",
     "record_approval",
     "subagent_from_config",
+    "task_record",
 ]

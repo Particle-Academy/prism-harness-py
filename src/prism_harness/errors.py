@@ -42,6 +42,16 @@ class ErrorCode(str, Enum):
     CALL_NOT_AUTHORIZED = "call_not_authorized"
     #: A skill file was asked for that would resolve outside its own skill.
     SKILL_PATH_REFUSED = "skill_path_refused"
+    #: A task was added under an id the source already holds.
+    DUPLICATE_TASK_ID = "duplicate_task_id"
+    #: A worker id or a task id was the empty string.
+    TASK_IDENTIFIER_BLANK = "task_identifier_blank"
+    #: A task was asked for that this source does not hold.
+    TASK_NOT_FOUND = "task_not_found"
+    #: A ``done`` or ``failed`` task was released again.
+    TASK_ALREADY_TERMINAL = "task_already_terminal"
+    #: A lease was acted on by someone who does not hold it.
+    TASK_LEASE_NOT_HELD = "task_lease_not_held"
 
 
 class HarnessError(Exception):
@@ -157,6 +167,77 @@ class HarnessError(Exception):
         fine.
         """
         return cls(ErrorCode.SKILL_PATH_REFUSED, f"Refused to read a skill file: {detail}.")
+
+    # -- task lists ---------------------------------------------------------
+
+    @classmethod
+    def volatile_task_source(cls, driver: str) -> HarnessError:
+        """The same guard as :meth:`volatile_durable_store`, at the task list.
+
+        Shares its CODE deliberately: it is one misconfiguration -- durable
+        state pointed at a store that says it cannot keep it -- and a consumer
+        branching on ``unsafe_state_configuration`` should catch both. Only the
+        prose differs, and prose is outside the contract (0004).
+        """
+        return cls(
+            ErrorCode.UNSAFE_STATE_CONFIGURATION,
+            f"A task source was pointed at the [{driver}] store, which reports itself VOLATILE. "
+            "A task list is durable state: a half-finished list that vanishes on a deploy is "
+            "indistinguishable from a finished one, so losing it is a correctness failure rather "
+            "than a cache miss. Point the source at a durable store -- or, if this one really "
+            "does persist, declare it durable when you register it.",
+        )
+
+    @classmethod
+    def duplicate_task_id(cls, task_id: str) -> HarnessError:
+        return cls(
+            ErrorCode.DUPLICATE_TASK_ID,
+            f"This source already holds a task with the id [{task_id}]. Ids must be unique "
+            "within a source, because a claim, a release and a lease all address a task by it.",
+        )
+
+    @classmethod
+    def task_identifier_blank(cls, kind: str) -> HarnessError:
+        """A blank worker or task id, refused rather than stored.
+
+        One code for both because the caller's move is the same either way:
+        supply a non-empty identifier. The prose says which one was blank.
+        """
+        return cls(
+            ErrorCode.TASK_IDENTIFIER_BLANK,
+            f"A {kind} identifier was the empty string. It is refused rather than stored: an "
+            "empty string is FALSY in PHP, so a blank owner reads as 'unclaimed' to any "
+            "implementation testing the field for truth -- a task that is held and looks free.",
+        )
+
+    @classmethod
+    def task_not_found(cls, task_id: str) -> HarnessError:
+        return cls(
+            ErrorCode.TASK_NOT_FOUND,
+            f"This source holds no task with the id [{task_id}].",
+        )
+
+    @classmethod
+    def task_already_terminal(cls, task_id: str, state: str) -> HarnessError:
+        """Re-releasing a terminal task.
+
+        An ERROR, not a silent no-op. A second release quietly discarded is a
+        second worker's evidence being thrown away with nothing to show for it.
+        """
+        return cls(
+            ErrorCode.TASK_ALREADY_TERMINAL,
+            f"Task [{task_id}] is already [{state}], which is terminal. Releasing it again is "
+            "refused rather than ignored: a silent no-op discards whatever the second caller "
+            "had to report. An application that wants the task run again re-queues it.",
+        )
+
+    @classmethod
+    def task_lease_not_held(cls, task_id: str, detail: str) -> HarnessError:
+        return cls(
+            ErrorCode.TASK_LEASE_NOT_HELD,
+            f"Task [{task_id}] cannot be acted on by this worker: {detail}. Another worker may "
+            "already be doing it, so a report from a lapsed holder is refused.",
+        )
 
     @classmethod
     def no_agent_runtime(cls, action: str) -> HarnessError:
