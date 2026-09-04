@@ -16,6 +16,7 @@ store contract -- is spelling, per prism-parity decision 0002.
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -161,8 +162,9 @@ class AgentTask(Protocol):
 class AgentTaskSource(Protocol):
     """Where tasks come from.
 
-    Three methods, and the first one is the reason this package has a task list
-    at all.
+    Four methods. :meth:`claim` is the reason this package has a task list at
+    all, and :meth:`find` is the reason the other three can be reached from
+    outside the loop.
     """
 
     def claim(self, worker: str, lease_seconds: float | None = None) -> AgentTask | None:
@@ -185,6 +187,21 @@ class AgentTaskSource(Protocol):
         A COUNT, not a listing. It exists to terminate the loop and a count is
         enough for that; a listing invites the source to materialise every task
         on every pass, and a consumer that wants one already has its own query.
+        """
+        ...
+
+    def find(self, task_id: str) -> AgentTask | None:
+        """One task by id, or None when this source does not hold it.
+
+        ON THE CONTRACT, because without it the contract cannot be driven from
+        outside the claim loop. :meth:`release` takes a TASK, and every external
+        caller -- a tool, an HTTP route, a queue worker resuming after a restart
+        -- holds only an ID. This package's own completion tool needed it before
+        anyone else did, which is the tell: a method a shipped consumer cannot
+        work without does not belong on the concrete class only.
+
+        Still one task by id, and still not a listing. That distinction is what
+        keeps :meth:`pending` honest.
         """
         ...
 
@@ -363,7 +380,7 @@ class StoreTaskSource:
 
         self._store = store
         self._key = key
-        self._lease_seconds = lease_seconds
+        self._lease_seconds = _require_lease(lease_seconds)
         #: Wall clock, injectable so a test can move time without sleeping.
         #: ``time.time`` and not ``time.monotonic``: ``claimed_until`` is a Unix
         #: timestamp that another process on another machine has to compare
@@ -439,7 +456,7 @@ class StoreTaskSource:
         ``failed`` -- so a dead worker's task is picked up by whoever asks next.
         """
         _require_identifier(worker, "worker")
-        lease = self._lease_seconds if lease_seconds is None else lease_seconds
+        lease = self._lease_seconds if lease_seconds is None else _require_lease(lease_seconds)
 
         def take() -> StoredTask | None:
             stored, records = self._read()
@@ -531,6 +548,10 @@ class StoreTaskSource:
 
         return sum(1 for record in records if record.get("state") == TaskState.TODO.value)
 
+    def find(self, task_id: str) -> StoredTask | None:
+        """One task by id, or None. Same snapshot caveat as :meth:`records`."""
+        return next((task for task in self.records() if task.id == task_id), None)
+
     # -- beyond the contract -----------------------------------------------
 
     def extend_lease(
@@ -570,9 +591,30 @@ class StoreTaskSource:
         legitimately use.
         """
         _require_identifier(worker, "worker")
-        lease = self._lease_seconds if lease_seconds is None else lease_seconds
+        lease = self._lease_seconds if lease_seconds is None else _require_lease(lease_seconds)
+
+        # EXHAUSTION FIRST, and not only the wall clock. A run that has been
+        # cancelled, or has spent its steps or its money, may not take another
+        # step -- so it may not hold a task open waiting to take one either. The
+        # clock was the only thing checked here at first, which left a cancelled
+        # worker extending its lease indefinitely: the loop it was extending FOR
+        # would refuse to run, and the task stayed locked away from every worker
+        # that could still do it.
+        exhausted = ledger.exhaustion(budget)
+
+        if exhausted is not None:
+            raise HarnessError.run_not_permitted(
+                f"The lease on task [{task.id}] cannot be extended: {exhausted}. The lease is "
+                "bounded by the run, and a run that may not spend again may not keep holding "
+                "the task either."
+            )
+
         remaining = ledger.remaining_seconds(budget)
 
+        # Still checked separately, and not redundant with the above:
+        # `remaining_seconds` truncates, so it reaches 0 while `exhaustion` is
+        # still None -- 59.5 seconds into a 60 second budget there is half a
+        # second left and no whole second to grant.
         if remaining is not None and remaining <= 0:
             raise HarnessError.run_not_permitted(
                 f"The lease on task [{task.id}] cannot be extended: the run's wall-clock budget "
@@ -614,18 +656,15 @@ class StoreTaskSource:
         """Every task, in insertion order, with expired claims shown as ``todo``.
 
         For inspection and serialisation, and deliberately NOT on
-        :class:`AgentTaskSource`: the contract answers the loop's question with
-        a count, and putting a listing on it would invite every source to
-        materialise everything on every pass.
+        :class:`AgentTaskSource` -- unlike :meth:`find`, which is. The line
+        between them is the one the contract cares about: a count and a single
+        task by id are questions every source can answer cheaply, and a LISTING
+        invites every source to materialise everything on every pass.
         """
         _stored, records = self._read()
         _expire(records, self._clock())
 
         return [_to_task(record) for record in records]
-
-    def find(self, task_id: str) -> StoredTask | None:
-        """One task by id, or None. Same snapshot caveat as :meth:`records`."""
-        return next((task for task in self.records() if task.id == task_id), None)
 
     # -- internals ---------------------------------------------------------
 
@@ -724,27 +763,33 @@ class TaskCompletionTool:
 
     @staticmethod
     def _outcome(args: dict[str, Any]) -> TaskOutcome:
-        """Which outcome the agent asked for, or ``done`` if it asked for none.
+        """Which outcome the agent asked for. IT HAS TO ASK.
 
-        Three cases, and the middle one is the whole point:
+        Two cases now, and they answer the same way:
 
-        * **Absent.** ``done``. Not a fallback for input that could not be
-          read -- the agent invoked a tool called ``complete_task``, and that
-          is the tool's declared purpose.
-        * **Present.** Parsed strictly, and HONOURED. Silently ignoring it
-          would be the same escalation as coercing it: a model asking in as
-          many words for ``failed`` and getting ``done`` on the record. This
-          port did exactly that until it was caught.
-        * **Present and unreadable.** Refused. Never resolved to either
-          outcome, and least of all to the privileged one.
+        * **Present.** Parsed strictly, and HONOURED. Silently ignoring it is
+          the same escalation as coercing it: a model asking in as many words
+          for ``failed`` and getting ``done`` on the record. This port did
+          exactly that until it was caught.
+        * **Absent, or present and unreadable.** Refused, with one code.
 
-        ``_MISSING`` rather than ``args.get("outcome")`` because
-        present-and-null has to land in the third case, not the first (0002).
+        Absent used to mean ``done`` here, on the reasoning that an agent
+        invoking a tool called ``complete_task`` had declared its intent. The
+        reference overruled that, and it was right: **that is the same
+        inference that produced the hardcoded** ``done`` **this tool shipped
+        with** -- reading the privileged outcome out of silence, moved one level
+        up from where it was caught rather than removed. An agent that omitted
+        the field has not stated an outcome.
+
+        ``_MISSING`` survives the change so the two cases can say different
+        things to the caller. It no longer changes WHICH failure happens, only
+        how it reads: absent and present-and-null are now both refused, and
+        under 0002 that makes them no longer observably different.
         """
         supplied = args.get("outcome", _MISSING)
 
         if supplied is _MISSING:
-            return TaskOutcome.DONE
+            raise HarnessError.task_outcome_not_supplied()
 
         return TaskOutcome.parse(supplied)
 
@@ -807,6 +852,37 @@ def _state_of(record: dict[str, Any]) -> TaskState:
             f"[{record.get('state')!r}], which is not one of "
             f"{', '.join(state.value for state in TaskState)}"
         ) from error
+
+
+def _require_lease(seconds: float) -> float:
+    """A lease must be a finite number of seconds greater than zero.
+
+    REFUSED, never clamped. TypeScript's port clamped a non-positive lease up to
+    one second; this refuses, because a clamped value is a configuration that
+    silently became a different configuration, and this repository has already
+    shipped one of those and stayed green for its whole life.
+
+    The direction matters too. A zero or negative lease is not merely a strange
+    number: ``claimed_until`` lands in the past, so the claim expires the instant
+    it is granted and the very next caller steals it. Two workers on one task,
+    from a config value nobody was told was wrong.
+
+    Non-finite is checked as well, and separately. ``nan <= 0`` is FALSE, so a
+    NaN lease sails through a bare positivity check and then explodes in
+    ``int(now + nan)`` -- a crash rather than a code, several frames from the
+    value that caused it.
+    """
+    try:
+        finite = math.isfinite(seconds)
+    except TypeError:
+        # An untyped caller -- a decoded JSON body, a config file -- gets a code
+        # rather than a TypeError, for the same reason the outcome is parsed.
+        raise HarnessError.task_lease_invalid(seconds) from None
+
+    if not finite or seconds <= 0:
+        raise HarnessError.task_lease_invalid(seconds)
+
+    return float(seconds)
 
 
 def _require_identifier(value: str, kind: str) -> None:

@@ -54,6 +54,8 @@ class ErrorCode(str, Enum):
     TASK_LEASE_NOT_HELD = "task_lease_not_held"
     #: A task outcome was supplied that is not exactly ``done`` or ``failed``.
     TASK_OUTCOME_INVALID = "task_outcome_invalid"
+    #: A lease duration was not a finite number of seconds greater than zero.
+    TASK_LEASE_INVALID = "task_lease_invalid"
 
 
 class HarnessError(Exception):
@@ -259,6 +261,45 @@ class HarnessError(Exception):
             "a different casing, not a synonym, and not absent. A value that cannot be read as "
             "one of the two is refused rather than resolved to either, because resolving it "
             "would always mean choosing an outcome the caller did not ask for.",
+        )
+
+    @classmethod
+    def task_outcome_not_supplied(cls) -> HarnessError:
+        """No outcome at all, which is refused exactly like a malformed one.
+
+        Same code, deliberately. "The agent called ``complete_task``, so it
+        meant completion" is the SAME inference that produced the hardcoded
+        ``done`` this package shipped and then removed -- reading the privileged
+        outcome out of silence, one level up from where it was caught. An agent
+        that omitted the field has not stated an outcome, and there is nothing
+        to infer from that which is safe to infer.
+        """
+        return cls(
+            ErrorCode.TASK_OUTCOME_INVALID,
+            "No task outcome was supplied. It must be stated explicitly as 'done' or 'failed'; "
+            "an absent outcome is not a request to complete the task. Inferring the more "
+            "privileged answer from silence is the same escalation as coercing an unreadable "
+            "one into it.",
+        )
+
+    @classmethod
+    def task_lease_invalid(cls, seconds: object) -> HarnessError:
+        """A lease that is zero, negative, or not a finite number.
+
+        REFUSED, not clamped. A clamped lease is a configuration that silently
+        became a different configuration -- this repository has already shipped
+        one of those and stayed green the whole time. A zero or negative lease
+        is also not merely odd: it expires the instant it is granted, so the
+        claim it was meant to protect is stealable by the next caller, and the
+        one guarantee this design exists to make quietly stops holding.
+        """
+        return cls(
+            ErrorCode.TASK_LEASE_INVALID,
+            f"[{seconds!r}] is not a usable lease. It must be a finite number of seconds "
+            "greater than zero. It is refused rather than clamped to something workable: a "
+            "lease that expires the moment it is granted leaves the claim it should protect "
+            "open to the next caller, and silently substituting a different number would hide "
+            "that rather than report it.",
         )
 
     @classmethod

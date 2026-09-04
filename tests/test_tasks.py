@@ -121,11 +121,35 @@ def raw(store: SessionStore) -> list[dict[str, Any]]:
 def test_the_store_source_satisfies_the_source_contract() -> None:
     # Checked by the type checker as much as at runtime: the assignment is what
     # makes mypy verify StoreTaskSource against the Protocol.
-    source: AgentTaskSource = a_source()
+    concrete = a_source()
+    source: AgentTaskSource = concrete
     task: AgentTask = StoredTask("t-1", "Do the thing", TaskState.TODO)
 
     assert source.pending() == 0
     assert task.state is TaskState.TODO
+
+    # FOUR methods, and `find` is driven THROUGH the protocol-typed name on
+    # purpose: `release()` takes a task while every external caller -- a tool, an
+    # HTTP route, a worker resuming after a restart -- holds only an id. A
+    # contract without it cannot be driven from outside the claim loop, which
+    # this package's own completion tool demonstrated before anyone else did.
+    assert source.find("t-1") is None
+
+    concrete.add("Do the thing", "t-1")
+    found = source.find("t-1")
+
+    assert found is not None
+    assert found.id == "t-1"
+    assert found.state is TaskState.TODO
+
+    # And the whole contract round-trips off nothing but an id.
+    claimed = source.claim("worker-1")
+    assert claimed is not None
+    source.release(source.find("t-1") or claimed, TaskOutcome.DONE)
+
+    settled = source.find("t-1")
+    assert settled is not None
+    assert settled.state is TaskState.DONE
 
 
 def test_a_new_task_is_todo_and_unclaimed() -> None:
@@ -657,6 +681,78 @@ def test_extension_is_refused_once_the_wall_clock_budget_is_spent() -> None:
     assert allowed.claimed_until <= int(EPOCH + 5)
 
 
+def test_a_cancelled_run_cannot_extend_its_lease() -> None:
+    # The lease is bounded by the RUN, and a cancelled run may not take another
+    # step. Checking only the wall clock left a cancelled worker extending
+    # indefinitely: the loop it was extending for would refuse to run, and the
+    # task stayed locked away from every worker that could still do it.
+    clock = Clock()
+    source = a_source(clock=clock, lease_seconds=60)
+    source.add("Do the thing", "t-1")
+    claimed = source.claim("worker-1")
+    assert claimed is not None
+
+    ledger = a_ledger()
+    budget = RunBudget(max_steps=8, max_seconds=6000)
+
+    # The control FIRST, on the same ledger: it extends fine until cancelled,
+    # so the refusal below is the cancellation and nothing else.
+    assert source.extend_lease(claimed, "worker-1", ledger, budget) is not None
+
+    ledger.cancel("the operator stopped it")
+
+    with pytest.raises(HarnessError) as failure:
+        source.extend_lease(claimed, "worker-1", ledger, budget)
+
+    assert failure.value.code == "run_not_permitted"
+    assert "the operator stopped it" in failure.value.message
+
+
+def test_a_step_exhausted_run_cannot_extend_its_lease() -> None:
+    clock = Clock()
+    source = a_source(clock=clock, lease_seconds=60)
+    source.add("Do the thing", "t-1")
+    claimed = source.claim("worker-1")
+    assert claimed is not None
+
+    ledger = a_ledger()
+    budget = RunBudget(max_steps=8, max_seconds=6000)
+    ledger.record_steps(7)
+
+    # The control: one step below the cap still extends.
+    assert source.extend_lease(claimed, "worker-1", ledger, budget) is not None
+
+    ledger.record_steps(1)
+
+    with pytest.raises(HarnessError) as failure:
+        source.extend_lease(claimed, "worker-1", ledger, budget)
+
+    assert failure.value.code == "run_not_permitted"
+    assert "step budget" in failure.value.message
+
+
+def test_a_cost_exhausted_run_cannot_extend_its_lease() -> None:
+    clock = Clock()
+    source = a_source(clock=clock, lease_seconds=60)
+    source.add("Do the thing", "t-1")
+    claimed = source.claim("worker-1")
+    assert claimed is not None
+
+    ledger = a_ledger()
+    budget = RunBudget(max_steps=8, max_cost_usd=1.0, max_seconds=6000)
+    ledger.record_cost(0.25)
+
+    assert source.extend_lease(claimed, "worker-1", ledger, budget) is not None
+
+    ledger.record_cost(0.80)
+
+    with pytest.raises(HarnessError) as failure:
+        source.extend_lease(claimed, "worker-1", ledger, budget)
+
+    assert failure.value.code == "run_not_permitted"
+    assert "cost budget" in failure.value.message
+
+
 def test_a_budget_with_no_wall_clock_cap_does_not_get_one_invented_here() -> None:
     # Two spellings of one limit is how a bound ends up set in the place that is
     # not enforced. If the operator declined to cap wall-clock, this does not
@@ -672,6 +768,73 @@ def test_a_budget_with_no_wall_clock_cap_does_not_get_one_invented_here() -> Non
     )
 
     assert extended.claimed_until == int(EPOCH + 300)
+
+
+@pytest.mark.parametrize("lease", [0, -1, -0.001, -300, float("nan"), float("inf"), float("-inf")])
+def test_a_lease_that_is_not_a_positive_finite_number_is_refused(lease: float) -> None:
+    """REFUSED, not clamped, at every door a lease can arrive through.
+
+    TypeScript clamped a non-positive lease up to one second. This refuses,
+    because a clamped value is a configuration that silently became a different
+    configuration -- and the direction is not neutral: a lease of zero or less
+    puts ``claimed_until`` in the PAST, so the claim expires the instant it is
+    granted and the next caller steals it. Two workers on one task, from a
+    number nobody was told was wrong.
+
+    NaN is in the list because ``nan <= 0`` is FALSE. A bare positivity check
+    lets it through and it detonates later inside ``int(now + nan)`` -- a crash
+    several frames from the value that caused it, rather than a code.
+    """
+    store = a_store()
+
+    with pytest.raises(HarnessError) as constructed:
+        StoreTaskSource(store, KEY, lease_seconds=lease)
+
+    assert constructed.value.code == "task_lease_invalid"
+
+    source = a_source(store, Clock())
+    source.add("Do the thing", "t-1")
+
+    with pytest.raises(HarnessError) as claimed:
+        source.claim("worker-1", lease_seconds=lease)
+
+    assert claimed.value.code == "task_lease_invalid"
+
+    # Nothing was claimed on the way out of that refusal.
+    untouched = source.find("t-1")
+    assert untouched is not None
+    assert untouched.state is TaskState.TODO
+
+    held = source.claim("worker-1")
+    assert held is not None
+
+    with pytest.raises(HarnessError) as extended:
+        source.extend_lease(
+            held, "worker-1", a_ledger(), RunBudget(max_steps=8), lease_seconds=lease
+        )
+
+    assert extended.value.code == "task_lease_invalid"
+    # And the lease it refused to change is exactly as it was.
+    still_held = source.find("t-1")
+    assert still_held is not None
+    assert still_held.claimed_until == int(EPOCH + DEFAULT_LEASE_SECONDS)
+
+
+def test_a_positive_lease_goes_through_all_three_doors() -> None:
+    # The control for the refusals above: if any of the three simply rejected
+    # everything, every case there would pass and the source would be unusable.
+    clock = Clock()
+    source = StoreTaskSource(a_store(), KEY, lease_seconds=0.5, clock=clock)
+    source.add("Do the thing", "t-1")
+
+    claimed = source.claim("worker-1", lease_seconds=120)
+    assert claimed is not None
+    assert claimed.claimed_until == int(EPOCH + 120)
+
+    extended = source.extend_lease(
+        claimed, "worker-1", a_ledger(), RunBudget(max_steps=8), lease_seconds=240
+    )
+    assert extended.claimed_until == int(EPOCH + 240)
 
 
 def test_the_default_lease_is_five_minutes() -> None:
@@ -931,7 +1094,10 @@ def test_an_authorized_completion_tool_closes_the_task() -> None:
     authorizer = ToolAuthorizer(enabled=True, call=lambda _session, tool, _args: tool.name != "no")
     tools = authorizer.allowed(a_session(), registry.resolve(["complete_task"]))
 
-    assert tools[0].handle({"task_id": "t-1"}) == {"task_id": "t-1", "state": "done"}
+    assert tools[0].handle({"task_id": "t-1", "outcome": "done"}) == {
+        "task_id": "t-1",
+        "state": "done",
+    }
 
     settled = source.find("t-1")
     assert settled is not None
@@ -949,7 +1115,7 @@ def test_a_denied_completion_tool_leaves_the_task_claimed() -> None:
     tools = authorizer.allowed(a_session(), registry.resolve(["complete_task"]))
 
     with pytest.raises(HarnessError) as failure:
-        tools[0].handle({"task_id": "t-1"})
+        tools[0].handle({"task_id": "t-1", "outcome": "done"})
 
     assert failure.value.code == "call_not_authorized"
 
@@ -974,7 +1140,7 @@ def test_the_completion_tool_can_only_close_the_task_its_own_agent_holds() -> No
     tool = TaskCompletionTool(source, "agent-1")
 
     with pytest.raises(HarnessError) as failure:
-        tool.handle({"task_id": "t-2"})
+        tool.handle({"task_id": "t-2", "outcome": "done"})
 
     assert failure.value.code == "task_lease_not_held"
     # The refusal names no other worker: a tool's error comes back to the model
@@ -986,7 +1152,10 @@ def test_the_completion_tool_can_only_close_the_task_its_own_agent_holds() -> No
     assert others.state is TaskState.CLAIMED
 
     # The control: the agent's own task closes through the same call.
-    assert tool.handle({"task_id": "t-1"}) == {"task_id": "t-1", "state": "done"}
+    assert tool.handle({"task_id": "t-1", "outcome": "done"}) == {
+        "task_id": "t-1",
+        "state": "done",
+    }
 
 
 def test_the_completion_tool_will_not_close_an_unclaimed_task() -> None:
@@ -995,13 +1164,16 @@ def test_the_completion_tool_will_not_close_an_unclaimed_task() -> None:
     tool = TaskCompletionTool(source, "agent-1")
 
     with pytest.raises(HarnessError) as failure:
-        tool.handle({"task_id": "t-1"})
+        tool.handle({"task_id": "t-1", "outcome": "done"})
 
     assert failure.value.code == "task_lease_not_held"
 
     # The control: claimed by this agent, the same call goes through.
     assert source.claim("agent-1") is not None
-    assert tool.handle({"task_id": "t-1"}) == {"task_id": "t-1", "state": "done"}
+    assert tool.handle({"task_id": "t-1", "outcome": "done"}) == {
+        "task_id": "t-1",
+        "state": "done",
+    }
 
 
 def test_a_completion_tool_bound_to_no_worker_is_refused() -> None:
@@ -1016,12 +1188,12 @@ def test_the_completion_tool_refuses_a_task_it_cannot_find() -> None:
     tool = TaskCompletionTool(source, "agent-1")
 
     with pytest.raises(HarnessError) as missing:
-        tool.handle({"task_id": "nope"})
+        tool.handle({"task_id": "nope", "outcome": "done"})
 
     assert missing.value.code == "task_not_found"
 
     with pytest.raises(HarnessError) as blank:
-        tool.handle({"task_id": ""})
+        tool.handle({"task_id": "", "outcome": "done"})
 
     assert blank.value.code == "task_identifier_blank"
 
@@ -1037,6 +1209,41 @@ def test_the_completion_tool_refuses_a_task_it_cannot_find() -> None:
 # One rule covers both: a value the agent supplies is either exactly one of the
 # two outcomes or it is refused. Never coerced, never ignored, and never
 # defaulted toward the more privileged answer.
+
+
+#: Outcomes padded with whitespace, for the no-trimming rule.
+#:
+#: EVERY CODEPOINT HERE MUST BE ONE PYTHON'S OWN ``str.strip()`` REMOVES, or the
+#: case proves nothing: a trimming implementation would refuse it for the same
+#: reason a correct one does, and the test would pass against the bug it exists
+#: to catch. ``test_the_padding_fixtures_are_adversarial_in_this_language``
+#: enforces that, because it is not visible by reading the list.
+#:
+#: U+00A0 is here on purpose. PHP's suite used it and it was TOOTHLESS there --
+#: PHP's ``trim()`` strips ASCII only, so the case passed against a trimming
+#: implementation. Python's ``str.strip()`` does remove it, so the same
+#: codepoint is a real test in this language and a dud in that one. U+200B is
+#: NOT here for the mirror-image reason: Python does not strip it either.
+PADDED_OUTCOMES = [
+    " done",
+    "done ",
+    "\u00a0done",
+    "done\u00a0",
+    "\u3000done",
+    "\tdone",
+]
+
+
+def test_the_padding_fixtures_are_adversarial_in_this_language() -> None:
+    # A fixture list that quietly stops being adversarial is worse than no list,
+    # because it still reads as coverage. This fails the day someone adds a
+    # codepoint Python leaves alone.
+    for padded in PADDED_OUTCOMES:
+        assert padded.strip() in ("done", "failed"), (
+            f"{padded!r} is not stripped by Python's own str.strip(), so refusing it proves "
+            "nothing about whether this implementation trims"
+        )
+        assert padded not in ("done", "failed")
 
 
 def a_held_task(source: StoreTaskSource) -> TaskCompletionTool:
@@ -1064,16 +1271,50 @@ def test_the_completion_tool_honours_the_outcome_the_agent_asked_for() -> None:
     assert settled.state is TaskState.FAILED
 
 
-def test_the_completion_tool_records_done_when_no_outcome_is_asked_for() -> None:
-    # Asserted rather than left implicit, because it is the one case where an
-    # absent value resolves to the MORE privileged outcome. It is defensible
-    # only because the agent already invoked a tool called `complete_task`:
-    # that is the tool's declared purpose, not a fallback for input it could
-    # not understand. Every value it cannot understand is refused below.
+def test_an_absent_outcome_is_refused_exactly_like_a_malformed_one() -> None:
+    """Silence is not a request to complete the task.
+
+    This used to return ``done``, on the reasoning that an agent invoking a tool
+    called ``complete_task`` had declared its intent. That is the SAME inference
+    that produced the hardcoded ``done`` this tool shipped with -- reading the
+    privileged outcome out of silence, moved one level up from where it was
+    caught rather than removed. Same code as a malformed outcome, because it is
+    the same mistake.
+    """
     source = a_source()
     tool = a_held_task(source)
 
-    assert tool.handle({"task_id": "t-1"}) == {"task_id": "t-1", "state": "done"}
+    with pytest.raises(HarnessError) as failure:
+        tool.handle({"task_id": "t-1"})
+
+    assert failure.value.code == "task_outcome_invalid"
+
+    # Nothing recorded, and specifically not the privileged outcome.
+    unchanged = source.find("t-1")
+    assert unchanged is not None
+    assert unchanged.state is not TaskState.DONE
+    assert unchanged.state is TaskState.CLAIMED
+
+    # The control: the same call with the outcome stated goes through, so the
+    # refusal is about the missing field and not about the tool being broken.
+    assert tool.handle({"task_id": "t-1", "outcome": "done"}) == {
+        "task_id": "t-1",
+        "state": "done",
+    }
+
+
+def test_an_agent_that_asks_for_failed_reads_back_failed() -> None:
+    # The end-to-end shape the reference pins: what the agent stated is what the
+    # record says, through the tool rather than through `release()`.
+    source = a_source()
+    tool = a_held_task(source)
+
+    tool.handle({"task_id": "t-1", "outcome": "failed"})
+    settled = source.find("t-1")
+
+    assert settled is not None
+    assert settled.state is not TaskState.DONE
+    assert settled.state is TaskState.FAILED
 
 
 @pytest.mark.parametrize(
@@ -1085,8 +1326,7 @@ def test_the_completion_tool_records_done_when_no_outcome_is_asked_for() -> None
         "completed",
         "success",
         "ok",
-        " done",
-        "done ",
+        *PADDED_OUTCOMES,
         "",
         "todo",
         "claimed",

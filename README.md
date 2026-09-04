@@ -85,7 +85,14 @@ while (task := tasks.claim("worker-1")) is not None:
     tasks.release(task, TaskOutcome.DONE if worked else TaskOutcome.FAILED)
 ```
 
-Four states — `todo`, `claimed`, `done`, `failed` — and no others.
+Four states — `todo`, `claimed`, `done`, `failed` — and no others, behind four
+methods: `claim`, `release`, `pending` and `find`. `find` is on the contract
+because `release` takes a task while every caller outside the loop — a tool, an
+HTTP route, a worker resuming after a restart — holds only an id.
+
+A lease must be a finite number of seconds greater than zero. A zero or negative
+one is refused rather than clamped: it would expire the instant it was granted,
+so the claim it should protect would be stealable by the next caller.
 
 `claim()` is **one call**, not a read followed by a mark: the read that picks the
 task and the write that takes it happen inside one store lock, so two workers get
@@ -110,11 +117,12 @@ bound to one worker and closes only the task that worker is holding — `release
 takes no worker, so an unbound tool would let an agent close a task somebody else
 was mid-way through.
 
-An outcome the agent supplies is honoured, and is either exactly `done` or
-exactly `failed` or refused with `task_outcome_invalid`. No case folding, no
-trimming, no truthiness and no default: an implementation that resolves what it
-cannot read always resolves it toward the privileged answer, which is an agent
-closing a task it never finished by writing `complete` instead of `done`.
+The agent must state an outcome, and it is either exactly `done` or exactly
+`failed` or refused with `task_outcome_invalid`. No case folding, no trimming,
+no truthiness — and an ABSENT outcome is refused too, not read as `done`. An
+implementation that resolves what it cannot read always resolves it toward the
+privileged answer, whether it is coercing `complete` into `done` or inferring
+completion from a field the agent never sent.
 
 **The list is durable state, so a task source refuses to start on a volatile
 store** — a half-finished list that vanishes on a deploy is indistinguishable
