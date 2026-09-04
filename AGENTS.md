@@ -43,10 +43,15 @@ FILTER's exit code. Redirect to a file, echo `$?`, then look.
   retries, then marks the file dead.
 - **The sync/async split from `prism-harness-ts` is deliberate**, not drift.
   See the README.
-- **`atc-0017` in the agent-task-claim corpus is RED ON PURPOSE.** A fractional
-  lease of `90.4` is refused by `prism-harness-ts` and accepted here, then
-  truncated to 90 -- one row, three languages, three answers, and this is the
-  one that accepts it. Recorded rather than fixed, because refusing a
-  non-integral lease is a behaviour change in a shipped package and
-  `DEFAULT_LEASE_SECONDS` is itself a float. See G-40 in the envelope's
-  `port-gaps-register.md`. Do not make it agree by editing the runner.
+- **A lease must be a positive WHOLE number of seconds**, and that was not true
+  here until the cross-language corpus asked. `_require_lease` checked
+  finite-and-positive, so `90.4` was accepted and then truncated to a 90 second
+  lease by `_timestamp` -- a configuration silently becoming a different
+  configuration, in the unsafe direction, since a lease that lapses early hands
+  the task out while its holder still believes it holds it. Nothing errored and
+  no per-language test could see it: the reference cannot even ask (`claim()`
+  declares `?int`) and each language asserts against the value its own code
+  produced. `suites/agent-task-claim` atc-0017 found it. G-40, closed.
+  **Check every route into a lease, not only the typed one** -- the reference's
+  own guard was defeated from inside its shipped config file, by an `(int)`
+  cast. `Session.tasks()` is the equivalent route here and has its own test.

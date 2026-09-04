@@ -11,23 +11,25 @@ disagreement about how ``claimed_by`` is compared lets one worker close
 another's work. NEITHER ERRORS, and neither is visible to a per-language suite,
 because each one asserts against the value its own code produced.
 
-Twenty of the twenty-one rows agree with the PHP reference. ``atc-0017`` does
-not, and it is recorded as a DIVERGENCE rather than skipped, because a skip
-hides the finding: **this port accepts a fractional lease and truncates it**,
-where the row exists to pin that a fractional lease is refused.
+Every row now produces the same verdict here as in ``prism-harness-ts``, and
+the same verdict as the reference on every row the reference can express.
+``atc-0017`` is the exception in shape rather than in behaviour: PHP is SKIPPED
+for it under decision 0002, because ``claim()`` declares ``?int`` and the type
+system rejects ``90.4`` before any guard in the package runs. Both ports reach
+their own guard and refuse it as ``task_lease_invalid`` -- a DECISION rather
+than a type error.
 
-That row is the one worth reading twice. PHP cannot express it at all --
-``claim()`` declares ``?int``, so the type system rejects 90.4 before any guard
-in the package runs -- and is skipped for it under decision 0002.
-``prism-harness-ts`` has no such constraint, reaches its own guard, and REFUSES
-the value as ``task_lease_invalid``. This port has no such constraint either,
-reaches ``_require_lease``, which only asks for finite-and-positive, and grants
-a 90-second lease for a 90.4-second request. So the two languages that can
-express the row disagree, and this is the one that accepts it -- a
-configuration silently becoming a different configuration, which is the exact
-rule ``_require_lease``'s own docstring says it holds. Recorded here rather
-than fixed, because closing it changes shipped behaviour and belongs in a
-decision across the three repositories.
+**That row did not start green here, and how it went green is the point.** The
+first recording of this suite had PHP skipping, TypeScript refusing, and this
+port ACCEPTING ``90.4`` and truncating it to a 90 second lease -- one row,
+three languages, three answers. Nothing errored: ``claimed_until`` simply
+landed on ``now + 90`` and the record looked entirely ordinary. Neither
+language's own suite could see it, because each asserts against the value its
+own code produced, and the reference could not even ask the question. The fix
+was in ``_require_lease``, which asked for finite-and-positive and not for
+WHOLE -- so a fractional lease was a configuration silently becoming a
+different configuration, the same rule as the refused zero lease one scale
+down.
 
 Drives the rows the way ``prism-parity:tools/generate-agent-task-claim.php``
 drives them, and mirrors
@@ -272,61 +274,62 @@ def test_diverges_on_exactly_the_one_row_the_manifest_names() -> None:
     assert [case["id"] for case in DIVERGING] == ["atc-0017"]
 
 
-def test_the_fractional_lease_is_truncated_here_and_unexpressible_in_php() -> None:
-    """The finding, asserted as behaviour rather than left as a recorded string.
+def test_the_fractional_lease_is_refused_here_and_unexpressible_in_php() -> None:
+    """The row PHP cannot ask, asserted as behaviour rather than as a string.
 
-    PHP is skipped for this row: ``claim()`` declares ``?int``, so 90.4 is
-    rejected by the type system before any guard in the package runs. Python has
-    no such constraint, so the row IS expressible here -- and what it shows is
-    that the lease is accepted and then silently truncated by ``_timestamp``.
+    ``claim()`` declares ``?int`` in the reference, so 90.4 is rejected by the
+    type system before any guard in the package runs and the row is SKIPPED for
+    PHP under 0002. Python has no such constraint, so the row IS expressible
+    here -- which means the refusal is this port's own decision rather than
+    something its language did for it, and that is the thing worth asserting.
 
-    A configuration that silently became a different configuration, which is the
-    exact rule ``_require_lease`` states it holds. The direction matters too: 90
-    seconds where 90.4 was asked for expires EARLY, so the next caller may take
-    the task while the first worker believes it still holds it.
+    It did not always refuse. The first recording of this suite had it accept
+    90.4 and truncate to a 90 second lease: a configuration silently becoming a
+    different configuration, and in the unsafe direction, since a lease that
+    lapses early is a task handed out while its holder still believes it holds
+    it. ``_require_lease`` asked for finite-and-positive and not for WHOLE.
     """
     case = _case("atc-0017")
+    produced = run_case(case)
 
     assert "skipped" in case["result"]["php"]
+    assert produced["outcome"] == "refused"
+    assert produced["code"] == "task_lease_invalid"
+    assert produced["record"] is None
 
-    produced = run_case(case)
-    record = produced["record"]
-
-    assert produced["outcome"] == "ok"
-    assert record is not None
-
-    granted = record["claimed_until"] - case["given"]["now"]
-
-    assert granted == 90
-    assert granted != case["when"]["lease_seconds"]
+    # And nothing was claimed on the way out of the refusal. A guard that
+    # refuses AFTER writing is the failure this row is about, one step later.
+    assert _seeded(case).find("t-1") is not None
+    assert _seeded(case).pending() == 2
 
 
-def test_the_fractional_lease_is_a_three_way_split_and_stays_visible_as_one() -> None:
-    # Asserted from this side as well as from the TypeScript runner's, so a
-    # re-vendor that quietly changed any of the three answers goes red rather
-    # than passing. The three-way split IS the finding: one row, three
-    # languages, three behaviours, on the value that decides when another
-    # worker may take a task.
+def test_the_fractional_lease_refusal_is_a_decision_and_not_a_type_error() -> None:
+    # The distinction the row turns on, and it is only visible across
+    # languages. PHP is skipped because its SIGNATURE stops the value; both
+    # ports reach their own guard and choose. Asserted from this side as well
+    # as from the TypeScript runner's, so a re-vendor that quietly changed
+    # either answer goes red rather than passing.
     result = _case("atc-0017")["result"]
-
-    assert "skipped" in result["php"]
-    assert result["ts"] == {
+    refusal = {
         "outcome": "refused",
         "code": "task_lease_invalid",
         "record": None,
         "pending": None,
     }
-    assert result["py"]["outcome"] == "ok"
+
+    assert "skipped" in result["php"]
+    assert result["ts"] == refusal
+    assert result["py"] == refusal
 
 
-def test_agrees_with_typescript_everywhere_except_the_three_recorded_rows() -> None:
-    # atc-0011 and atc-0012 are G-39, where this port holds the line the
-    # reference holds and TypeScript does not. atc-0017 is G-40, the other way
-    # round. Naming the set is what makes a fourth disagreement appear as a
-    # failure rather than as a number nobody was watching.
+def test_agrees_with_typescript_on_every_row() -> None:
+    # The two ports were written from the contract independently and are the
+    # two implementations that can express every row. Naming the empty set is
+    # what makes a first disagreement appear as a failure rather than as a
+    # number nobody was watching.
     differ = [case["id"] for case in CASES if case["result"]["py"] != case["result"]["ts"]]
 
-    assert differ == ["atc-0011", "atc-0012", "atc-0017"]
+    assert differ == []
 
 
 # -- the bytes --------------------------------------------------------------
@@ -350,7 +353,9 @@ def test_claimed_until_is_an_integer_and_not_a_float_that_compares_equal() -> No
 
     # Vacuity guard. A loop that examined nothing passes silently, and this one
     # would if `record` ever stopped carrying the field.
-    assert checked == 6
+    # Five, not six: atc-0017 no longer produces a record at all, because the
+    # fractional lease it asks for is now refused.
+    assert checked == 5
 
 
 def test_pending_is_an_integer_count() -> None:
@@ -365,7 +370,8 @@ def test_pending_is_an_integer_count() -> None:
         assert type(pending) is int, case["id"]
         checked += 1
 
-    assert checked == 13
+    # Twelve, not thirteen: atc-0017 joined the refusals.
+    assert checked == 12
 
 
 def test_the_record_carries_the_references_keys_in_the_references_order() -> None:

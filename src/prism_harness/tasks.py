@@ -47,7 +47,11 @@ __all__ = [
 #: short enough that a crashed worker does not wedge the list for an hour. The
 #: number matters less than it being the same number in all three languages, so
 #: it is pinned in the spec rather than chosen per port.
-DEFAULT_LEASE_SECONDS = 300.0
+#:
+#: A WHOLE number, spelled as one. A lease has to be a positive integer of
+#: seconds -- see :func:`_require_lease` -- and a shipped default written as a
+#: float invites a consumer to derive a fractional one from it.
+DEFAULT_LEASE_SECONDS = 300
 
 #: Tells ABSENT from present-and-null, which 0002 makes an observable decision.
 #: An argument a model did not send and an argument it sent as null are
@@ -932,17 +936,27 @@ def _state_of(record: dict[str, Any]) -> TaskState:
 
 
 def _require_lease(seconds: float) -> float:
-    """A lease must be a finite number of seconds greater than zero.
+    """A lease must be a POSITIVE WHOLE number of seconds.
 
-    REFUSED, never clamped. TypeScript's port clamped a non-positive lease up to
-    one second; this refuses, because a clamped value is a configuration that
-    silently became a different configuration, and this repository has already
-    shipped one of those and stayed green for its whole life.
+    REFUSED, never clamped, never truncated, at every door a lease arrives
+    through. TypeScript's port clamped a non-positive lease up to one second;
+    this refuses, because a clamped value is a configuration that silently
+    became a different configuration, and this repository has already shipped
+    one of those and stayed green for its whole life.
 
     The direction matters too. A zero or negative lease is not merely a strange
     number: ``claimed_until`` lands in the past, so the claim expires the instant
     it is granted and the very next caller steals it. Two workers on one task,
     from a config value nobody was told was wrong.
+
+    **Fractional is the same rule one scale down, and it was missed here.**
+    ``90.4`` cannot be honoured as written -- ``claimed_until`` is an integer
+    timestamp in all three languages -- so accepting it means granting 90 and
+    saying nothing, which is the identical silent configuration change. It is
+    not saved by landing in the "safe" direction either: that is the clamping
+    argument restated, and it was not enough for zero. Found by
+    ``suites/agent-task-claim`` atc-0017, where the reference could not even ask
+    the question (``claim()`` declares ``?int``) and TypeScript already refused.
 
     Non-finite is checked as well, and separately. ``nan <= 0`` is FALSE, so a
     NaN lease sails through a bare positivity check and then explodes in
@@ -950,13 +964,16 @@ def _require_lease(seconds: float) -> float:
     value that caused it.
     """
     try:
+        # OverflowError as well as TypeError: an int too large for a float --
+        # 10 ** 400 out of a decoded JSON body -- raises here rather than
+        # returning False, and a crash is not a code a consumer can branch on.
         finite = math.isfinite(seconds)
-    except TypeError:
+    except (TypeError, OverflowError):
         # An untyped caller -- a decoded JSON body, a config file -- gets a code
         # rather than a TypeError, for the same reason the outcome is parsed.
         raise HarnessError.task_lease_invalid(seconds) from None
 
-    if not finite or seconds <= 0:
+    if not finite or seconds <= 0 or not float(seconds).is_integer():
         raise HarnessError.task_lease_invalid(seconds)
 
     return float(seconds)

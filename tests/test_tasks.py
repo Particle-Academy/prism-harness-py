@@ -772,9 +772,35 @@ def test_a_budget_with_no_wall_clock_cap_does_not_get_one_invented_here() -> Non
     assert extended.claimed_until == int(EPOCH + 300)
 
 
-@pytest.mark.parametrize("lease", [0, -1, -0.001, -300, float("nan"), float("inf"), float("-inf")])
-def test_a_lease_that_is_not_a_positive_finite_number_is_refused(lease: float) -> None:
-    """REFUSED, not clamped, at every door a lease can arrive through.
+@pytest.mark.parametrize(
+    "lease",
+    [
+        0,
+        -1,
+        -0.001,
+        -300,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        # Fractional, and positive, and finite. The same rule one scale down --
+        # see the docstring below and `_require_lease`.
+        0.5,
+        90.4,
+        299.999,
+        300.5,
+        # Not a number at all, and not a TypeError either: an untyped caller
+        # gets a code like every other refusal here. `None` is deliberately NOT
+        # in this list -- it is refused at the constructor, where it is not a
+        # lease, and it MEANS "the source's default" at claim() and
+        # extend_lease(), which is the documented signature.
+        "300",
+        # An int too large to become a float. `math.isfinite` RAISES on this
+        # rather than returning False, so it needs its own answer.
+        10**400,
+    ],
+)
+def test_a_lease_that_is_not_a_positive_whole_number_is_refused(lease: float) -> None:
+    """REFUSED, not clamped and not truncated, at every door a lease arrives through.
 
     TypeScript clamped a non-positive lease up to one second. This refuses,
     because a clamped value is a configuration that silently became a different
@@ -782,6 +808,16 @@ def test_a_lease_that_is_not_a_positive_finite_number_is_refused(lease: float) -
     puts ``claimed_until`` in the PAST, so the claim expires the instant it is
     granted and the next caller steals it. Two workers on one task, from a
     number nobody was told was wrong.
+
+    **Fractional is the same rule one scale down**, and it is here because the
+    cross-language corpus caught it: ``suites/agent-task-claim`` atc-0017 asks
+    for a lease of ``90.4``, the reference cannot even ask the question because
+    ``claim()`` declares ``?int``, ``prism-harness-ts`` refused it, and this
+    port accepted it and truncated to 90. ``claimed_until`` is an integer
+    timestamp in all three languages, so a fractional lease could never be
+    honoured as written -- accepting it means granting a different number and
+    saying nothing. "It truncates in the safe direction" is the clamping
+    argument restated, and that was not enough for zero.
 
     NaN is in the list because ``nan <= 0`` is FALSE. A bare positivity check
     lets it through and it detonates later inside ``int(now + nan)`` -- a crash
@@ -822,11 +858,14 @@ def test_a_lease_that_is_not_a_positive_finite_number_is_refused(lease: float) -
     assert still_held.claimed_until == int(EPOCH + DEFAULT_LEASE_SECONDS)
 
 
-def test_a_positive_lease_goes_through_all_three_doors() -> None:
+def test_a_positive_whole_lease_goes_through_all_three_doors() -> None:
     # The control for the refusals above: if any of the three simply rejected
     # everything, every case there would pass and the source would be unusable.
+    # `30.0` is spelled as a float on purpose -- an INTEGRAL float is a whole
+    # number of seconds and must go through, or the guard is refusing a type
+    # rather than a value.
     clock = Clock()
-    source = StoreTaskSource(a_store(), KEY, lease_seconds=0.5, clock=clock)
+    source = StoreTaskSource(a_store(), KEY, lease_seconds=30.0, clock=clock)
     source.add("Do the thing", "t-1")
 
     claimed = source.claim("worker-1", lease_seconds=120)
@@ -837,6 +876,30 @@ def test_a_positive_lease_goes_through_all_three_doors() -> None:
         claimed, "worker-1", a_ledger(), RunBudget(max_steps=8), lease_seconds=240
     )
     assert extended.claimed_until == int(EPOCH + 240)
+
+
+def test_a_fractional_lease_is_refused_on_the_configuration_route_too() -> None:
+    """The route a real consumer configures a lease through, not a direct call.
+
+    The reference's fractional lease survived at first precisely BECAUSE the
+    typed door already refused it: ``claim()`` declares ``?int``, so nobody
+    looked further, and the config route truncated silently because the shipped
+    config file cast the setting with ``(int)``. The guard was defeated from
+    inside the file that declares the setting.
+
+    This port has no config file, and ``Session.tasks()`` is the equivalent
+    route -- the place an application names its lease once. It passes the value
+    through untouched, which is what makes it safe, and this is what says so.
+    """
+    session = a_session()
+
+    with pytest.raises(HarnessError) as configured:
+        session.tasks(lease_seconds=90.4)
+
+    assert configured.value.code == "task_lease_invalid"
+
+    # The control, on the same route: a whole lease is configured and honoured.
+    assert session.tasks(lease_seconds=90).claim("worker-1") is None
 
 
 def test_the_default_lease_is_five_minutes() -> None:

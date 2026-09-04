@@ -546,7 +546,7 @@
         },
         "ts": {
           "outcome": "refused",
-          "code": "unmappable_content",
+          "code": "task_outcome_invalid",
           "record": null,
           "pending": null
         },
@@ -589,7 +589,7 @@
         },
         "ts": {
           "outcome": "refused",
-          "code": "unmappable_content",
+          "code": "task_outcome_invalid",
           "record": null,
           "pending": null
         },
@@ -808,16 +808,10 @@
           "pending": null
         },
         "py": {
-          "outcome": "ok",
-          "code": null,
-          "record": {
-            "claimed_by": "w-1",
-            "claimed_until": 1735689690,
-            "id": "t-1",
-            "instruction": "first",
-            "state": "claimed"
-          },
-          "pending": 1
+          "outcome": "refused",
+          "code": "task_lease_invalid",
+          "record": null,
+          "pending": null
         }
       }
     },
