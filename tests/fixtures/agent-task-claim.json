@@ -1,0 +1,1039 @@
+{
+  "suite": "agent-task-claim",
+  "schema_version": 1,
+  "corpus_version": "0.1.0",
+  "generated_by": "tools/generate-agent-task-claim.php",
+  "scope": "The claim and release state machine of an agent task list, and the canonical record it stores. NOT the completion tool, NOT the lease-extension path, and NOT the store's locking primitive -- each of those is a separate value with a separate failure mode, and this suite existing does not cover them.",
+  "encoding": "utf-8",
+  "recorded": "Every row records the OUTCOME (ok or refused), the error CODE when refused, the canonical JSON of the affected record, and pending() afterwards. Codes rather than prose, per 0004: error messages are explicitly outside the contract.",
+  "cases": [
+    {
+      "id": "atc-0001",
+      "title": "an ordinary claim from a two-task list",
+      "since": "0.3.0",
+      "notes": "The control. If this row disagrees the claim path is wrong at the top and every row below it is noise.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first"
+          },
+          {
+            "id": "t-2",
+            "instruction": "second"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim",
+        "worker": "w-1",
+        "lease_seconds": 300
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 1
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 1
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 1
+        }
+      }
+    },
+    {
+      "id": "atc-0002",
+      "title": "claim returns INSERTION order, never sorted",
+      "since": "0.3.0",
+      "notes": "Ordering is the divergence class 0002 calls hardest to notice: nothing errors, the agent simply does the work in a different sequence and produces a different result. The ids are chosen so that alphabetical and insertion order DISAGREE.",
+      "given": {
+        "tasks": [
+          {
+            "id": "z-first",
+            "instruction": "first"
+          },
+          {
+            "id": "a-second",
+            "instruction": "second"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim",
+        "worker": "w-1",
+        "lease_seconds": 300
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900,
+            "id": "z-first",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 1
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900,
+            "id": "z-first",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 1
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900,
+            "id": "z-first",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 1
+        }
+      }
+    },
+    {
+      "id": "atc-0003",
+      "title": "a claim against an empty list",
+      "since": "0.3.0",
+      "notes": "Null, not an error. An empty list is a finished list, and that is how the loop terminates.",
+      "given": {
+        "tasks": [],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim",
+        "worker": "w-1",
+        "lease_seconds": 300
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 0
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 0
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 0
+        }
+      }
+    },
+    {
+      "id": "atc-0004",
+      "title": "every task claimed and none expired",
+      "since": "0.3.0",
+      "notes": "Null again, for a different reason than atc-0003: there is work, it is simply not available.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first",
+            "claimed_by": "w-9",
+            "claimed_until": 1735689900
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim",
+        "worker": "w-2",
+        "lease_seconds": 300
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 0
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 0
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 0
+        }
+      }
+    },
+    {
+      "id": "atc-0005",
+      "title": "a lapsed lease returns the task to todo and NEVER to failed",
+      "since": "0.3.0",
+      "notes": "A worker dying is not the task failing. Marking it failed burns a retry that never ran and tells the application something untrue about the work.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first",
+            "claimed_by": "w-9",
+            "claimed_until": 1735689599
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim",
+        "worker": "w-2",
+        "lease_seconds": 300
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-2",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 0
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-2",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 0
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-2",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 0
+        }
+      }
+    },
+    {
+      "id": "atc-0006",
+      "title": "expiry is INCLUSIVE: a lease is over AT its expiry",
+      "since": "0.3.0",
+      "notes": "claimed_until equals now. A one-tick boundary difference between ports is a real divergence and nothing errors on it.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first",
+            "claimed_by": "w-9",
+            "claimed_until": 1735689600
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim",
+        "worker": "w-2",
+        "lease_seconds": 300
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-2",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 0
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-2",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 0
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-2",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 0
+        }
+      }
+    },
+    {
+      "id": "atc-0007",
+      "title": "release by the holder",
+      "since": "0.3.0",
+      "notes": "The positive control for every refusal below it. Without this row they all pass on an implementation that refuses everything.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first",
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "release",
+        "task_id": "t-1",
+        "worker": "w-1",
+        "outcome": "done"
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": null,
+            "claimed_until": null,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "done"
+          },
+          "pending": 0
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": null,
+            "claimed_until": null,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "done"
+          },
+          "pending": 0
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": null,
+            "claimed_until": null,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "done"
+          },
+          "pending": 0
+        }
+      }
+    },
+    {
+      "id": "atc-0008",
+      "title": "release by someone who is NOT the holder",
+      "since": "0.3.0",
+      "notes": "The sequence needs no adversary. Worker A's lease lapses, B reclaims and starts, A finishes late and overwrites B's live claim -- and B's own release then fails as already-terminal, so the second worker is blamed for the first one's mistake.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first",
+            "claimed_by": "w-2",
+            "claimed_until": 1735689900
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "release",
+        "task_id": "t-1",
+        "worker": "w-1",
+        "outcome": "done"
+      },
+      "result": {
+        "php": {
+          "outcome": "refused",
+          "code": "task_lease_not_held",
+          "record": null,
+          "pending": null
+        },
+        "ts": {
+          "outcome": "refused",
+          "code": "task_lease_not_held",
+          "record": null,
+          "pending": null
+        },
+        "py": {
+          "outcome": "refused",
+          "code": "task_lease_not_held",
+          "record": null,
+          "pending": null
+        }
+      }
+    },
+    {
+      "id": "atc-0009",
+      "title": "release of a task nobody holds",
+      "since": "0.3.0",
+      "notes": "Silence is not permission. Reading an unknowable holder as a match is the absent-outcome mistake asked about a different field.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "release",
+        "task_id": "t-1",
+        "worker": "w-1",
+        "outcome": "done"
+      },
+      "result": {
+        "php": {
+          "outcome": "refused",
+          "code": "task_lease_not_held",
+          "record": null,
+          "pending": null
+        },
+        "ts": {
+          "outcome": "refused",
+          "code": "task_lease_not_held",
+          "record": null,
+          "pending": null
+        },
+        "py": {
+          "outcome": "refused",
+          "code": "task_lease_not_held",
+          "record": null,
+          "pending": null
+        }
+      }
+    },
+    {
+      "id": "atc-0010",
+      "title": "releasing a terminal task again",
+      "since": "0.3.0",
+      "notes": "Terminal means terminal. A silent no-op here is how a second worker's result gets discarded with nothing saying so.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first",
+            "state": "done"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "release",
+        "task_id": "t-1",
+        "worker": "w-1",
+        "outcome": "done"
+      },
+      "result": {
+        "php": {
+          "outcome": "refused",
+          "code": "task_already_terminal",
+          "record": null,
+          "pending": null
+        },
+        "ts": {
+          "outcome": "refused",
+          "code": "task_already_terminal",
+          "record": null,
+          "pending": null
+        },
+        "py": {
+          "outcome": "refused",
+          "code": "task_already_terminal",
+          "record": null,
+          "pending": null
+        }
+      }
+    },
+    {
+      "id": "atc-0011",
+      "title": "an outcome the agent supplies is never coerced",
+      "since": "0.3.0",
+      "notes": "The string complete is not done. Coercing anything-not-failed toward the PRIVILEGED outcome is an agent declaring victory by typo.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first",
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "release",
+        "task_id": "t-1",
+        "worker": "w-1",
+        "outcome": "complete"
+      },
+      "result": {
+        "php": {
+          "outcome": "refused",
+          "code": "task_outcome_invalid",
+          "record": null,
+          "pending": null
+        },
+        "ts": {
+          "outcome": "refused",
+          "code": "unmappable_content",
+          "record": null,
+          "pending": null
+        },
+        "py": {
+          "outcome": "refused",
+          "code": "task_outcome_invalid",
+          "record": null,
+          "pending": null
+        }
+      }
+    },
+    {
+      "id": "atc-0012",
+      "title": "an outcome padded with U+00A0 is not trimmed into validity",
+      "since": "0.3.0",
+      "notes": "PHP's trim leaves U+00A0 and Python's strip takes it, so the same input has two answers unless the comparison is exact. That is the G-36 lesson asked about a different field.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first",
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "release",
+        "task_id": "t-1",
+        "worker": "w-1",
+        "outcome": " done"
+      },
+      "result": {
+        "php": {
+          "outcome": "refused",
+          "code": "task_outcome_invalid",
+          "record": null,
+          "pending": null
+        },
+        "ts": {
+          "outcome": "refused",
+          "code": "unmappable_content",
+          "record": null,
+          "pending": null
+        },
+        "py": {
+          "outcome": "refused",
+          "code": "task_outcome_invalid",
+          "record": null,
+          "pending": null
+        }
+      }
+    },
+    {
+      "id": "atc-0013",
+      "title": "a worker id is compared exactly, with no trimming",
+      "since": "0.3.0",
+      "notes": "A worker id padded with a trailing space is a DIFFERENT worker. Trimming would let one worker release another's task, and each language strips a different codepoint set.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first",
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "release",
+        "task_id": "t-1",
+        "worker": "w-1 ",
+        "outcome": "done"
+      },
+      "result": {
+        "php": {
+          "outcome": "refused",
+          "code": "task_lease_not_held",
+          "record": null,
+          "pending": null
+        },
+        "ts": {
+          "outcome": "refused",
+          "code": "task_lease_not_held",
+          "record": null,
+          "pending": null
+        },
+        "py": {
+          "outcome": "refused",
+          "code": "task_lease_not_held",
+          "record": null,
+          "pending": null
+        }
+      }
+    },
+    {
+      "id": "atc-0014",
+      "title": "a blank worker id is refused",
+      "since": "0.3.0",
+      "notes": "The empty string is falsy in PHP, so a blank owner would read as unclaimed. It has to be refused at the door rather than compared.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first"
+          },
+          {
+            "id": "t-2",
+            "instruction": "second"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim",
+        "worker": "",
+        "lease_seconds": 300
+      },
+      "result": {
+        "php": {
+          "outcome": "refused",
+          "code": "task_identifier_blank",
+          "record": null,
+          "pending": null
+        },
+        "ts": {
+          "outcome": "refused",
+          "code": "task_identifier_blank",
+          "record": null,
+          "pending": null
+        },
+        "py": {
+          "outcome": "refused",
+          "code": "task_identifier_blank",
+          "record": null,
+          "pending": null
+        }
+      }
+    },
+    {
+      "id": "atc-0015",
+      "title": "a list ALREADY CONTAINING a duplicate id is read, not refused",
+      "since": "0.3.0",
+      "notes": "Written expecting a refusal, and the reference does not refuse -- which is the finding. duplicate_task_id guards add(), the door this package controls. A list that already holds two tasks with one id is read back and counted. That matters precisely because the list is SHARED SURFACE: a port whose add() is less careful, or a hand-edited row, produces a list this one accepts, and find() then resolves the id to whichever comes first. Recorded as the behaviour rather than corrected to the expectation, because the expectation was mine and the behaviour is the contract's.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first"
+          },
+          {
+            "id": "t-1",
+            "instruction": "again"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "pending"
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 2
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 2
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 2
+        }
+      }
+    },
+    {
+      "id": "atc-0016",
+      "title": "a lease of zero is refused, not clamped",
+      "since": "0.3.0",
+      "notes": "Accepting it silently is worse than clamping: claimed_until lands in the past, so the claim expires the instant it is granted and the next caller steals it. A lock that grants and immediately releases is indistinguishable from no lock.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first"
+          },
+          {
+            "id": "t-2",
+            "instruction": "second"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim",
+        "worker": "w-1",
+        "lease_seconds": 0
+      },
+      "result": {
+        "php": {
+          "outcome": "refused",
+          "code": "task_lease_invalid",
+          "record": null,
+          "pending": null
+        },
+        "ts": {
+          "outcome": "refused",
+          "code": "task_lease_invalid",
+          "record": null,
+          "pending": null
+        },
+        "py": {
+          "outcome": "refused",
+          "code": "task_lease_invalid",
+          "record": null,
+          "pending": null
+        }
+      }
+    },
+    {
+      "id": "atc-0017",
+      "title": "a FRACTIONAL lease is refused, not truncated",
+      "since": "0.3.0",
+      "notes": "90.4 becoming 90 is a configuration silently becoming a different configuration, which is the same rule as zero one scale down. claimed_until is an integer in all three languages, so it could never have been honoured as written.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first"
+          },
+          {
+            "id": "t-2",
+            "instruction": "second"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim",
+        "worker": "w-1",
+        "lease_seconds": 90.4
+      },
+      "result": {
+        "php": {
+          "skipped": "PHP cannot express this row: claim() declares ?int, so the value is rejected by the type system before any guard in the package runs. The reachable path in PHP is the configuration route, which is a different value and belongs in its own row."
+        },
+        "ts": {
+          "outcome": "refused",
+          "code": "task_lease_invalid",
+          "record": null,
+          "pending": null
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689690,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 1
+        }
+      }
+    },
+    {
+      "id": "atc-0018",
+      "title": "pending counts todo AND expired-claimed, and writes nothing",
+      "since": "0.3.0",
+      "notes": "An expired claim is claimable, so it is pending. Counting it as held would stall a loop that still has work to do.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "a"
+          },
+          {
+            "id": "t-2",
+            "instruction": "b",
+            "claimed_by": "w-9",
+            "claimed_until": 1735689599
+          },
+          {
+            "id": "t-3",
+            "instruction": "c",
+            "claimed_by": "w-9",
+            "claimed_until": 1735689900
+          },
+          {
+            "id": "t-4",
+            "instruction": "d",
+            "state": "done"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "pending"
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 2
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 2
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 2
+        }
+      }
+    },
+    {
+      "id": "atc-0019",
+      "title": "find on an id that is not there",
+      "since": "0.3.0",
+      "notes": "Null, not an error, and emphatically not the first task.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first"
+          },
+          {
+            "id": "t-2",
+            "instruction": "second"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "find",
+        "task_id": "nope"
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 2
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 2
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": null,
+          "pending": 2
+        }
+      }
+    },
+    {
+      "id": "atc-0020",
+      "title": "the canonical record of an UNCLAIMED task",
+      "since": "0.3.0",
+      "notes": "claimed_by and claimed_until must be PRESENT AND NULL, never absent. A port modelling unset as undefined drops the keys entirely and changes the bytes.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "find",
+        "task_id": "t-1"
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": null,
+            "claimed_until": null,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "todo"
+          },
+          "pending": 1
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": null,
+            "claimed_until": null,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "todo"
+          },
+          "pending": 1
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": null,
+            "claimed_until": null,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "todo"
+          },
+          "pending": 1
+        }
+      }
+    },
+    {
+      "id": "atc-0021",
+      "title": "claimed_until is an INTEGER timestamp, not a float or a date string",
+      "since": "0.3.0",
+      "notes": "A float passes every equality assertion, because 1735689900.0 equals 1735689900, and renders differently in each language. Date FORMATTING is where three languages produce three strings from one instant.",
+      "given": {
+        "tasks": [
+          {
+            "id": "t-1",
+            "instruction": "first"
+          }
+        ],
+        "now": 1735689600
+      },
+      "when": {
+        "op": "claim_then_find",
+        "worker": "w-1",
+        "lease_seconds": 300,
+        "task_id": "t-1"
+      },
+      "result": {
+        "php": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 0
+        },
+        "ts": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 0
+        },
+        "py": {
+          "outcome": "ok",
+          "code": null,
+          "record": {
+            "claimed_by": "w-1",
+            "claimed_until": 1735689900,
+            "id": "t-1",
+            "instruction": "first",
+            "state": "claimed"
+          },
+          "pending": 0
+        }
+      }
+    }
+  ]
+}
