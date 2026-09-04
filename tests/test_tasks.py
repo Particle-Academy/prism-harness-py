@@ -1024,3 +1024,136 @@ def test_the_completion_tool_refuses_a_task_it_cannot_find() -> None:
         tool.handle({"task_id": ""})
 
     assert blank.value.code == "task_identifier_blank"
+
+
+# -- the outcome an agent supplies -------------------------------------------
+#
+# The TypeScript port coerced anything that was not exactly 'failed' into DONE,
+# so `{}`, `{outcome:'complete'}` and `{outcome:'DONE'}` all recorded DONE: an
+# agent declaring victory by typo. This port had the same escalation reached the
+# other way round -- it hardcoded DONE and IGNORED the argument, so a model
+# asking in as many words for `failed` got `done` written to the record.
+#
+# One rule covers both: a value the agent supplies is either exactly one of the
+# two outcomes or it is refused. Never coerced, never ignored, and never
+# defaulted toward the more privileged answer.
+
+
+def a_held_task(source: StoreTaskSource) -> TaskCompletionTool:
+    source.add("Do the thing", "t-1")
+    assert source.claim("agent-1") is not None
+    return TaskCompletionTool(source, "agent-1")
+
+
+def test_the_completion_tool_honours_the_outcome_the_agent_asked_for() -> None:
+    source = a_source()
+    tool = a_held_task(source)
+
+    assert tool.handle({"task_id": "t-1", "outcome": "failed"}) == {
+        "task_id": "t-1",
+        "state": "failed",
+    }
+
+    settled = source.find("t-1")
+    assert settled is not None
+    # `done` NOT being recorded is the security property and `failed` being
+    # recorded is the assertion, and they are said separately on purpose. The
+    # privileged one goes FIRST so it is a real check rather than one the type
+    # checker has already narrowed away.
+    assert settled.state is not TaskState.DONE
+    assert settled.state is TaskState.FAILED
+
+
+def test_the_completion_tool_records_done_when_no_outcome_is_asked_for() -> None:
+    # Asserted rather than left implicit, because it is the one case where an
+    # absent value resolves to the MORE privileged outcome. It is defensible
+    # only because the agent already invoked a tool called `complete_task`:
+    # that is the tool's declared purpose, not a fallback for input it could
+    # not understand. Every value it cannot understand is refused below.
+    source = a_source()
+    tool = a_held_task(source)
+
+    assert tool.handle({"task_id": "t-1"}) == {"task_id": "t-1", "state": "done"}
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "DONE",
+        "Done",
+        "complete",
+        "completed",
+        "success",
+        "ok",
+        " done",
+        "done ",
+        "",
+        "todo",
+        "claimed",
+        None,
+        True,
+        1,
+        0,
+        {},
+        [],
+        ["done"],
+    ],
+)
+def test_an_outcome_the_agent_supplies_is_never_coerced(outcome: object) -> None:
+    """No value an agent controls may select an outcome without validation.
+
+    Every one of these is refused rather than resolved. The list is mostly
+    near-misses on purpose -- `'DONE'`, `'complete'`, `' done'` -- because a
+    coercing implementation does not fail on obvious rubbish, it fails on the
+    values a model plausibly produces while meaning something specific.
+
+    ``None`` is in the list deliberately: present-and-null is not absent. The
+    agent said something, and what it said is not an outcome.
+    """
+    source = a_source()
+    tool = a_held_task(source)
+
+    with pytest.raises(HarnessError) as failure:
+        tool.handle({"task_id": "t-1", "outcome": outcome})
+
+    assert failure.value.code == "task_outcome_invalid"
+
+    # And nothing was written. A refusal that had already recorded DONE would
+    # be the escalation with an exception stapled to it.
+    unchanged = source.find("t-1")
+    assert unchanged is not None
+    assert unchanged.state is TaskState.CLAIMED
+
+
+def test_the_two_real_outcomes_are_accepted_through_the_same_door() -> None:
+    # The control for the parametrised refusals: if `parse` rejected
+    # everything, every case above would pass and the tool would be useless.
+    assert TaskOutcome.parse("done") is TaskOutcome.DONE
+    assert TaskOutcome.parse("failed") is TaskOutcome.FAILED
+    assert TaskOutcome.parse(TaskOutcome.DONE) is TaskOutcome.DONE
+    assert TaskOutcome.parse(TaskOutcome.FAILED) is TaskOutcome.FAILED
+
+
+def test_release_refuses_an_outcome_that_is_not_one() -> None:
+    # The tool is not the only door. A consumer driving `release()` from a
+    # decoded JSON body has no type checker in the way, and the failure there
+    # was an AttributeError -- a crash rather than a code, which 0004 says a
+    # consumer cannot branch on.
+    source = a_source()
+    source.add("Do the thing", "t-1")
+    claimed = source.claim("agent-1")
+    assert claimed is not None
+
+    with pytest.raises(HarnessError) as failure:
+        source.release(claimed, "complete")  # type: ignore[arg-type]
+
+    assert failure.value.code == "task_outcome_invalid"
+
+    # The control, and it draws the line deliberately: the two WIRE WORDS are
+    # accepted from a bare string, because the word is what is pinned across
+    # the three languages. It is `'complete'` that is refused, not the fact
+    # that a string arrived.
+    source.release(claimed, "done")  # type: ignore[arg-type]
+    settled = source.find("t-1")
+    assert settled is not None
+    assert settled.state is TaskState.DONE

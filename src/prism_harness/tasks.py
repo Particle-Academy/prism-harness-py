@@ -48,6 +48,11 @@ __all__ = [
 #: it is pinned in the spec rather than chosen per port.
 DEFAULT_LEASE_SECONDS = 300.0
 
+#: Tells ABSENT from present-and-null, which 0002 makes an observable decision.
+#: An argument a model did not send and an argument it sent as null are
+#: different statements, and only the first has a safe default.
+_MISSING = object()
+
 
 class TaskState(str, Enum):
     """The four states a task may be in. THERE ARE NO OTHERS.
@@ -91,6 +96,39 @@ class TaskOutcome(str, Enum):
 
     def state(self) -> TaskState:
         return TaskState.DONE if self is TaskOutcome.DONE else TaskState.FAILED
+
+    @classmethod
+    def parse(cls, value: object) -> TaskOutcome:
+        """Exactly one of the two, or :class:`HarnessError`. NO COERCION.
+
+        The one rule: **a value that cannot be read as an outcome is refused,
+        never resolved.** Resolving it always means choosing an outcome nobody
+        asked for, and the choice a lenient implementation makes is invariably
+        the privileged one -- "anything that is not ``failed`` is ``done``"
+        reads as tidy defaulting right up until a model writes ``'complete'``
+        and closes a task it never finished. `prism-harness-ts` shipped that;
+        this port had the same escalation by ignoring the argument instead.
+
+        So, deliberately: no case folding (``'DONE'`` is refused), no trimming
+        (``' done'`` is refused -- and each language's own ``trim`` strips a
+        different codepoint set anyway, which is G-36's lesson), no truthiness,
+        and no default. ``None`` is refused rather than treated as absent,
+        because present-and-null is not absent (0002) -- the caller said
+        something, and what it said is not an outcome.
+        """
+        if isinstance(value, cls):
+            return value
+
+        # A plain string comparison against the two wire words. `TaskState` is
+        # also a str enum, so `TaskState.DONE` passes here and `TaskState.TODO`
+        # does not -- which is the right answer both times: the wire word is
+        # what is pinned, and `todo` is not an outcome.
+        if isinstance(value, str) and not isinstance(value, bool):
+            for outcome in cls:
+                if value == outcome.value:
+                    return outcome
+
+        raise HarnessError.task_outcome_invalid(value)
 
 
 class AgentTask(Protocol):
@@ -448,6 +486,11 @@ class StoreTaskSource:
         worker may already be redoing it, and accepting a report from a lapsed
         holder is how two workers both mark one task done.
         """
+        # Parsed rather than trusted. A typed caller is already protected by the
+        # signature, but a consumer driving this from a decoded JSON body has no
+        # type checker in the way -- and the failure there was an AttributeError
+        # rather than a code, which 0004 says a consumer cannot branch on.
+        outcome = TaskOutcome.parse(outcome)
         task_id = task.id
 
         def settle() -> None:
@@ -674,9 +717,36 @@ class TaskCompletionTool:
             # holder's identity is not the model's business.
             raise HarnessError.task_lease_not_held(task_id, "this agent is not holding it")
 
-        self._source.release(task, TaskOutcome.DONE)
+        outcome = self._outcome(args)
+        self._source.release(task, outcome)
 
-        return {"task_id": task_id, "state": TaskState.DONE.value}
+        return {"task_id": task_id, "state": outcome.state().value}
+
+    @staticmethod
+    def _outcome(args: dict[str, Any]) -> TaskOutcome:
+        """Which outcome the agent asked for, or ``done`` if it asked for none.
+
+        Three cases, and the middle one is the whole point:
+
+        * **Absent.** ``done``. Not a fallback for input that could not be
+          read -- the agent invoked a tool called ``complete_task``, and that
+          is the tool's declared purpose.
+        * **Present.** Parsed strictly, and HONOURED. Silently ignoring it
+          would be the same escalation as coercing it: a model asking in as
+          many words for ``failed`` and getting ``done`` on the record. This
+          port did exactly that until it was caught.
+        * **Present and unreadable.** Refused. Never resolved to either
+          outcome, and least of all to the privileged one.
+
+        ``_MISSING`` rather than ``args.get("outcome")`` because
+        present-and-null has to land in the third case, not the first (0002).
+        """
+        supplied = args.get("outcome", _MISSING)
+
+        if supplied is _MISSING:
+            return TaskOutcome.DONE
+
+        return TaskOutcome.parse(supplied)
 
 
 def _expire(records: Iterable[dict[str, Any]], now: float) -> bool:

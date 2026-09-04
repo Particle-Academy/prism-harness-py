@@ -52,6 +52,8 @@ class ErrorCode(str, Enum):
     TASK_ALREADY_TERMINAL = "task_already_terminal"
     #: A lease was acted on by someone who does not hold it.
     TASK_LEASE_NOT_HELD = "task_lease_not_held"
+    #: A task outcome was supplied that is not exactly ``done`` or ``failed``.
+    TASK_OUTCOME_INVALID = "task_outcome_invalid"
 
 
 class HarnessError(Exception):
@@ -237,6 +239,26 @@ class HarnessError(Exception):
             ErrorCode.TASK_LEASE_NOT_HELD,
             f"Task [{task_id}] cannot be acted on by this worker: {detail}. Another worker may "
             "already be doing it, so a report from a lapsed holder is refused.",
+        )
+
+    @classmethod
+    def task_outcome_invalid(cls, value: object) -> HarnessError:
+        """An outcome that is not exactly one of the two.
+
+        REFUSED, never resolved, and the direction matters more than the
+        refusal. An implementation that treats "anything not `failed`" as
+        `done` turns every typo, every casing slip and every empty object into
+        the MORE privileged answer -- an agent declaring victory by getting the
+        word slightly wrong. `prism-harness-ts` shipped exactly that, and this
+        port had the same escalation reached the other way, by ignoring the
+        argument entirely.
+        """
+        return cls(
+            ErrorCode.TASK_OUTCOME_INVALID,
+            f"[{value!r}] is not a task outcome. It must be exactly 'done' or 'failed' -- not "
+            "a different casing, not a synonym, and not absent. A value that cannot be read as "
+            "one of the two is refused rather than resolved to either, because resolving it "
+            "would always mean choosing an outcome the caller did not ask for.",
         )
 
     @classmethod

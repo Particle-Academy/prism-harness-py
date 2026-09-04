@@ -177,9 +177,175 @@ def test_file_reclaims_a_lock_whose_holder_died() -> None:
     store.put("k", {})
 
     lock_path = store._path_for("k").with_suffix(".json.lock")
-    lock_path.write_text(str(time.time() - 1000), encoding="utf-8")
+    # TERMINATED, because an expiry with nothing marking its end could equally
+    # be the first half of a longer one, and a reader that trusted it would
+    # delete a live holder's lock. This test wrote the unterminated form until
+    # that was fixed, which is the tell that the lockfile FORMAT is shared
+    # surface: a PHP or TypeScript worker in the same directory has to write
+    # the terminator too, or this store will wait its stale locks out instead
+    # of reclaiming them.
+    lock_path.write_text(f"{time.time() - 1000}\n", encoding="utf-8")
 
     assert store.with_lock("k", lambda: "recovered") == "recovered"
+
+
+# -- the stolen-lock window --------------------------------------------------
+#
+# `claim()` atomicity in `prism_harness.tasks` rests ENTIRELY on this lock. A
+# lock that can be stolen from a live holder is two workers on one task, so the
+# question these ask is not "does the lock work" but "what does a waiter do with
+# a lockfile whose expiry it cannot fully read".
+#
+# The window is real: `os.open` creates the file EMPTY and the expiry is written
+# after, so a waiter can observe a lockfile with no expiry in it at all. Every
+# unreadable state must fail in the SAFE direction -- wait, do not steal.
+
+
+def a_lock_path(store: FileSessionStore, key: str) -> Path:
+    return store._path_for(key).with_suffix(".json.lock")
+
+
+def steals(store: FileSessionStore, key: str) -> bool:
+    """Did a waiter take a lock that is planted on the key?
+
+    True means the lockfile was reclaimed and the callback ran; False means the
+    waiter respected it and timed out, which is the safe answer for every
+    expiry it cannot read completely.
+    """
+    try:
+        store.with_lock(key, lambda: "stolen", wait_seconds=0.05)
+    except HarnessError as error:
+        assert error.code == "session_locked"
+        return False
+
+    return True
+
+
+def test_file_never_reads_an_empty_lockfile_as_expired() -> None:
+    # THE TYPESCRIPT DEFECT, asked of Python. There it was fatal: the lock is
+    # created empty and the expiry written after, and `Number('') === 0` read as
+    # "expired in 1970", so a waiter deleted a lock another process was actively
+    # holding. `float('')` RAISES in Python, which is why the same window is not
+    # the same bug -- a language difference doing the work, which is exactly the
+    # kind of thing that must be asserted rather than assumed.
+    store = a_file_store()
+    a_lock_path(store, "k").write_text("", encoding="utf-8")
+
+    assert steals(store, "k") is False
+
+
+def test_file_never_reads_a_truncated_expiry_as_expired() -> None:
+    # The adjacent variant, and the one Python DOES get wrong: a prefix of a
+    # real expiry is still a valid float, and every prefix of a ten-digit
+    # timestamp is a smaller number -- which is to say, a time in the past.
+    # `float('1735689')` parses happily and reads as expired in 1970.
+    store = a_file_store()
+    a_lock_path(store, "k").write_text("1735689", encoding="utf-8")
+
+    assert steals(store, "k") is False
+
+
+def test_file_never_reads_an_expiry_it_cannot_tell_is_complete_as_expired() -> None:
+    # A value with no terminator could be the whole expiry or the first half of
+    # one, and nothing in the file says which. Unreadable means WAIT.
+    store = a_file_store()
+    a_lock_path(store, "k").write_text(str(time.time() - 1000), encoding="utf-8")
+
+    assert steals(store, "k") is False
+
+
+def test_file_still_reclaims_a_lock_whose_expiry_is_complete_and_past() -> None:
+    # The control, and it is load-bearing: without it every test above passes on
+    # a store that simply never reclaims anything, which would wedge a key
+    # forever the first time a worker died holding it.
+    store = a_file_store()
+    a_lock_path(store, "k").write_text(f"{time.time() - 1000}\n", encoding="utf-8")
+
+    assert steals(store, "k") is True
+
+
+def test_file_reclaims_a_lock_its_own_release_marked_dead() -> None:
+    # `_release` rewrites a lock it could not unlink with an already-past
+    # expiry. That path has to keep working in whatever format the reader
+    # trusts, or the Windows leak it exists to prevent comes straight back.
+    store = a_file_store()
+    lock_path = a_lock_path(store, "k")
+    FileSessionStore._release(lock_path)
+    lock_path.write_text("", encoding="utf-8")
+    FileSessionStore._release(lock_path)
+
+    if lock_path.exists():
+        assert steals(store, "k") is True
+
+
+def test_file_writes_the_expiry_before_the_callback_runs() -> None:
+    # The window between "the lockfile exists" and "the lockfile says when it
+    # expires" is where a waiter can be fooled. It must be shut by the time the
+    # holder is doing anything a waiter could contend with.
+    store = a_file_store()
+    seen: list[str] = []
+
+    store.with_lock("k", lambda: seen.append(a_lock_path(store, "k").read_text(encoding="utf-8")))
+
+    assert seen[0] != ""
+    assert float(seen[0].strip()) > time.time()
+
+
+def test_a_lock_this_store_wrote_is_read_back_by_this_store() -> None:
+    # THE WRITER AND THE READER HAVE TO AGREE, and every test above plants its
+    # lockfile by hand -- so all of them would stay green if the store started
+    # writing a payload its own reader refuses. Nothing would break loudly:
+    # locks would simply stop being reclaimable, and a dead holder would wedge
+    # the key until every later caller timed out. A mutation run found this gap
+    # by dropping the terminator from the payload and going green.
+    store = a_file_store()
+    written: list[str] = []
+
+    def capture() -> None:
+        written.append(a_lock_path(store, "k").read_text(encoding="utf-8"))
+
+    # A ttl already in the past: what the store writes here is a lock that is
+    # expired the moment it exists.
+    store.with_lock("k", capture, ttl_seconds=-1000)
+    a_lock_path(store, "k").write_text(written[0], encoding="utf-8")
+
+    assert steals(store, "k") is True
+
+    # The control, through the same round trip: a live ttl must NOT be
+    # reclaimable, or the assertion above would pass on a reader that reclaims
+    # everything it is shown.
+    store.with_lock("k", capture, ttl_seconds=1000)
+    a_lock_path(store, "k").write_text(written[1], encoding="utf-8")
+
+    assert steals(store, "k") is False
+
+
+def test_two_threads_never_hold_one_key_at_once() -> None:
+    # The property `claim()` actually depends on, asserted directly rather than
+    # inferred from a lock that looks right.
+    store = a_file_store()
+    inside = 0
+    overlaps: list[int] = []
+    guard = threading.Lock()
+
+    def critical() -> None:
+        nonlocal inside
+        with guard:
+            inside += 1
+            if inside > 1:
+                overlaps.append(inside)
+        time.sleep(0.002)
+        with guard:
+            inside -= 1
+
+    threads = [threading.Thread(target=lambda: store.with_lock("k", critical)) for _ in range(8)]
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert overlaps == []
 
 
 def test_file_refuses_a_stored_payload_that_is_not_valid_json() -> None:

@@ -110,6 +110,12 @@ bound to one worker and closes only the task that worker is holding — `release
 takes no worker, so an unbound tool would let an agent close a task somebody else
 was mid-way through.
 
+An outcome the agent supplies is honoured, and is either exactly `done` or
+exactly `failed` or refused with `task_outcome_invalid`. No case folding, no
+trimming, no truthiness and no default: an implementation that resolves what it
+cannot read always resolves it toward the privileged answer, which is an agent
+closing a task it never finished by writing `complete` instead of `done`.
+
 **The list is durable state, so a task source refuses to start on a volatile
 store** — a half-finished list that vanishes on a deploy is indistinguishable
 from a finished one.

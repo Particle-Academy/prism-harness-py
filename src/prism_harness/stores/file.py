@@ -29,6 +29,23 @@ __all__ = ["FileSessionStore"]
 #: the same lock to two callers.
 _HELD = (FileExistsError, PermissionError)
 
+#: What marks a lockfile's expiry as COMPLETE.
+#:
+#: Without it there is no way to tell a whole expiry from the first half of one,
+#: because every prefix of a timestamp is a valid float and a smaller number --
+#: which is to say, a time already past. A waiter would read a torn write as an
+#: expired lock and delete it out from under a live holder.
+#:
+#: A single byte, and deliberately the most boring one available, because the
+#: PHP and TypeScript ports have to write the same thing: two processes sharing
+#: a store directory share these lockfiles, and a port that omits the terminator
+#: will have its stale locks waited out rather than reclaimed by this one.
+_TERMINATOR = "\n"
+
+
+def _expiry_payload(expires_at: float) -> bytes:
+    return f"{expires_at}{_TERMINATOR}".encode()
+
 
 class FileSessionStore:
     """The default durable driver for a port with no database and no dependencies.
@@ -147,8 +164,15 @@ class FileSessionStore:
                 continue
 
             try:
-                with os.fdopen(descriptor, "w") as handle:
-                    handle.write(str(time.time() + ttl_seconds))
+                try:
+                    # ONE write, immediately, and not through a buffered handle
+                    # that would not reach the file until it closed. `os.open`
+                    # creates the lockfile EMPTY, so every instruction between
+                    # here and the expiry landing is a window in which a waiter
+                    # sees a lock that does not say when it expires.
+                    os.write(descriptor, _expiry_payload(time.time() + ttl_seconds))
+                finally:
+                    os.close(descriptor)
 
                 return callback()
             finally:
@@ -178,7 +202,10 @@ class FileSessionStore:
                 time.sleep(0.005)
 
         try:
-            lock_path.write_text("0", encoding="utf-8")
+            # In the SAME terminated form the holder writes, or a reader that
+            # rightly distrusts an unterminated value would refuse to reclaim
+            # it -- and this branch exists precisely to get the lock reclaimed.
+            lock_path.write_bytes(_expiry_payload(0))
         except OSError:
             # Nothing left to try. The TTL is the backstop, and it is why the
             # lockfile carries one at all.
@@ -186,11 +213,45 @@ class FileSessionStore:
 
     @staticmethod
     def _expired(lock_path: Path) -> bool:
+        """Has this lock's holder run out of time? UNREADABLE MEANS NO.
+
+        Reclaiming a lock deletes it, so answering True here about a lock whose
+        holder is alive hands one key to two callers -- and `claim()` in
+        ``prism_harness.tasks`` rests entirely on that not happening. So every
+        state this cannot read COMPLETELY answers "not expired": the caller then
+        waits out ``wait_seconds`` and reports ``session_locked``, which is
+        loud, recoverable, and vastly better than two workers on one task.
+
+        Three states are unreadable, and the middle one is why the payload
+        carries a terminator at all:
+
+        * **Empty.** ``os.open`` creates the lockfile before the expiry is
+          written. ``float('')`` raises here -- but ``Number('')`` is ``0`` in
+          JavaScript, which read as "expired in 1970" and let a waiter delete a
+          lock another process was actively holding. Same window, and only the
+          language kept Python out of it.
+        * **Truncated.** Every prefix of a ten-digit timestamp is a SMALLER
+          number, so a torn write does not fail to parse -- it parses as a time
+          in the past. This is the one Python did get wrong, and no amount of
+          care in the parser can spot it without something in the file marking
+          where the value ends.
+        * **Unterminated.** Which is the same thing said honestly: a value with
+          no terminator may be whole or may be half, and nothing distinguishes
+          them.
+        """
         try:
-            return float(lock_path.read_text(encoding="utf-8")) <= time.time()
-        except (OSError, ValueError):
-            # Gone or half-written between the failed create and this read:
-            # treat it as not expired and let the next attempt take it cleanly.
+            raw = lock_path.read_text(encoding="utf-8")
+        except OSError:
+            # Gone between the failed create and this read. The next attempt
+            # takes it cleanly.
+            return False
+
+        if not raw.endswith(_TERMINATOR):
+            return False
+
+        try:
+            return float(raw[: -len(_TERMINATOR)]) <= time.time()
+        except ValueError:
             return False
 
     def _path_for(self, key: str) -> Path:
