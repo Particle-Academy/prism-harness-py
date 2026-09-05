@@ -144,7 +144,7 @@ def test_does_not_serialise_different_keys_against_each_other(store: SessionStor
         store.with_lock("b", b_ran_while_a_was_held.set)
 
         assert b_ran_while_a_was_held.is_set()
-        assert not a_may_release.is_set(), "\"a\" was released before \"b\" was taken"
+        assert not a_may_release.is_set(), '"a" was released before "b" was taken'
     finally:
         a_may_release.set()
         held.join(timeout=10)
