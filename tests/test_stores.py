@@ -112,20 +112,44 @@ def test_serialises_two_callers_on_the_same_key(store: SessionStore) -> None:
 
 
 def test_does_not_serialise_different_keys_against_each_other(store: SessionStore) -> None:
-    released = threading.Event()
+    # Barrier-driven, with no sleeps and no deadline.
+    #
+    # This used to hold "a" for 100ms and require the main thread to take "b"
+    # and observe the holder still running -- which asserts the property by
+    # WINNING A RACE against a timer. A loaded runner that spent 90ms inside the
+    # file store's lock acquisition failed a store that was behaving perfectly.
+    # It failed on Windows CI for Python 3.10 and 3.12 while passing on 3.11,
+    # 3.13 and every Ubuntu job: the signature of a clock, not of a defect.
+    #
+    # Now "a" is held open until the main thread says otherwise. If "b" ever
+    # serialised behind "a" the two would wait on each other, and the test fails
+    # by TIMING OUT rather than by being unlucky -- and it cannot pass by being
+    # lucky, which is the half that matters.
+    a_is_held = threading.Event()
+    a_may_release = threading.Event()
+    b_ran_while_a_was_held = threading.Event()
 
     def hold() -> None:
-        time.sleep(0.1)
-        released.set()
+        a_is_held.set()
+        # Bounded so a broken store fails the suite instead of hanging it.
+        a_may_release.wait(timeout=10)
 
     held = threading.Thread(target=lambda: store.with_lock("a", hold))
     held.start()
-    time.sleep(0.01)
 
-    store.with_lock("b", lambda: None)
-    assert not released.is_set()
+    try:
+        assert a_is_held.wait(timeout=10), "the holder never entered its critical section"
 
-    held.join()
+        # The whole property: this must not wait on "a", which is still open.
+        store.with_lock("b", b_ran_while_a_was_held.set)
+
+        assert b_ran_while_a_was_held.is_set()
+        assert not a_may_release.is_set(), "\"a\" was released before \"b\" was taken"
+    finally:
+        a_may_release.set()
+        held.join(timeout=10)
+
+    assert not held.is_alive()
 
 
 def test_raises_session_locked_rather_than_running_the_callback_anyway(
