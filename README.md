@@ -108,7 +108,7 @@ A mode can declare `provider_options`. They reach your model client unchanged, a
 `request.provider_options`, on every step of every run in that mode:
 
 ```python
-ModeRegistry({"modes": {"overseer": {"provider_options": {"thinking": {"enabled": True}}}}})
+ModeRegistry({"modes": {"overseer": {"provider_options": {"thinking": {"type": "adaptive"}}}}})
 ```
 
 A value that is not a map is refused when the mode is resolved, with
