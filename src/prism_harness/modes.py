@@ -27,6 +27,8 @@ class AgentMode:
     subagents: dict[str, Subagent] = field(default_factory=dict)
     #: Tools that must not run until a human says so.
     requires_approval: list[str] = field(default_factory=list)
+    #: Options handed to the provider on every run in this mode, unchanged.
+    provider_options: dict[str, Any] = field(default_factory=dict)
 
     def needs_approval(self, tool: str) -> bool:
         """Whether a named tool needs a human before it runs IN THIS MODE.
@@ -91,6 +93,7 @@ class ModeRegistry:
             max_steps=max_steps,
             subagents=self._subagents_for(wanted, mode),
             requires_approval=_strings(mode.get("requires_approval")),
+            provider_options=_provider_options(wanted, mode.get("provider_options")),
         )
 
     def _subagents_for(self, name: str, mode: dict[str, Any]) -> dict[str, Subagent]:
@@ -131,3 +134,20 @@ class ModeRegistry:
 
 def _strings(value: Any) -> list[str]:
     return [entry for entry in value if isinstance(entry, str)] if isinstance(value, list) else []
+
+
+def _provider_options(name: str, declared: object) -> dict[str, Any]:
+    """A mode's provider options, refused rather than ignored when not a map.
+
+    A list or a scalar would reach the provider as nothing, and the mode would
+    run without the option its author believes is on.
+    """
+    if declared is None:
+        return {}
+
+    if not isinstance(declared, dict) or not all(isinstance(key, str) for key in declared):
+        raise HarnessError.mode_malformed(
+            name, "provider_options must be a map of option names to values"
+        )
+
+    return dict(declared)

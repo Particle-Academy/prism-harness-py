@@ -56,6 +56,14 @@ class ErrorCode(str, Enum):
     TASK_OUTCOME_INVALID = "task_outcome_invalid"
     #: A lease duration was not a finite number of seconds greater than zero.
     TASK_LEASE_INVALID = "task_lease_invalid"
+    #: A turn attachment was built from a URL or a path.
+    ATTACHMENT_BY_REFERENCE = "attachment_by_reference"
+    #: A turn attachment is not an image, document, audio or video.
+    ATTACHMENT_NOT_MEDIA = "attachment_not_media"
+    #: A turn attachment carries no bytes, no file id and no chunks.
+    ATTACHMENT_EMPTY = "attachment_empty"
+    #: Attachments were offered with an empty prompt, which sends no user message.
+    ATTACHMENT_WITHOUT_PROMPT = "attachment_without_prompt"
 
 
 class HarnessError(Exception):
@@ -300,6 +308,45 @@ class HarnessError(Exception):
             "lease that expires the moment it is granted leaves the claim it should protect "
             "open to the next caller, and silently substituting a different number would hide "
             "that rather than report it.",
+        )
+
+    @classmethod
+    def attachment_by_reference(cls, index: int, what: str) -> HarnessError:
+        """A turn attachment built from a URL or a path.
+
+        A URL from request input is somebody else's choice of address, and a path's
+        contents would go to a third-party model. The same four attachment codes are
+        raised by the PHP reference and the TypeScript port.
+        """
+        return cls(
+            ErrorCode.ATTACHMENT_BY_REFERENCE,
+            f"Attachment [{index}] was built from {what}. A turn sends media as its bytes or as "
+            "a provider file id, never as a URL or path for someone else to resolve. Read the "
+            "content yourself and attach the bytes.",
+        )
+
+    @classmethod
+    def attachment_not_media(cls, index: int, kind: str) -> HarnessError:
+        return cls(
+            ErrorCode.ATTACHMENT_NOT_MEDIA,
+            f"Attachment [{index}] is {kind}, not an image, document, audio or video. A "
+            "turn's text belongs in the prompt.",
+        )
+
+    @classmethod
+    def attachment_empty(cls, index: int) -> HarnessError:
+        return cls(
+            ErrorCode.ATTACHMENT_EMPTY,
+            f"Attachment [{index}] carries nothing to send: no bytes, no file id and no chunks.",
+        )
+
+    @classmethod
+    def attachment_without_prompt(cls) -> HarnessError:
+        """An empty prompt resumes a paused run and sends no user message."""
+        return cls(
+            ErrorCode.ATTACHMENT_WITHOUT_PROMPT,
+            "Attachments need a prompt to travel with. An empty prompt resumes a paused run and "
+            "sends no user message, so these attachments would be dropped without a word.",
         )
 
     @classmethod

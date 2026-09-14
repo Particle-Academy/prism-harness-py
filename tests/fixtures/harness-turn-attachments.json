@@ -1,0 +1,193 @@
+{
+    "suite": "harness-turn-attachments",
+    "schema_version": 1,
+    "corpus_version": "0.1.0",
+    "generated_by": "prism-parity:tools/generate-turn-attachments.php for php; the ports' own recorders for ts and py. Every verdict is execution output.",
+    "pins_note": "Which media a turn will carry to a model, and the code a refusal carries. An attachment built from a URL hands a provider an address to fetch, and one built from a path sends a file's contents to a third party. A language that admits either where another refuses turns an application's guard into one that holds in PHP and not in TypeScript. Nothing errors when that happens; the file just goes.",
+    "cases": [
+        {
+            "id": "att-0001",
+            "title": "an image from its bytes",
+            "since": "0.1.0",
+            "prompt": "What is this?",
+            "attachments": [{"$": "Image", "from": "base64", "base64": "UE5HQllURVM=", "mimeType": "image/png"}],
+            "verdict": {"php": "admitted", "ts": "admitted", "py": "admitted"},
+            "notes": "The control. Media built from its bytes is the one form every provider accepts and nothing has to resolve.",
+            "agrees": true
+        },
+        {
+            "id": "att-0002",
+            "title": "a document by provider file id",
+            "since": "0.1.0",
+            "prompt": "Read this",
+            "attachments": [{"$": "Document", "from": "fileId", "fileId": "file_2dtbBZdjtDKS", "title": "Report"}],
+            "verdict": {"php": "admitted", "ts": "admitted", "py": "admitted"},
+            "notes": "A reference the PROVIDER resolves inside its own account, not a URL anyone can point anywhere. Admitted.",
+            "agrees": true
+        },
+        {
+            "id": "att-0003",
+            "title": "a document from chunks",
+            "since": "0.1.0",
+            "prompt": "Read this",
+            "attachments": [{"$": "Document", "from": "chunks", "chunks": ["First.", "Second."], "title": "Chunked"}],
+            "verdict": {"php": "admitted", "ts": "admitted", "py": "admitted"},
+            "notes": "Carries its content as text chunks and no bytes, so a check that only looked for bytes would refuse it wrongly.",
+            "agrees": true
+        },
+        {
+            "id": "att-0004",
+            "title": "a document from text",
+            "since": "0.1.0",
+            "prompt": "Read this",
+            "attachments": [{"$": "Document", "from": "text", "text": "The brief.", "title": "Brief"}],
+            "verdict": {"php": "admitted", "ts": "admitted", "py": "admitted"},
+            "notes": "Raw content in PHP, base64 once serialized in the ports. The same attachment in two representations must get one verdict.",
+            "agrees": true
+        },
+        {
+            "id": "att-0005",
+            "title": "a url naming the cloud metadata endpoint",
+            "since": "0.1.0",
+            "prompt": "Look",
+            "attachments": [{"$": "Image", "from": "url", "url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/"}],
+            "verdict": {"php": "attachment_by_reference", "ts": "attachment_by_reference", "py": "attachment_by_reference"},
+            "notes": "The hostile address, refused as by-reference. Whether the host or the provider would resolve it, a URL taken from request input is the attacker's choice of address (G-44).",
+            "agrees": true
+        },
+        {
+            "id": "att-0006",
+            "title": "a url that has already been fetched",
+            "since": "0.1.0",
+            "prompt": "Look",
+            "attachments": [{"$": "Image", "from": "urlWithBytes", "url": "https://example.com/a.png", "base64": "UE5HQllURVM="}],
+            "verdict": {"php": "attachment_by_reference", "ts": "attachment_by_reference", "py": "attachment_by_reference"},
+            "notes": "Holds bytes AND a url. A check that asked whether bytes are in hand would admit it, and providers that accept URLs send the url. Refused: the question is where the media came from.",
+            "agrees": true
+        },
+        {
+            "id": "att-0007",
+            "title": "a url that is the empty string",
+            "since": "0.1.0",
+            "prompt": "Look",
+            "attachments": [{"$": "Image", "from": "url", "url": ""}],
+            "verdict": {"php": "attachment_by_reference", "ts": "attachment_by_reference", "py": "attachment_by_reference"},
+            "notes": "Malformed on purpose. PHP's isUrl() asks whether a URL was set, so fromUrl('') is by-reference there, and a port that tested for a NON-EMPTY url would call the same attachment empty instead. Both refuse; the row pins that they refuse with the same code.",
+            "agrees": true
+        },
+        {
+            "id": "att-0008",
+            "title": "media read from a local file",
+            "since": "0.1.0",
+            "prompt": "Look",
+            "attachments": [{"$": "Image", "from": "localPath", "bytes": "PNGBYTES", "mimeType": "image/png"}],
+            "verdict": {"php": "attachment_by_reference", "ts": "attachment_by_reference", "py": "attachment_by_reference"},
+            "notes": "Hostile when the path came from request input. The read has already happened in the caller; refusing stops the contents going to a model. In the ports the serialized form carries bytes and no path, so the object itself has to be asked, and a check on the serialized form alone would admit it.",
+            "agrees": true
+        },
+        {
+            "id": "att-0009",
+            "title": "a text part offered as an attachment",
+            "since": "0.1.0",
+            "prompt": "Look",
+            "attachments": [{"$": "Text", "text": "hello"}],
+            "verdict": {"php": "attachment_not_media", "ts": "attachment_not_media", "py": "attachment_not_media"},
+            "notes": "Not media. A turn's text belongs in the prompt, where the harness records it once.",
+            "agrees": true
+        },
+        {
+            "id": "att-0010",
+            "title": "raw base64 handed over as a bare string",
+            "since": "0.1.0",
+            "prompt": "Look",
+            "attachments": [{"$": "String", "value": "UE5HQllURVM="}],
+            "verdict": {"php": "attachment_not_media", "ts": "attachment_not_media", "py": "attachment_not_media"},
+            "notes": "Malformed: the right bytes in the wrong shape. Refused as not media rather than guessed into an image, because a string has no mime type or kind to guess from.",
+            "agrees": true
+        },
+        {
+            "id": "att-0011",
+            "title": "base64 that is the empty string",
+            "since": "0.1.0",
+            "prompt": "Look",
+            "attachments": [{"$": "Image", "from": "base64", "base64": "", "mimeType": "image/png"}],
+            "verdict": {"php": "attachment_empty", "ts": "attachment_empty", "py": "attachment_empty"},
+            "notes": "PHP's hasRawContent() answers true here, so a guard written with it would admit an empty image. Refused as empty.",
+            "agrees": true
+        },
+        {
+            "id": "att-0012",
+            "title": "base64 that is only whitespace",
+            "since": "0.1.0",
+            "prompt": "Look",
+            "attachments": [{"$": "Image", "from": "base64", "base64": "    ", "mimeType": "image/png"}],
+            "verdict": {"php": "attachment_empty", "ts": "attachment_empty", "py": "attachment_empty"},
+            "notes": "Padded: a non-empty string that decodes to nothing. A port that tested the string for emptiness instead of decoding it would admit it.",
+            "agrees": true
+        },
+        {
+            "id": "att-0013",
+            "title": "media that carries nothing at all",
+            "since": "0.1.0",
+            "prompt": "Look",
+            "attachments": [{"$": "Image", "from": "nothing"}],
+            "verdict": {"php": "attachment_empty", "ts": "attachment_empty", "py": "attachment_empty"},
+            "notes": "No bytes, no file id, no url. A provider would receive an empty part and fail far from the code that built it.",
+            "agrees": true
+        },
+        {
+            "id": "att-0014",
+            "title": "a document with an empty chunk list",
+            "since": "0.1.0",
+            "prompt": "Read this",
+            "attachments": [{"$": "Document", "from": "chunks", "chunks": [], "title": "Empty"}],
+            "verdict": {"php": "attachment_empty", "ts": "attachment_empty", "py": "attachment_empty"},
+            "notes": "PHP's isChunks() is true for an empty list, so a guard built on it would admit a document with nothing in it.",
+            "agrees": true
+        },
+        {
+            "id": "att-0015",
+            "title": "a provider file id that is the empty string",
+            "since": "0.1.0",
+            "prompt": "Read this",
+            "attachments": [{"$": "Document", "from": "fileId", "fileId": "", "title": "Nothing"}],
+            "verdict": {"php": "attachment_empty", "ts": "attachment_empty", "py": "attachment_empty"},
+            "notes": "PHP's isFileId() is true for an empty id, which names no file. Found while writing this corpus: the reference admitted it and both ports refused it.",
+            "agrees": true
+        },
+        {
+            "id": "att-0016",
+            "title": "an attachment with an empty prompt",
+            "since": "0.1.0",
+            "prompt": "",
+            "attachments": [{"$": "Image", "from": "base64", "base64": "UE5HQllURVM=", "mimeType": "image/png"}],
+            "verdict": {"php": "attachment_without_prompt", "ts": "attachment_without_prompt", "py": "attachment_without_prompt"},
+            "notes": "An empty prompt resumes a paused run and sends no user message, so the attachment would vanish with nothing said. Refused rather than dropped.",
+            "agrees": true
+        },
+        {
+            "id": "att-0017",
+            "title": "an attachment with a prompt that is a single space",
+            "since": "0.1.0",
+            "prompt": " ",
+            "attachments": [{"$": "Image", "from": "base64", "base64": "UE5HQllURVM=", "mimeType": "image/png"}],
+            "verdict": {"php": "admitted", "ts": "admitted", "py": "admitted"},
+            "notes": "Padded. Not empty, so admitted. Nothing is trimmed first, because each language trims a different set of characters, and a trim here would refuse in one language what another admits.",
+            "agrees": true
+        },
+        {
+            "id": "att-0018",
+            "title": "a good image followed by a hostile url",
+            "since": "0.1.0",
+            "prompt": "Compare",
+            "attachments": [
+                {"$": "Image", "from": "base64", "base64": "UE5HQllURVM=", "mimeType": "image/png"},
+                {"$": "Image", "from": "url", "url": "http://169.254.169.254/"}
+            ],
+            "verdict": {"php": "attachment_by_reference", "ts": "attachment_by_reference", "py": "attachment_by_reference"},
+            "notes": "One refusal refuses the turn. An implementation that sent the good attachment and dropped the bad one would answer a question the caller did not ask, with an attachment silently missing.",
+            "agrees": true
+        }
+    ],
+    "divergence_note": "All eighteen rows agree across PHP, TypeScript and Python. That was not true while the corpus was being written, and the rows that disagreed are the reason for the adversarial ones. The ports refused an empty file id that the reference admitted (att-0015), and they tested strings where the reference decodes them: a url of \"\" counted as empty rather than by-reference (att-0007), and whitespace-only base64 was admitted (att-0012). The implementations moved, not the rows. Agreement here means the three languages refuse the same attachments with the same code. It does not mean every attachment they admit is safe to send: a provider can still refuse media it does not support, and admitting base64 says nothing about what the bytes contain."
+}

@@ -1,5 +1,6 @@
 """Durable agent sessions for Python -- threads, session state and store drivers."""
 
+from prism_harness.attachments import admit_attachments
 from prism_harness.doctor import DoctorFinding, DoctorReport, diagnose
 from prism_harness.errors import ErrorCode, HarnessError
 from prism_harness.events import (
@@ -127,6 +128,7 @@ __all__ = [
     "ToolFactory",
     "ToolProvider",
     "ToolRegistry",
+    "admit_attachments",
     "canonical_task_json",
     "diagnose",
     "record_approval",

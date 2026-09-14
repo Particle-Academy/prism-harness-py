@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from prism_harness.attachments import admit_attachments
 from prism_harness.errors import HarnessError
 from prism_harness.events import HarnessEvents, RunFailed, RunFinished, RunStarted
 from prism_harness.modes import AgentMode, ModeRegistry
@@ -54,6 +55,9 @@ class LlmRequest:
     tools: list[HarnessTool]
     provider: str
     model: str
+    #: The mode's ``provider_options``, unchanged. A client passes them to its
+    #: provider call; the harness does not interpret them.
+    provider_options: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,7 @@ class AgentRuntime:
         prompt: str,
         tool_names: Sequence[str] | None = None,
         context: RunContext | None = None,
+        additional_content: Sequence[object] = (),
     ) -> AgentResponse:
         """Run a turn.
 
@@ -136,7 +141,13 @@ class AgentRuntime:
         request, the decision, and everything before them. A new prompt there
         would be a second instruction competing with the one the tool call came
         from.
+
+        ``additional_content`` is media sent with the prompt. See
+        :func:`prism_harness.attachments.admit_attachments` for what is refused.
         """
+        # Refused before a run exists: a bad attachment is a mistake in the call,
+        # and it should not cost a run, events or budget.
+        attachments = admit_attachments(prompt, additional_content)
         mode = self._modes.resolve(session.mode())
         provider = session.provider() or "unknown"
         model = session.model() or "unknown"
@@ -166,7 +177,20 @@ class AgentRuntime:
         )
 
         if prompt != "":
-            thread.record([{"type": "user", "content": prompt}], run_id)
+            # With attachments, the shape prism-ai's UserMessage.to_dict() writes:
+            # the media parts, then the turn's own text as a trailing text part,
+            # which from_dict() strips back off. Without them, unchanged.
+            turn: dict[str, Any] = (
+                {"type": "user", "content": prompt}
+                if not attachments
+                else {
+                    "type": "user",
+                    "content": prompt,
+                    "additional_content": [*attachments, {"text": prompt}],
+                    "additional_attributes": {},
+                }
+            )
+            thread.record([turn], run_id)
 
         try:
             return self._loop(session, mode, run, run_id, provider, model, tool_names)
@@ -223,6 +247,7 @@ class AgentRuntime:
                     tools=offered,
                     provider=provider,
                     model=model,
+                    provider_options=mode.provider_options,
                 )
             )
 

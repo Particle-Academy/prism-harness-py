@@ -70,6 +70,50 @@ and writing the new messages as one operation. Two turns landing concurrently
 would otherwise both read position 4 and both write position 5, silently losing
 a message — the race the reference tracks as prism-harness#2.
 
+## Attachments
+
+A turn can carry media alongside its prompt:
+
+```python
+from prism import Image
+
+runtime.send(
+    session,
+    "What is wrong with this layout?",
+    additional_content=[Image.from_base64(screenshot, "image/png")],
+)
+```
+
+Pass `prism-ai` media objects or media already serialized. Attachments are stored
+with the turn in the shape `UserMessage.from_dict()` rebuilds. Each one must be an
+image, document, audio or video that carries its bytes, a provider file id or
+document chunks. The same rules as the PHP reference and the TypeScript port
+apply, pinned across all three by prism-parity's `harness-turn-attachments`
+corpus.
+
+**Refused, with a `HarnessError` whose `code` names the problem:**
+
+| Code | When |
+|---|---|
+| `attachment_by_reference` | built from a URL or read from a file |
+| `attachment_not_media` | anything other than those four media types |
+| `attachment_empty` | no bytes, no file id and no chunks |
+| `attachment_without_prompt` | attachments with an empty prompt |
+
+A refusal happens before a run starts: no run, no events, nothing in the thread.
+
+## Provider options per mode
+
+A mode can declare `provider_options`. They reach your model client unchanged, as
+`request.provider_options`, on every step of every run in that mode:
+
+```python
+ModeRegistry({"modes": {"overseer": {"provider_options": {"thinking": {"enabled": True}}}}})
+```
+
+A value that is not a map is refused when the mode is resolved, with
+`mode_malformed`.
+
 ## Task lists
 
 An agent given a goal keeps working across many requests. `session.tasks()` is
