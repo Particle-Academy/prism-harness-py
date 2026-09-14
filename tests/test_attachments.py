@@ -71,7 +71,7 @@ def a_runtime(client: Callable[[LlmRequest], LlmResponse]) -> AgentRuntime:
 
 
 class _Media:
-    """Stands in for a prism-ai media object, which is asked where it came from."""
+    """Stands in for a prism-ai-core media object, which is asked where it came from."""
 
     def __init__(self, *, url: bool = False, file: bool = False) -> None:
         self._url = url

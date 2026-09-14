@@ -5,7 +5,9 @@ port of [`particle-academy/prism-harness`](https://github.com/Particle-Academy/p
 
 Zero runtime dependencies. Python 3.10+.
 
-This package is private while coordinated parity work is in progress.
+```
+pip install prism-ai-harness
+```
 
 ```python
 from prism_harness import FileSessionStore, MemorySessionStore, Participant, PrismHarness
@@ -30,7 +32,7 @@ session.lock(advance)  # whatever must not happen twice
 ```
 
 `for` is a Python keyword, so the method is `for_` — forced rather than chosen,
-like `Media.as_` in `prism-ai`.
+like `Media.as_` in `prism-ai-core`.
 
 ## Resolved, never held
 
@@ -84,7 +86,7 @@ runtime.send(
 )
 ```
 
-Pass `prism-ai` media objects or media already serialized. Attachments are stored
+Pass `prism-ai-core` media objects or media already serialized. Attachments are stored
 with the turn in the shape `UserMessage.from_dict()` rebuilds. Each one must be an
 image, document, audio or video that carries its bytes, a provider file id or
 document chunks. The same rules as the PHP reference and the TypeScript port

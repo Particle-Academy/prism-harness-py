@@ -19,7 +19,7 @@ class PrismHarness:
     and the pair is what addresses one of them.
 
     ``for`` is a Python keyword, so the method is ``for_``. Forced rather than
-    chosen, like ``Media.as_`` in ``prism-ai``.
+    chosen, like ``Media.as_`` in ``prism-ai-core``.
 
     **The default is deliberately not usable for durable state.** With no
     drivers configured both slots resolve to an in-memory store, and the manager

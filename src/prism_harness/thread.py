@@ -18,7 +18,7 @@ class ThreadMessage:
     #: Position in the conversation, from 1. Assigned by the thread, never by
     #: the caller.
     position: int
-    #: The serialised message -- whatever ``prism-ai``'s ``message_from_dict``
+    #: The serialised message -- whatever ``prism-ai-core``'s ``message_from_dict``
     #: can rebuild.
     message: dict[str, Any]
     #: The run that produced it, when there was one.

@@ -25,7 +25,7 @@ __all__ = [
 class HarnessTool(Protocol):
     """The shape this package needs from a tool.
 
-    STRUCTURAL, not an import. ``prism-ai``'s tool satisfies it, and so does
+    STRUCTURAL, not an import. ``prism-ai-core``'s tool satisfies it, and so does
     anything else with a name and a handler -- which keeps this package at zero
     dependencies and lets a consumer bring their own tool type. The reference
     imports Prism's ``Tool`` directly because it is already a dependency there.

@@ -43,9 +43,9 @@ def admit_attachments(prompt: str, attachments: Sequence[object]) -> list[dict[s
 
     The same rules and the same four codes as the PHP reference and the
     TypeScript port, pinned across all three by prism-parity's
-    ``harness-turn-attachments`` corpus. Accepts a ``prism-ai`` media object
+    ``harness-turn-attachments`` corpus. Accepts a ``prism-ai-core`` media object
     (anything with ``to_dict()``) or media already serialized, and returns them
-    serialized in the form ``prism-ai``'s ``UserMessage.from_dict`` rebuilds.
+    serialized in the form ``prism-ai-core``'s ``UserMessage.from_dict`` rebuilds.
     """
     if not attachments:
         return []
@@ -59,7 +59,7 @@ def admit_attachments(prompt: str, attachments: Sequence[object]) -> list[dict[s
         to_dict: Callable[[], object] | None = getattr(attachment, "to_dict", None)
 
         if callable(to_dict):
-            # Asked of the OBJECT first. A prism-ai media built from a local path
+            # Asked of the OBJECT first. A prism-ai-core media built from a local path
             # serializes as bytes with no path, so the serialized form alone could
             # not tell that it came from a file.
             if _asks(attachment, "is_url"):

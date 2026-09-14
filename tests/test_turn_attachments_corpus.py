@@ -25,7 +25,7 @@ CORPUS: dict[str, Any] = json.loads(
 
 
 class _FromFile:
-    """Media that knows it came from a file, as prism-ai's from_local_path() does."""
+    """Media that knows it came from a file, as prism-ai-core's from_local_path() does."""
 
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload

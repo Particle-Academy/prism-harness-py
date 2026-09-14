@@ -54,11 +54,11 @@ class LlmToolCall:
 class LlmRequest:
     """What the runtime needs from a model, and NOTHING MORE.
 
-    An INTERFACE rather than a dependency on ``prism-ai``. The loop below --
+    An INTERFACE rather than a dependency on ``prism-ai-core``. The loop below --
     steps, budgets, approvals, thread recording, events -- is the part worth
     porting, and none of it needs to know how a request reaches a provider.
     Keeping the seam here also means this package stays at zero dependencies and
-    a consumer can drive it with ``prism-ai``, their own client, or a fake.
+    a consumer can drive it with ``prism-ai-core``, their own client, or a fake.
 
     The reference couples these because Prism is already a dependency there.
     """
@@ -220,7 +220,7 @@ class AgentRuntime:
             self._resolve_approvals(session, mode, offered, run_id, called)
 
             if prompt != "":
-                # With attachments, the shape prism-ai's UserMessage.to_dict()
+                # With attachments, the shape prism-ai-core's UserMessage.to_dict()
                 # writes: the media parts, then the turn's own text as a trailing
                 # text part, which from_dict() strips back off. Without them,
                 # unchanged.

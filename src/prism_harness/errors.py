@@ -15,7 +15,7 @@ class ErrorCode(str, Enum):
     sentence. A class name does not survive a port and a sentence is not a
     contract, so the code is what a consumer branches on here: treat
     ``HarnessError.code`` as stable and the message as free to change in any
-    release. Same decision, and the same reasoning, as ``prism-ai``.
+    release. Same decision, and the same reasoning, as ``prism-ai-core``.
     """
 
     #: A lock on a session key could not be acquired before the wait expired.
