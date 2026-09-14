@@ -149,6 +149,54 @@ def test_does_not_record_a_user_message_for_an_empty_prompt() -> None:
     assert [m.message["type"] for m in session.thread().messages()] == ["assistant"]
 
 
+# -- what the next step is sent back (G-58) ------------------------------------
+
+
+def test_records_call_arguments_and_provider_state_and_sends_them_on_the_next_step() -> None:
+    # The next request is built from the thread. Recorded with an id and a name
+    # only, a client had no input to send for the tool_use it was replaying, and
+    # nowhere to find the thinking signature Anthropic requires with it.
+    session = a_session()
+    requests: list[LlmRequest] = []
+    responses = [
+        LlmResponse(
+            text="Checking.",
+            finish_reason="tool_calls",
+            tool_calls=[LlmToolCall("c1", "echo", {"value": "x"})],
+            additional_content={"thinking": "Use the tool.", "thinking_signature": "sig-1"},
+        ),
+        LlmResponse(text="Done.", finish_reason="stop"),
+    ]
+
+    def client(request: LlmRequest) -> LlmResponse:
+        requests.append(request)
+        return responses[len(requests) - 1]
+
+    a_runtime(client).send(session, "Use the tool")
+
+    assistant = next(m for m in requests[1].messages if m["type"] == "assistant")
+
+    assert assistant == {
+        "type": "assistant",
+        "content": "Checking.",
+        "tool_calls": [{"id": "c1", "name": "echo", "arguments": {"value": "x"}}],
+        "additional_content": {"thinking": "Use the tool.", "thinking_signature": "sig-1"},
+    }
+
+
+def test_records_empty_provider_state_when_the_client_reports_none() -> None:
+    session = a_session()
+
+    a_runtime(scripted([LlmResponse(text="Hello.", finish_reason="stop")])).send(session, "Hi")
+
+    assert session.thread().messages()[-1].message == {
+        "type": "assistant",
+        "content": "Hello.",
+        "tool_calls": [],
+        "additional_content": {},
+    }
+
+
 # -- budgets -----------------------------------------------------------------
 
 

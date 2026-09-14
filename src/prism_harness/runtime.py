@@ -69,6 +69,12 @@ class LlmResponse:
     #: None when the provider does not report one. NOT zero -- see
     #: :meth:`RunLedger.record_cost`.
     cost_usd: float | None = None
+    #: What the provider needs sent back with this turn on the next request,
+    #: such as Anthropic's ``thinking`` and ``thinking_signature``. Recorded with
+    #: the assistant turn as ``additional_content``, the key prism's
+    #: AssistantMessage uses, so a client built on prism-py can pass
+    #: ``response.additional_content`` straight through.
+    additional_content: dict[str, Any] = field(default_factory=dict)
 
 
 LlmClient = Callable[[LlmRequest], LlmResponse]
@@ -256,14 +262,20 @@ class AgentRuntime:
             text = response.text
             finish_reason = response.finish_reason
 
+            # The next step's request is built from this row, so it keeps what a
+            # provider needs to be sent back: each call's arguments (a tool_use
+            # without its input is refused) and the provider state for the turn
+            # (G-58).
             thread.record(
                 [
                     {
                         "type": "assistant",
                         "content": response.text,
                         "tool_calls": [
-                            {"id": call.id, "name": call.name} for call in response.tool_calls
+                            {"id": call.id, "name": call.name, "arguments": call.arguments}
+                            for call in response.tool_calls
                         ],
+                        "additional_content": dict(response.additional_content),
                     }
                 ],
                 run_id,
