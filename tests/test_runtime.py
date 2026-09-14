@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import tempfile
+import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -482,6 +484,75 @@ def test_never_runs_an_approved_call_again_once_it_has_a_result() -> None:
     runtime.send(session, "")
 
     assert counts == {"echo": 1}
+
+
+def test_runs_an_approved_call_once_when_two_workers_resume_at_once() -> None:
+    # Without the session lock both read the approved call with no result, and
+    # both run it.
+    directory = tempfile.mkdtemp(prefix="prism-harness-concurrent-")
+    harness = PrismHarness(
+        drivers={"memory": MemorySessionStore, "files": lambda: FileSessionStore(directory)},
+        stores={"ephemeral": "memory", "durable": "files"},
+    )
+    counts: dict[str, int] = {}
+    guard = threading.Lock()
+
+    class SlowEcho:
+        name = "echo"
+
+        def handle(self, args: dict[str, Any]) -> Any:
+            with guard:
+                counts["echo"] = counts.get("echo", 0) + 1
+            time.sleep(0.05)
+            return "ran"
+
+    def open_session() -> Session:
+        session = harness.for_(Participant("User", 1)).session("support")
+        session.using_mode("guarded")
+        return session
+
+    def client(request: LlmRequest) -> LlmResponse:
+        if any(row["type"] == "assistant" for row in request.messages):
+            return LlmResponse(text="Finished.", finish_reason="stop")
+        return LlmResponse(
+            text="", finish_reason="tool_calls", tool_calls=[LlmToolCall("c1", "echo", {})]
+        )
+
+    def runtime() -> AgentRuntime:
+        tools = ToolRegistry().register(SlowEcho()).register(CountingTool("shout", counts))
+        return AgentRuntime(client=client, modes=GUARDED, tools=tools)
+
+    first = runtime().send(open_session(), "go")
+    record_approval(open_session(), first.pending_approvals[0].id, True)
+
+    workers = [
+        threading.Thread(target=lambda: runtime().send(open_session(), "")) for _ in range(2)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+
+    assert counts == {"echo": 1}
+
+
+def test_records_an_approved_call_whose_tool_is_no_longer_offered_as_not_run() -> None:
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    first = guarded_runtime(once([LlmToolCall("c1", "echo", {})]), counts).send(session, "go")
+    record_approval(session, first.pending_approvals[0].id, True)
+
+    # This run is offered shout only.
+    runtime = guarded_runtime(
+        scripted([LlmResponse(text="Finished.", finish_reason="stop")]), counts
+    )
+    runtime.send(session, "", ["shout"])
+    again = runtime.send(session, "Next", ["shout"])
+
+    assert counts == {}
+    assert again.text == "Finished."
+    rows = [m.message for m in session.thread().messages() if m.message["type"] == "tool_result"]
+    assert "Not run: echo is not available to this run." in json.dumps(rows)
 
 
 def test_resumes_an_approval_recorded_by_0_1_0_in_the_rows_it_wrote() -> None:

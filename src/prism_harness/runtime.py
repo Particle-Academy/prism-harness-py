@@ -117,6 +117,13 @@ class AgentResponse:
     stopped_because: str | None = None
 
 
+#: How long resolving approvals may hold the session lock: long enough for a tool to run.
+_RESOLUTION_LOCK_SECONDS = 300
+
+#: How long a second worker waits for that lock before giving up without running anything.
+_RESOLUTION_WAIT_SECONDS = 30
+
+
 class AgentRuntime:
     """Three properties matter more than the mechanics.
 
@@ -362,6 +369,65 @@ class AgentRuntime:
         holding every result and decision for the turn, as the reference writes
         it.
         """
+        # A read without the lock first: nearly every send() has nothing to
+        # resolve and should not wait on the session lock to find that out.
+        if self._unresolved(session, mode) is None:
+            return
+
+        # Then under the session lock, reading again inside it. Two workers
+        # resuming the same session at once would otherwise both find the
+        # approved call with no result, and both run it. The second now waits,
+        # finds the result the first recorded, and runs nothing. If it cannot get
+        # the lock it raises, and nothing runs.
+        def resolve(live: Session) -> None:
+            work = self._unresolved(live, mode)
+
+            if work is None:
+                return
+
+            calls, results, decisions, approval_ids = work
+            resolved: list[dict[str, Any]] = []
+
+            for row in calls:
+                call = ToolCallInput(
+                    id=row["id"],
+                    name=row["name"],
+                    arguments=row["arguments"],
+                    result_id=row["result_id"],
+                )
+                approval_id = approval_ids.get(row["id"])
+                decision = decisions.get(approval_id) if approval_id is not None else None
+
+                if decision is not None and decision["approved"]:
+                    called.append(call.name)
+                    resolved.append(self._run_approved(offered, call))
+                elif decision is None:
+                    resolved.append(tool_result_entry(call, "No approval response provided"))
+                else:
+                    resolved.append(
+                        tool_result_entry(call, decision["reason"] or "User denied tool execution")
+                    )
+
+            live.thread().record(
+                [tool_result_row([*results.values(), *resolved], list(decisions.values()))],
+                run_id,
+            )
+
+        session.lock(resolve, _RESOLUTION_LOCK_SECONDS, _RESOLUTION_WAIT_SECONDS)
+
+    @staticmethod
+    def _unresolved(
+        session: Session, mode: AgentMode
+    ) -> (
+        tuple[
+            list[dict[str, Any]],
+            dict[str, dict[str, Any]],
+            dict[str, dict[str, Any]],
+            dict[str, str],
+        ]
+        | None
+    ):
+        """The gated calls of the last tool-calling turn that have no result yet."""
         view = thread_view([entry.message for entry in session.thread().messages()])
         index = next(
             (
@@ -373,7 +439,7 @@ class AgentRuntime:
         )
 
         if index is None:
-            return
+            return None
 
         assistant = view[index]
         answered = next((row for row in view[index + 1 :] if row["type"] == "tool_result"), None)
@@ -384,40 +450,39 @@ class AgentRuntime:
         approval_ids = {
             r["tool_call_id"]: r["approval_id"] for r in assistant["tool_approval_requests"]
         }
-        resolved: list[dict[str, Any]] = []
 
-        for row in assistant["tool_calls"]:
-            if row["id"] in results:
-                continue
+        # A call that has a result is DONE, whatever its decision says. A call that
+        # needs nobody is not this method's to run.
+        calls = [
+            row
+            for row in assistant["tool_calls"]
+            if row["id"] not in results
+            and (row["id"] in approval_ids or mode.needs_approval(row["name"]))
+        ]
 
-            if row["id"] not in approval_ids and not mode.needs_approval(row["name"]):
-                continue
+        return (calls, results, decisions, approval_ids) if calls else None
 
-            call = ToolCallInput(
-                id=row["id"],
-                name=row["name"],
-                arguments=row["arguments"],
-                result_id=row["result_id"],
-            )
-            approval_id = approval_ids.get(row["id"])
-            decision = decisions.get(approval_id) if approval_id is not None else None
+    @classmethod
+    def _run_approved(cls, offered: Sequence[HarnessTool], call: ToolCallInput) -> dict[str, Any]:
+        """Run a call a person approved, or record why it could not run.
 
-            if decision is not None and decision["approved"]:
-                called.append(call.name)
-                resolved.append(self._invoke(offered, call))
-            elif decision is None:
-                resolved.append(tool_result_entry(call, "No approval response provided"))
-            else:
-                resolved.append(
-                    tool_result_entry(call, decision["reason"] or "User denied tool execution")
+        Recorded rather than raised. Resolution runs at the start of every
+        send(), so a call that raises here, because its tool is no longer
+        offered to this run or the authorizer now refuses it, would raise again
+        on every later send(), and the session could never move on. The approval
+        stands, but the call does not run.
+        """
+        if not any(tool.name == call.name for tool in offered):
+            return tool_result_entry(call, f"Not run: {call.name} is not available to this run.")
+
+        try:
+            return cls._invoke(offered, call)
+        except HarnessError as error:
+            if error.code == "call_not_authorized":
+                return tool_result_entry(
+                    call, f"Not run: this call to {call.name} is not authorized."
                 )
-
-        if not resolved:
-            return
-
-        session.thread().record(
-            [tool_result_row([*results.values(), *resolved], list(decisions.values()))], run_id
-        )
+            raise
 
     @staticmethod
     def _invoke(offered: Sequence[HarnessTool], call: ToolCallInput) -> dict[str, Any]:
