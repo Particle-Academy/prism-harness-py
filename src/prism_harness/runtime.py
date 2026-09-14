@@ -15,6 +15,13 @@ from prism_harness.events import HarnessEvents, RunFailed, RunFinished, RunStart
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.session import Session
 from prism_harness.subagents import RunBudget, RunContext
+from prism_harness.thread_rows import (
+    ToolCallInput,
+    assistant_row,
+    thread_view,
+    tool_result_entry,
+    tool_result_row,
+)
 from prism_harness.tools import HarnessTool, ToolAuthorizer, ToolRegistry
 
 __all__ = [
@@ -34,6 +41,13 @@ class LlmToolCall:
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    #: The ids a provider keys the call's result and reasoning by, when they
+    #: differ from ``id``. OpenAI's Responses API answers a ``function_call`` by
+    #: its ``call_id``, and replays the reasoning item it came from by id.
+    #: Recorded on the call, as prism's ToolCall stores them.
+    result_id: str | None = None
+    reasoning_id: str | None = None
+    reasoning_summary: list[Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -82,9 +96,11 @@ LlmClient = Callable[[LlmRequest], LlmResponse]
 
 @dataclass(frozen=True)
 class PendingApproval:
+    #: The APPROVAL id: what :func:`record_approval` answers. Not the tool call id.
     id: str
     tool: str
     arguments: dict[str, Any]
+    tool_call_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -182,24 +198,38 @@ class AgentRuntime:
             )
         )
 
-        if prompt != "":
-            # With attachments, the shape prism-ai's UserMessage.to_dict() writes:
-            # the media parts, then the turn's own text as a trailing text part,
-            # which from_dict() strips back off. Without them, unchanged.
-            turn: dict[str, Any] = (
-                {"type": "user", "content": prompt}
-                if not attachments
-                else {
-                    "type": "user",
-                    "content": prompt,
-                    "additional_content": [*attachments, {"text": prompt}],
-                    "additional_attributes": {},
-                }
-            )
-            thread.record([turn], run_id)
-
         try:
-            return self._loop(session, mode, run, run_id, provider, model, tool_names)
+            resolved = self._tools.resolve(list(tool_names) if tool_names else mode.tools, session)
+            offered = (
+                self._authorizer.allowed(session, resolved)
+                if self._authorizer is not None
+                else list(resolved.values())
+            )
+            called: list[str] = []
+
+            # Decisions recorded since the run stopped are acted on FIRST, before
+            # a new prompt is recorded, so the results land after the calls they
+            # answer rather than after the new turn.
+            self._resolve_approvals(session, mode, offered, run_id, called)
+
+            if prompt != "":
+                # With attachments, the shape prism-ai's UserMessage.to_dict()
+                # writes: the media parts, then the turn's own text as a trailing
+                # text part, which from_dict() strips back off. Without them,
+                # unchanged.
+                turn: dict[str, Any] = (
+                    {"type": "user", "content": prompt}
+                    if not attachments
+                    else {
+                        "type": "user",
+                        "content": prompt,
+                        "additional_content": [*attachments, {"text": prompt}],
+                        "additional_attributes": {},
+                    }
+                )
+                thread.record([turn], run_id)
+
+            return self._loop(session, mode, run, run_id, provider, model, offered, called)
         except Exception as error:
             failure = str(error)
             session.fail_run(run_id, failure)
@@ -222,17 +252,10 @@ class AgentRuntime:
         run_id: str,
         provider: str,
         model: str,
-        tool_names: Sequence[str] | None,
+        offered: list[HarnessTool],
+        called: list[str],
     ) -> AgentResponse:
         thread = session.thread()
-        resolved = self._tools.resolve(list(tool_names) if tool_names else mode.tools, session)
-        offered = (
-            self._authorizer.allowed(session, resolved)
-            if self._authorizer is not None
-            else list(resolved.values())
-        )
-
-        called: list[str] = []
         text = ""
         finish_reason = "stop"
 
@@ -249,7 +272,7 @@ class AgentRuntime:
             response = self._client(
                 LlmRequest(
                     system_prompt=mode.system_prompt,
-                    messages=[entry.message for entry in thread.messages()],
+                    messages=thread_view([entry.message for entry in thread.messages()]),
                     tools=offered,
                     provider=provider,
                     model=model,
@@ -262,98 +285,142 @@ class AgentRuntime:
             text = response.text
             finish_reason = response.finish_reason
 
+            calls = [_call_input(call) for call in response.tool_calls]
+            gated = [call for call in calls if mode.needs_approval(call.name)]
+            requests = [
+                {"approval_id": f"apr_{uuid.uuid4().hex}", "tool_call_id": call.id}
+                for call in gated
+            ]
+
             # The next step's request is built from this row, so it keeps what a
-            # provider needs to be sent back: each call's arguments (a tool_use
-            # without its input is refused) and the provider state for the turn
-            # (G-58).
+            # provider needs sent back: each call's arguments and provider ids,
+            # the turn's provider state, and the approvals it is waiting on (G-58).
             thread.record(
-                [
-                    {
-                        "type": "assistant",
-                        "content": response.text,
-                        "tool_calls": [
-                            {"id": call.id, "name": call.name, "arguments": call.arguments}
-                            for call in response.tool_calls
-                        ],
-                        "additional_content": dict(response.additional_content),
-                    }
-                ],
+                [assistant_row(response.text, calls, response.additional_content, requests)],
                 run_id,
             )
 
-            if not response.tool_calls:
+            if not calls:
                 return self._finish(session, run_id, called, finish_reason, text, run, None)
 
-            pending = self._pending_approvals(session, mode, response.tool_calls)
+            # The calls that need nobody run now, as in the reference, and their
+            # results are recorded even when the step then stops for a person.
+            results: list[dict[str, Any]] = []
 
-            if pending:
-                # FAILS CLOSED. The run stops here and the request is already in
-                # the thread, so a different process can pick it up after a human
+            for call in calls:
+                if call in gated:
+                    continue
+
+                called.append(call.name)
+                results.append(self._invoke(offered, call))
+
+            if results:
+                thread.record([tool_result_row(results)], run_id)
+
+            if requests:
+                # FAILS CLOSED. The gated calls have not run, and the requests are
+                # in the thread, so a different process can resume after a person
                 # answers.
-                thread.record(
-                    [
-                        {
-                            "type": "tool_approval_request",
-                            "approvals": [
-                                {"id": p.id, "tool": p.tool, "arguments": p.arguments}
-                                for p in pending
-                            ],
-                        }
-                    ],
-                    run_id,
-                )
-
                 return AgentResponse(
                     run_id=run_id,
                     text=text,
                     steps=run.ledger.steps,
                     tool_calls=called,
                     finish_reason="awaiting_approval",
-                    pending_approvals=pending,
+                    pending_approvals=[
+                        PendingApproval(
+                            id=request["approval_id"],
+                            tool=call.name,
+                            arguments=dict(call.arguments),
+                            tool_call_id=call.id,
+                        )
+                        for call, request in zip(gated, requests, strict=True)
+                    ],
                 )
 
-            for call in response.tool_calls:
-                called.append(call.name)
-                thread.record([self._invoke(offered, call)], run_id)
+    def _resolve_approvals(
+        self,
+        session: Session,
+        mode: AgentMode,
+        offered: list[HarnessTool],
+        run_id: str,
+        called: list[str],
+    ) -> None:
+        """Act on the decisions recorded for the last turn that stopped for a person.
 
-    def _pending_approvals(
-        self, session: Session, mode: AgentMode, tool_calls: Sequence[LlmToolCall]
-    ) -> list[PendingApproval]:
-        """Which of these calls needs a human, and has not had one.
+        The model is NOT asked again. Asked again, a provider issues the call
+        afresh under a new id, and a decision recorded against the old one never
+        matches. The calls that stopped the run are answered where they are:
 
-        An approval already answered in the thread is NOT asked again -- that is
-        the whole point of recording it durably. An answered-and-denied approval
-        is also not asked again; it is simply not executed.
+        - approved: run, once;
+        - denied: the reason, as the result the model sees;
+        - no decision: refused, "No approval response provided". Record every
+          decision before resuming.
+
+        A call that already has a result is done and never runs again, whatever
+        its decision says. The results are recorded as one tool result row
+        holding every result and decision for the turn, as the reference writes
+        it.
         """
-        gated = [call for call in tool_calls if mode.needs_approval(call.name)]
+        view = thread_view([entry.message for entry in session.thread().messages()])
+        index = next(
+            (
+                i
+                for i in range(len(view) - 1, -1, -1)
+                if view[i]["type"] == "assistant" and view[i]["tool_calls"]
+            ),
+            None,
+        )
 
-        if not gated:
-            return []
+        if index is None:
+            return
 
-        answered = self._answered_approvals(session)
+        assistant = view[index]
+        answered = next((row for row in view[index + 1 :] if row["type"] == "tool_result"), None)
+        results = {e["tool_call_id"]: e for e in (answered or {}).get("tool_results", [])}
+        decisions = {
+            d["approval_id"]: d for d in (answered or {}).get("tool_approval_responses", [])
+        }
+        approval_ids = {
+            r["tool_call_id"]: r["approval_id"] for r in assistant["tool_approval_requests"]
+        }
+        resolved: list[dict[str, Any]] = []
 
-        return [
-            PendingApproval(id=call.id, tool=call.name, arguments=call.arguments)
-            for call in gated
-            if call.id not in answered
-        ]
-
-    @staticmethod
-    def _answered_approvals(session: Session) -> dict[str, bool]:
-        answered: dict[str, bool] = {}
-
-        for entry in session.thread().messages():
-            if entry.message.get("type") != "tool_approval_response":
+        for row in assistant["tool_calls"]:
+            if row["id"] in results:
                 continue
 
-            approval_id = entry.message.get("approval_id")
-            if isinstance(approval_id, str):
-                answered[approval_id] = entry.message.get("approved") is True
+            if row["id"] not in approval_ids and not mode.needs_approval(row["name"]):
+                continue
 
-        return answered
+            call = ToolCallInput(
+                id=row["id"],
+                name=row["name"],
+                arguments=row["arguments"],
+                result_id=row["result_id"],
+            )
+            approval_id = approval_ids.get(row["id"])
+            decision = decisions.get(approval_id) if approval_id is not None else None
+
+            if decision is not None and decision["approved"]:
+                called.append(call.name)
+                resolved.append(self._invoke(offered, call))
+            elif decision is None:
+                resolved.append(tool_result_entry(call, "No approval response provided"))
+            else:
+                resolved.append(
+                    tool_result_entry(call, decision["reason"] or "User denied tool execution")
+                )
+
+        if not resolved:
+            return
+
+        session.thread().record(
+            [tool_result_row([*results.values(), *resolved], list(decisions.values()))], run_id
+        )
 
     @staticmethod
-    def _invoke(offered: Sequence[HarnessTool], call: LlmToolCall) -> dict[str, Any]:
+    def _invoke(offered: Sequence[HarnessTool], call: ToolCallInput) -> dict[str, Any]:
         tool = next((candidate for candidate in offered if candidate.name == call.name), None)
 
         if tool is None:
@@ -362,25 +429,20 @@ class AgentRuntime:
             )
 
         try:
-            result = tool.handle(call.arguments)
+            result = tool.handle(dict(call.arguments))
         except HarnessError as error:
             # A refused call propagates. A refusal fed back to the model reads
             # as a retryable failure, which is the opposite of a guard.
             if error.code == "call_not_authorized":
                 raise
 
-            return _failed_result(call, str(error))
+            return tool_result_entry(call, f"The tool failed: {error}")
         except Exception as error:  # noqa: BLE001 - a tool is someone else's code
             # A failed tool is a RESULT, not a crashed run: the model can often
             # recover, and losing the whole turn to one bad call is worse.
-            return _failed_result(call, str(error))
+            return tool_result_entry(call, f"The tool failed: {error}")
 
-        return {
-            "type": "tool_result",
-            "tool_call_id": call.id,
-            "name": call.name,
-            "result": result if isinstance(result, str) else json.dumps(result),
-        }
+        return tool_result_entry(call, result if isinstance(result, str) else json.dumps(result))
 
     def _finish(
         self,
@@ -429,30 +491,34 @@ def record_approval(
     already scoped to a participant, so nobody can answer another participant's
     approval through it, but "this user may approve THIS action" is a question
     only the host can answer. Authorize before calling.
+
+    Nothing runs until the next ``send()``, which acts on every decision recorded
+    by then and refuses any pending call still without one. With several
+    pending, record them all first.
+
+    ``approval_id`` is :attr:`PendingApproval.id`, not the tool call id.
     """
     run = session.run()
 
     session.thread().record(
         [
-            {
-                "type": "tool_approval_response",
-                "approval_id": approval_id,
-                "approved": approved,
-                "reason": reason,
-            }
+            tool_result_row(
+                [], [{"approval_id": approval_id, "approved": approved, "reason": reason}]
+            )
         ],
         run["id"] if run else None,
     )
 
 
-def _failed_result(call: LlmToolCall, message: str) -> dict[str, Any]:
-    return {
-        "type": "tool_result",
-        "tool_call_id": call.id,
-        "name": call.name,
-        "result": f"The tool failed: {message}",
-        "failed": True,
-    }
+def _call_input(call: LlmToolCall) -> ToolCallInput:
+    return ToolCallInput(
+        id=call.id,
+        name=call.name,
+        arguments=call.arguments,
+        result_id=call.result_id,
+        reasoning_id=call.reasoning_id,
+        reasoning_summary=call.reasoning_summary,
+    )
 
 
 def _now() -> str:

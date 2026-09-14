@@ -57,6 +57,13 @@ from prism_harness.tasks import (
     task_record,
 )
 from prism_harness.thread import Thread, ThreadMessage
+from prism_harness.thread_rows import (
+    ToolCallInput,
+    assistant_row,
+    thread_view,
+    tool_result_entry,
+    tool_result_row,
+)
 from prism_harness.tools import (
     AuthorizedTool,
     CallPolicy,
@@ -125,13 +132,18 @@ __all__ = [
     "Thread",
     "ThreadMessage",
     "ToolAuthorizer",
+    "ToolCallInput",
     "ToolFactory",
     "ToolProvider",
     "ToolRegistry",
     "admit_attachments",
+    "assistant_row",
     "canonical_task_json",
     "diagnose",
     "record_approval",
     "subagent_from_config",
     "task_record",
+    "thread_view",
+    "tool_result_entry",
+    "tool_result_row",
 ]

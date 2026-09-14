@@ -114,6 +114,51 @@ ModeRegistry({"modes": {"overseer": {"provider_options": {"thinking": {"type": "
 A value that is not a map is refused when the mode is resolved, with
 `mode_malformed`.
 
+## What your model client receives
+
+`request.messages` is the thread, oldest first, in the shape the PHP reference
+stores Prism's messages:
+
+| `type` | Carries |
+|---|---|
+| `user` | `content`, and `additional_content` when the turn has attachments |
+| `assistant` | `content`, `tool_calls` (`id`, `name`, `arguments`, `result_id`, `reasoning_id`, `reasoning_summary`), `additional_content`, `tool_approval_requests` |
+| `tool_result` | `tool_results` (`tool_call_id`, `tool_name`, `args`, `result`, `tool_call_result_id`, `artifacts`), `tool_approval_responses` |
+
+Consecutive tool result rows reach the client as one, so each call's result is
+sent to the provider once. Return a call's provider ids on `LlmToolCall`
+(`result_id`, `reasoning_id`, `reasoning_summary`), and provider state for the
+turn as `LlmResponse.additional_content`: they are recorded and come back in
+`messages`.
+
+## Approvals
+
+A mode names the tools a person must approve:
+
+```python
+"guarded": {"system_prompt": "...", "tools": ["read", "delete"], "requires_approval": ["delete"]}
+```
+
+A step that calls one stops with `finish_reason == "awaiting_approval"`. The
+calls that need nobody have already run. Record a decision for every pending
+approval, then resume with an empty prompt:
+
+```python
+response = runtime.send(session, "Clean up the failed run")
+
+if response.finish_reason == "awaiting_approval":
+    for pending in response.pending_approvals:
+        record_approval(session, pending.id, True)  # or False, "not on production"
+
+    runtime.send(session, "")
+```
+
+On resume the approved calls run once and denied calls return their reason, and
+then the model continues. The model is not asked to make the calls again. A
+pending call with no decision is refused with "No approval response provided".
+A call that has a result never runs again. Who may approve is your application's
+decision: authorize before calling `record_approval()`.
+
 ## Task lists
 
 An agent given a goal keeps working across many requests. `session.tasks()` is

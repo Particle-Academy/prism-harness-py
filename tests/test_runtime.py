@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from collections.abc import Callable
 from typing import Any
@@ -152,7 +153,7 @@ def test_does_not_record_a_user_message_for_an_empty_prompt() -> None:
 # -- what the next step is sent back (G-58) ------------------------------------
 
 
-def test_records_call_arguments_and_provider_state_and_sends_them_on_the_next_step() -> None:
+def test_records_call_arguments_ids_and_provider_state_and_sends_them_on_the_next_step() -> None:
     # The next request is built from the thread. Recorded with an id and a name
     # only, a client had no input to send for the tool_use it was replaying, and
     # nowhere to find the thinking signature Anthropic requires with it.
@@ -162,7 +163,9 @@ def test_records_call_arguments_and_provider_state_and_sends_them_on_the_next_st
         LlmResponse(
             text="Checking.",
             finish_reason="tool_calls",
-            tool_calls=[LlmToolCall("c1", "echo", {"value": "x"})],
+            tool_calls=[
+                LlmToolCall("fc_1", "echo", {"value": "x"}, result_id="call_1", reasoning_id="rs_1")
+            ],
             additional_content={"thinking": "Use the tool.", "thinking_signature": "sig-1"},
         ),
         LlmResponse(text="Done.", finish_reason="stop"),
@@ -174,14 +177,38 @@ def test_records_call_arguments_and_provider_state_and_sends_them_on_the_next_st
 
     a_runtime(client).send(session, "Use the tool")
 
-    assistant = next(m for m in requests[1].messages if m["type"] == "assistant")
-
-    assert assistant == {
-        "type": "assistant",
-        "content": "Checking.",
-        "tool_calls": [{"id": "c1", "name": "echo", "arguments": {"value": "x"}}],
-        "additional_content": {"thinking": "Use the tool.", "thinking_signature": "sig-1"},
-    }
+    assert requests[1].messages[1:] == [
+        {
+            "type": "assistant",
+            "content": "Checking.",
+            "tool_calls": [
+                {
+                    "id": "fc_1",
+                    "name": "echo",
+                    "arguments": {"value": "x"},
+                    "result_id": "call_1",
+                    "reasoning_id": "rs_1",
+                    "reasoning_summary": None,
+                }
+            ],
+            "additional_content": {"thinking": "Use the tool.", "thinking_signature": "sig-1"},
+            "tool_approval_requests": [],
+        },
+        {
+            "type": "tool_result",
+            "tool_results": [
+                {
+                    "tool_call_id": "fc_1",
+                    "tool_name": "echo",
+                    "args": {"value": "x"},
+                    "result": "echoed:x",
+                    "tool_call_result_id": "call_1",
+                    "artifacts": [],
+                }
+            ],
+            "tool_approval_responses": [],
+        },
+    ]
 
 
 def test_records_empty_provider_state_when_the_client_reports_none() -> None:
@@ -194,7 +221,31 @@ def test_records_empty_provider_state_when_the_client_reports_none() -> None:
         "content": "Hello.",
         "tool_calls": [],
         "additional_content": {},
+        "tool_approval_requests": [],
     }
+
+
+def test_records_all_of_a_steps_results_as_one_row() -> None:
+    session = a_session()
+    client = scripted(
+        [
+            LlmResponse(
+                text="",
+                finish_reason="tool_calls",
+                tool_calls=[
+                    LlmToolCall("c1", "echo", {"value": "a"}),
+                    LlmToolCall("c2", "echo", {"value": "b"}),
+                ],
+            ),
+            LlmResponse(text="Done.", finish_reason="stop"),
+        ]
+    )
+
+    a_runtime(client).send(session, "go")
+    rows = [m.message for m in session.thread().messages()]
+
+    assert [row["type"] for row in rows] == ["user", "assistant", "tool_result", "assistant"]
+    assert [entry["result"] for entry in rows[2]["tool_results"]] == ["echoed:a", "echoed:b"]
 
 
 # -- budgets -----------------------------------------------------------------
@@ -251,95 +302,221 @@ def test_refuses_a_run_nested_past_the_depth_ceiling() -> None:
 
 # -- approvals ---------------------------------------------------------------
 
+GUARDED = ModeRegistry(
+    {
+        "default": "guarded",
+        "modes": {
+            "guarded": {
+                "system_prompt": "Careful.",
+                "tools": ["echo", "shout"],
+                "max_steps": 4,
+                "requires_approval": ["echo"],
+            }
+        },
+    }
+)
+
+
+class CountingTool:
+    def __init__(self, name: str, counts: dict[str, int]) -> None:
+        self._name = name
+        self._counts = counts
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def handle(self, args: dict[str, Any]) -> Any:
+        self._counts[self._name] = self._counts.get(self._name, 0) + 1
+        return f"{self._name}:{args.get('value', '')}"
+
+
+def guarded_runtime(
+    client: Callable[[LlmRequest], LlmResponse], counts: dict[str, int]
+) -> AgentRuntime:
+    tools = (
+        ToolRegistry()
+        .register(CountingTool("echo", counts))
+        .register(CountingTool("shout", counts))
+    )
+    return AgentRuntime(client=client, modes=GUARDED, tools=tools)
+
+
+def once(
+    tool_calls: list[LlmToolCall], requests: list[LlmRequest] | None = None
+) -> Callable[[LlmRequest], LlmResponse]:
+    """A model that asks for the calls ONCE; a real provider does not re-issue a call under the same id."""
+    seen: list[LlmRequest] = requests if requests is not None else []
+
+    def client(request: LlmRequest) -> LlmResponse:
+        seen.append(request)
+        if len(seen) == 1:
+            return LlmResponse(text="", finish_reason="tool_calls", tool_calls=tool_calls)
+        return LlmResponse(text=f"Finished after {len(seen) - 1}.", finish_reason="stop")
+
+    return client
+
 
 def test_stops_and_does_not_run_a_gated_tool_without_approval() -> None:
     # Failing closed is the only safe direction: an unanswered approval that
     # executed anyway is exactly what the mechanism exists to prevent.
     session = a_session("guarded")
-    handled = {"n": 0}
-    tools = ToolRegistry().register(
-        EchoTool(on_call=lambda: handled.__setitem__("n", handled["n"] + 1))
+    counts: dict[str, int] = {}
+
+    response = guarded_runtime(once([LlmToolCall("c1", "echo", {"value": "x"})]), counts).send(
+        session, "go"
     )
 
-    response = a_runtime(
-        scripted(
-            [
-                LlmResponse(
-                    text="",
-                    finish_reason="tool_calls",
-                    tool_calls=[LlmToolCall("c1", "echo", {"value": "x"})],
-                )
-            ]
-        ),
-        tools=tools,
-    ).send(session, "go")
-
-    assert handled["n"] == 0
+    assert counts == {}
     assert response.finish_reason == "awaiting_approval"
-    assert [p.tool for p in response.pending_approvals] == ["echo"]
+    [pending] = response.pending_approvals
+    assert re.fullmatch(r"apr_[0-9a-f]{32}", pending.id)
+    assert (pending.tool_call_id, pending.tool, pending.arguments) == ("c1", "echo", {"value": "x"})
 
 
-def test_writes_the_request_to_the_thread() -> None:
+def test_writes_the_request_onto_the_assistant_row() -> None:
     session = a_session("guarded")
-    a_runtime(
-        scripted(
-            [
-                LlmResponse(
-                    text="", finish_reason="tool_calls", tool_calls=[LlmToolCall("c1", "echo", {})]
-                )
-            ]
-        )
+
+    response = guarded_runtime(once([LlmToolCall("c1", "echo", {})]), {}).send(session, "go")
+
+    assistant = next(
+        m.message for m in session.thread().messages() if m.message["type"] == "assistant"
+    )
+    assert assistant["tool_approval_requests"] == [
+        {"approval_id": response.pending_approvals[0].id, "tool_call_id": "c1"}
+    ]
+
+
+def test_runs_the_calls_that_need_nobody_before_stopping_for_the_rest() -> None:
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+
+    response = guarded_runtime(
+        once(
+            [LlmToolCall("c1", "echo", {"value": "x"}), LlmToolCall("c2", "shout", {"value": "y"})]
+        ),
+        counts,
     ).send(session, "go")
 
-    assert "tool_approval_request" in [m.message["type"] for m in session.thread().messages()]
+    assert counts == {"shout": 1}
+    assert [p.tool_call_id for p in response.pending_approvals] == ["c1"]
+    assert [m.message["type"] for m in session.thread().messages()] == [
+        "user",
+        "assistant",
+        "tool_result",
+    ]
 
 
-def test_runs_the_tool_once_the_approval_is_recorded_on_a_resumed_turn() -> None:
-    # The approval a person grants this morning is a durable row, so the worker
-    # that resumes tonight -- a different process, possibly after a deploy --
-    # reads the same answer.
+def test_runs_an_approved_call_once_on_the_resumed_turn_without_asking_the_model_again() -> None:
+    # A real provider asked again issues the call afresh under a new id, so a
+    # decision recorded against the old id would never match.
     session = a_session("guarded")
-    handled = {"n": 0}
-    tools = ToolRegistry().register(
-        EchoTool(on_call=lambda: handled.__setitem__("n", handled["n"] + 1))
-    )
-    turn = {"n": 0}
+    counts: dict[str, int] = {}
+    requests: list[LlmRequest] = []
+    runtime = guarded_runtime(once([LlmToolCall("c1", "echo", {"value": "x"})], requests), counts)
 
-    def client(_request: LlmRequest) -> LlmResponse:
-        turn["n"] += 1
-        if turn["n"] <= 2:
-            return LlmResponse(
-                text="", finish_reason="tool_calls", tool_calls=[LlmToolCall("c1", "echo", {})]
-            )
-        return LlmResponse(text="Finished.", finish_reason="stop")
-
-    runtime = a_runtime(client, tools=tools)
-
-    runtime.send(session, "go")
-    assert handled["n"] == 0
-
-    record_approval(session, "c1", True)
+    first = runtime.send(session, "go")
+    record_approval(session, first.pending_approvals[0].id, True)
     resumed = runtime.send(session, "")
 
-    assert handled["n"] == 1
-    assert resumed.text == "Finished."
+    assert counts == {"echo": 1}
+    assert resumed.text == "Finished after 1."
+    assert resumed.tool_calls == ["echo"]
+    last = requests[1].messages[-1]
+    assert last["type"] == "tool_result"
+    assert [e["result"] for e in last["tool_results"]] == ["echo:x"]
+    assert [d["approved"] for d in last["tool_approval_responses"]] == [True]
 
 
-def test_does_not_ask_twice_once_an_approval_is_answered() -> None:
+def test_sends_a_denied_call_the_reason_and_an_unanswered_one_a_refusal() -> None:
     session = a_session("guarded")
-    client = scripted(
+    counts: dict[str, int] = {}
+    requests: list[LlmRequest] = []
+    runtime = guarded_runtime(
+        once(
+            [LlmToolCall("c1", "echo", {"value": "a"}), LlmToolCall("c2", "echo", {"value": "b"})],
+            requests,
+        ),
+        counts,
+    )
+
+    first = runtime.send(session, "go")
+    record_approval(session, first.pending_approvals[0].id, False, "not today")
+    runtime.send(session, "")
+
+    assert counts == {}
+    assert [(e["tool_call_id"], e["result"]) for e in requests[1].messages[-1]["tool_results"]] == [
+        ("c1", "not today"),
+        ("c2", "No approval response provided"),
+    ]
+
+
+def test_runs_every_approved_call_when_all_decisions_are_recorded_first() -> None:
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    runtime = guarded_runtime(
+        once(
+            [LlmToolCall("c1", "echo", {"value": "a"}), LlmToolCall("c2", "echo", {"value": "b"})]
+        ),
+        counts,
+    )
+
+    first = runtime.send(session, "go")
+    for pending in first.pending_approvals:
+        record_approval(session, pending.id, True)
+    runtime.send(session, "")
+
+    assert counts == {"echo": 2}
+
+
+def test_never_runs_an_approved_call_again_once_it_has_a_result() -> None:
+    # The decision stays in the thread, and every later turn reads it again.
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    runtime = guarded_runtime(once([LlmToolCall("c1", "echo", {"value": "x"})]), counts)
+
+    first = runtime.send(session, "go")
+    record_approval(session, first.pending_approvals[0].id, True)
+    runtime.send(session, "")
+    runtime.send(session, "And again?")
+    runtime.send(session, "")
+
+    assert counts == {"echo": 1}
+
+
+def test_resumes_an_approval_recorded_by_0_1_0_in_the_rows_it_wrote() -> None:
+    # 0.1.0 kept the request in its own row, keyed by the CALL id, and answered
+    # it in a tool_approval_response row.
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    session.thread().record(
         [
-            LlmResponse(
-                text="", finish_reason="tool_calls", tool_calls=[LlmToolCall("c1", "echo", {})]
-            ),
-            LlmResponse(text="done", finish_reason="stop"),
+            {"type": "user", "content": "go"},
+            {
+                "type": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "c1", "name": "echo", "arguments": {"value": "x"}}],
+                "additional_content": {},
+            },
+            {
+                "type": "tool_approval_request",
+                "approvals": [{"id": "c1", "tool": "echo", "arguments": {"value": "x"}}],
+            },
+            {
+                "type": "tool_approval_response",
+                "approval_id": "c1",
+                "approved": True,
+                "reason": None,
+            },
         ]
     )
 
-    a_runtime(client).send(session, "go")
-    record_approval(session, "c1", True)
+    resumed = guarded_runtime(
+        scripted([LlmResponse(text="Finished.", finish_reason="stop")]), counts
+    ).send(session, "")
 
-    assert a_runtime(client).send(session, "").pending_approvals == []
+    assert counts == {"echo": 1}
+    assert resumed.text == "Finished."
 
 
 # -- tools -------------------------------------------------------------------
@@ -363,8 +540,7 @@ def test_records_a_failed_tool_as_a_result_rather_than_crashing_the_run() -> Non
 
     assert response.text == "Recovered."
     result = next(m for m in session.thread().messages() if m.message["type"] == "tool_result")
-    assert result.message["failed"] is True
-    assert "exploded" in result.message["result"]
+    assert "exploded" in result.message["tool_results"][0]["result"]
 
 
 def test_a_refused_call_propagates() -> None:
