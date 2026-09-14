@@ -1,0 +1,515 @@
+{
+  "suite": "harness-thread-rows",
+  "schema_version": 1,
+  "corpus_version": "0.1.0",
+  "generated_by": "prism-parity:tools/generate-thread-rows.php for php; tools/record-thread-rows.mjs for ts and tools/record_thread_rows.py for py. Every output is execution output, encoded as compact JSON with keys in the order each language wrote them.",
+  "pins_note": "The rows a harness stores for a run, and what a stored run is replayed as. A PHP app and a TypeScript or Python agent can share one session. If they store tool calls, approvals or decisions in different shapes, one language resumes the other’s approval against the wrong call or never, or replays a conversation a provider refuses.",
+  "cases": [
+    {
+      "id": "thr-0001",
+      "title": "a reply with no tool calls and no provider state",
+      "since": "0.1.0",
+      "input": {
+        "write": "assistant",
+        "content": "Hello.",
+        "tool_calls": [],
+        "additional_content": {},
+        "approval_requests": []
+      },
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"Hello.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"Hello.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"Hello.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]"
+      },
+      "agrees": true,
+      "notes": "The control, and the empty-map boundary. A reply with no provider state must store an EMPTY MAP, not an empty list: a reader in a typed language that expects an object refuses a list, and PHP writes an empty array as a list unless told otherwise."
+    },
+    {
+      "id": "thr-0002",
+      "title": "a tool call with its arguments, provider ids and provider state",
+      "since": "0.1.0",
+      "input": {
+        "write": "assistant",
+        "content": "Checking.",
+        "tool_calls": [
+          {
+            "id": "fc_1",
+            "name": "weather",
+            "arguments": {
+              "city": "Detroit"
+            },
+            "result_id": "call_1",
+            "reasoning_id": "rs_1",
+            "reasoning_summary": [
+              {
+                "type": "summary_text",
+                "text": "Look it up."
+              }
+            ]
+          }
+        ],
+        "additional_content": {
+          "thinking": "The user wants the weather.",
+          "thinking_signature": "sig-1"
+        },
+        "approval_requests": []
+      },
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"Checking.\",\"tool_calls\":[{\"id\":\"fc_1\",\"name\":\"weather\",\"arguments\":{\"city\":\"Detroit\"},\"result_id\":\"call_1\",\"reasoning_id\":\"rs_1\",\"reasoning_summary\":[{\"type\":\"summary_text\",\"text\":\"Look it up.\"}]}],\"additional_content\":{\"thinking\":\"The user wants the weather.\",\"thinking_signature\":\"sig-1\"},\"tool_approval_requests\":[]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"Checking.\",\"tool_calls\":[{\"id\":\"fc_1\",\"name\":\"weather\",\"arguments\":{\"city\":\"Detroit\"},\"result_id\":\"call_1\",\"reasoning_id\":\"rs_1\",\"reasoning_summary\":[{\"type\":\"summary_text\",\"text\":\"Look it up.\"}]}],\"additional_content\":{\"thinking\":\"The user wants the weather.\",\"thinking_signature\":\"sig-1\"},\"tool_approval_requests\":[]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"Checking.\",\"tool_calls\":[{\"id\":\"fc_1\",\"name\":\"weather\",\"arguments\":{\"city\":\"Detroit\"},\"result_id\":\"call_1\",\"reasoning_id\":\"rs_1\",\"reasoning_summary\":[{\"type\":\"summary_text\",\"text\":\"Look it up.\"}]}],\"additional_content\":{\"thinking\":\"The user wants the weather.\",\"thinking_signature\":\"sig-1\"},\"tool_approval_requests\":[]}]"
+      },
+      "agrees": true,
+      "notes": "G-58. Everything the next request has to send back: the call's arguments (a tool_use without input is refused), OpenAI's call and reasoning ids, and Anthropic's thinking signature. The ports used to store an id and a name only."
+    },
+    {
+      "id": "thr-0003",
+      "title": "a tool call with NO arguments",
+      "since": "0.1.0",
+      "input": {
+        "write": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "now",
+            "arguments": {}
+          }
+        ],
+        "additional_content": {},
+        "approval_requests": []
+      },
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"now\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"now\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"now\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]}]"
+      },
+      "agrees": true,
+      "notes": "The empty-arguments boundary. `arguments` must be an empty map. Stored as an empty list, it is replayed to a provider as an array where an object is required, and the request is refused."
+    },
+    {
+      "id": "thr-0004",
+      "title": "two calls waiting on approval, one approval request each",
+      "since": "0.1.0",
+      "input": {
+        "write": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "delete_file",
+            "arguments": {
+              "path": "/tmp/a"
+            }
+          },
+          {
+            "id": "call_2",
+            "name": "delete_file",
+            "arguments": {
+              "path": "/tmp/b"
+            }
+          }
+        ],
+        "additional_content": {},
+        "approval_requests": [
+          {
+            "approval_id": "apr_1",
+            "tool_call_id": "call_1"
+          },
+          {
+            "approval_id": "apr_2",
+            "tool_call_id": "call_2"
+          }
+        ]
+      },
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"delete_file\",\"arguments\":{\"path\":\"/tmp/a\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"delete_file\",\"arguments\":{\"path\":\"/tmp/b\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_1\"},{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_2\"}]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"delete_file\",\"arguments\":{\"path\":\"/tmp/a\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"delete_file\",\"arguments\":{\"path\":\"/tmp/b\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_1\"},{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_2\"}]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"delete_file\",\"arguments\":{\"path\":\"/tmp/a\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"delete_file\",\"arguments\":{\"path\":\"/tmp/b\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_1\"},{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_2\"}]}]"
+      },
+      "agrees": true,
+      "notes": "G-59. The approval requests ride on the assistant row, each naming the call it authorises. A language that stored them elsewhere, or keyed them differently, would resume a PHP-recorded approval against the wrong call or never, and an approved call must never run as the wrong one."
+    },
+    {
+      "id": "thr-0005",
+      "title": "arguments a hostile model chose",
+      "since": "0.1.0",
+      "input": {
+        "write": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "search",
+            "arguments": {
+              "query": "'; DROP TABLE users; --",
+              "__proto__": "polluted",
+              "nested.key": {
+                "naïve": [
+                  "ü",
+                  "日本",
+                  ""
+                ],
+                "path": "../../etc/passwd"
+              }
+            }
+          }
+        ],
+        "additional_content": {},
+        "approval_requests": []
+      },
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"search\",\"arguments\":{\"query\":\"'; DROP TABLE users; --\",\"__proto__\":\"polluted\",\"nested.key\":{\"naïve\":[\"ü\",\"日本\",\"\"],\"path\":\"../../etc/passwd\"}},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"search\",\"arguments\":{\"query\":\"'; DROP TABLE users; --\",\"__proto__\":\"polluted\",\"nested.key\":{\"naïve\":[\"ü\",\"日本\",\"\"],\"path\":\"../../etc/passwd\"}},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"search\",\"arguments\":{\"query\":\"'; DROP TABLE users; --\",\"__proto__\":\"polluted\",\"nested.key\":{\"naïve\":[\"ü\",\"日本\",\"\"],\"path\":\"../../etc/passwd\"}},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]}]"
+      },
+      "agrees": true,
+      "notes": "Adversarial arguments stored as data, never interpreted: an injection string, a `__proto__` key that must stay an ordinary key, a dotted key that must not become a path, non-ASCII text, an empty string, and a traversal-shaped path. All three languages must store exactly what the model sent."
+    },
+    {
+      "id": "thr-0006",
+      "title": "all of a step's results in one row",
+      "since": "0.1.0",
+      "input": {
+        "write": "tool_result",
+        "results": [
+          {
+            "tool_call_id": "call_1",
+            "tool_name": "search",
+            "args": {
+              "query": "tigers"
+            },
+            "result": "The game is at 3pm.",
+            "tool_call_result_id": "call_1"
+          },
+          {
+            "tool_call_id": "call_2",
+            "tool_name": "weather",
+            "args": {},
+            "result": "{\"temp\": 75}"
+          }
+        ],
+        "decisions": []
+      },
+      "rows": {
+        "php": "[{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"search\",\"args\":{\"query\":\"tigers\"},\"result\":\"The game is at 3pm.\",\"tool_call_result_id\":\"call_1\",\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"weather\",\"args\":{},\"result\":\"{\\\"temp\\\": 75}\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]}]",
+        "ts": "[{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"search\",\"args\":{\"query\":\"tigers\"},\"result\":\"The game is at 3pm.\",\"tool_call_result_id\":\"call_1\",\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"weather\",\"args\":{},\"result\":\"{\\\"temp\\\": 75}\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]}]",
+        "py": "[{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"search\",\"args\":{\"query\":\"tigers\"},\"result\":\"The game is at 3pm.\",\"tool_call_result_id\":\"call_1\",\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"weather\",\"args\":{},\"result\":\"{\\\"temp\\\": 75}\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]}]"
+      },
+      "agrees": true,
+      "notes": "One row per step, as the reference stores it, with each result keyed by its call. A result that looks like JSON stays a string and must not be decoded into structure. The empty-arguments boundary again, on `args`."
+    },
+    {
+      "id": "thr-0007",
+      "title": "decisions only: an approval, a denial with a reason, a denial without one",
+      "since": "0.1.0",
+      "input": {
+        "write": "tool_result",
+        "results": [],
+        "decisions": [
+          {
+            "approval_id": "apr_1",
+            "approved": true,
+            "reason": null
+          },
+          {
+            "approval_id": "apr_2",
+            "approved": false,
+            "reason": "not on production"
+          },
+          {
+            "approval_id": "apr_3",
+            "approved": false,
+            "reason": null
+          }
+        ]
+      },
+      "rows": {
+        "php": "[{\"type\":\"tool_result\",\"tool_results\":[],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null},{\"approval_id\":\"apr_2\",\"approved\":false,\"reason\":\"not on production\"},{\"approval_id\":\"apr_3\",\"approved\":false,\"reason\":null}]}]",
+        "ts": "[{\"type\":\"tool_result\",\"tool_results\":[],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null},{\"approval_id\":\"apr_2\",\"approved\":false,\"reason\":\"not on production\"},{\"approval_id\":\"apr_3\",\"approved\":false,\"reason\":null}]}]",
+        "py": "[{\"type\":\"tool_result\",\"tool_results\":[],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null},{\"approval_id\":\"apr_2\",\"approved\":false,\"reason\":\"not on production\"},{\"approval_id\":\"apr_3\",\"approved\":false,\"reason\":null}]}]"
+      },
+      "agrees": true,
+      "notes": "What recording a decision writes. A denial must stay a denial across languages: an `approved` that became truthy, or a missing reason that became an empty string, changes what the resumed run does. Refused calls never run."
+    },
+    {
+      "id": "thr-0008",
+      "title": "a stopped step, its decision and the resumed results, replayed as one",
+      "since": "0.1.0",
+      "fold": [
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "call_1",
+              "name": "search",
+              "arguments": {
+                "q": "x"
+              }
+            },
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "call_2",
+              "name": "delete_file",
+              "arguments": {
+                "path": "/tmp/a"
+              }
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "call_2"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_1",
+              "tool_name": "search",
+              "args": {
+                "q": "x"
+              },
+              "result": "found"
+            }
+          ],
+          "tool_approval_responses": []
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_1",
+              "tool_name": "search",
+              "args": {
+                "q": "x"
+              },
+              "result": "found"
+            },
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_2",
+              "tool_name": "delete_file",
+              "args": {
+                "path": "/tmp/a"
+              },
+              "result": "deleted"
+            }
+          ],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"search\",\"arguments\":{\"q\":\"x\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"delete_file\",\"arguments\":{\"path\":\"/tmp/a\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_2\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"search\",\"args\":{\"q\":\"x\"},\"result\":\"found\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"delete_file\",\"args\":{\"path\":\"/tmp/a\"},\"result\":\"deleted\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"search\",\"arguments\":{\"q\":\"x\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"delete_file\",\"arguments\":{\"path\":\"/tmp/a\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_2\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"search\",\"args\":{\"q\":\"x\"},\"result\":\"found\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"delete_file\",\"args\":{\"path\":\"/tmp/a\"},\"result\":\"deleted\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"search\",\"arguments\":{\"q\":\"x\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"delete_file\",\"arguments\":{\"path\":\"/tmp/a\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_2\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"search\",\"args\":{\"q\":\"x\"},\"result\":\"found\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"delete_file\",\"args\":{\"path\":\"/tmp/a\"},\"result\":\"deleted\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]}]"
+      },
+      "agrees": true,
+      "notes": "G-59. An approval leaves three consecutive tool result rows. Replayed separately, a provider receives the search output twice, and Anthropic receives an empty user turn for the decision-only row, which it refuses. Folded, each call has one result and each approval one decision."
+    },
+    {
+      "id": "thr-0009",
+      "title": "a later row replaces an earlier result and decision in the earlier position",
+      "since": "0.1.0",
+      "fold": [
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "call_1",
+              "name": "a",
+              "arguments": {}
+            },
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "call_2",
+              "name": "b",
+              "arguments": {}
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "call_2"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_1",
+              "tool_name": "a",
+              "args": {},
+              "result": "first"
+            },
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_2",
+              "tool_name": "b",
+              "args": {},
+              "result": "No approval response provided"
+            }
+          ],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": false,
+              "reason": "no"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_1",
+              "tool_name": "a",
+              "args": {},
+              "result": "second"
+            }
+          ],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"a\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"b\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_2\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"a\",\"args\":{},\"result\":\"second\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"b\",\"args\":{},\"result\":\"No approval response provided\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"a\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"b\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_2\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"a\",\"args\":{},\"result\":\"second\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"b\",\"args\":{},\"result\":\"No approval response provided\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"a\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"b\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_2\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"a\",\"args\":{},\"result\":\"second\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"b\",\"args\":{},\"result\":\"No approval response provided\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]}]"
+      },
+      "agrees": true,
+      "notes": "The order a fold keeps when the same call or approval appears twice: the later value wins, in the position the first one had. If languages disagreed, the same stored thread would show a model a different result, or a spoofed later decision, in PHP than in TypeScript."
+    },
+    {
+      "id": "thr-0010",
+      "title": "tool result rows with a turn between them are not folded",
+      "since": "0.1.0",
+      "fold": [
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "call_1",
+              "name": "a",
+              "arguments": {}
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": []
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_1",
+              "tool_name": "a",
+              "args": {},
+              "result": "one"
+            }
+          ],
+          "tool_approval_responses": []
+        },
+        {
+          "type": "assistant",
+          "content": "Done.",
+          "tool_calls": [],
+          "additional_content": {},
+          "tool_approval_requests": []
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "call_2",
+              "name": "a",
+              "arguments": {}
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": []
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_2",
+              "tool_name": "a",
+              "args": {},
+              "result": "two"
+            }
+          ],
+          "tool_approval_responses": []
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"a\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"a\",\"args\":{},\"result\":\"one\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]},{\"type\":\"assistant\",\"content\":\"Done.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_2\",\"name\":\"a\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_2\",\"tool_name\":\"a\",\"args\":{},\"result\":\"two\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"a\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"a\",\"args\":{},\"result\":\"one\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]},{\"type\":\"assistant\",\"content\":\"Done.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_2\",\"name\":\"a\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_2\",\"tool_name\":\"a\",\"args\":{},\"result\":\"two\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"a\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"a\",\"args\":{},\"result\":\"one\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]},{\"type\":\"assistant\",\"content\":\"Done.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_2\",\"name\":\"a\",\"arguments\":{},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_2\",\"tool_name\":\"a\",\"args\":{},\"result\":\"two\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]}]"
+      },
+      "agrees": true,
+      "notes": "The boundary of a fold: only CONSECUTIVE rows merge. Merging across a turn would move a result away from the call it answers, and providers must never be sent a result before its call."
+    }
+  ],
+  "divergence_note": "All ten rows agree across PHP, TypeScript and Python. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised."
+}
