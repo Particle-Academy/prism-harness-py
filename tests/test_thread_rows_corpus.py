@@ -67,7 +67,7 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def test_is_the_whole_suite_not_a_subset_someone_trimmed_to_green() -> None:
-    assert len(CORPUS["cases"]) == 10
+    assert len(CORPUS["cases"]) == 13
 
 
 @pytest.mark.parametrize("case", CORPUS["cases"], ids=lambda case: case["id"])

@@ -1,7 +1,7 @@
 {
   "suite": "harness-thread-rows",
   "schema_version": 1,
-  "corpus_version": "0.1.0",
+  "corpus_version": "0.2.0",
   "generated_by": "prism-parity:tools/generate-thread-rows.php for php; tools/record-thread-rows.mjs for ts and tools/record_thread_rows.py for py. Every output is execution output, encoded as compact JSON with keys in the order each language wrote them.",
   "pins_note": "The rows a harness stores for a run, and what a stored run is replayed as. A PHP app and a TypeScript or Python agent can share one session. If they store tool calls, approvals or decisions in different shapes, one language resumes the other’s approval against the wrong call or never, or replays a conversation a provider refuses.",
   "cases": [
@@ -509,7 +509,92 @@
       },
       "agrees": true,
       "notes": "The boundary of a fold: only CONSECUTIVE rows merge. Merging across a turn would move a result away from the call it answers, and providers must never be sent a result before its call."
+    },
+    {
+      "id": "thr-0011",
+      "title": "a structured answer: the document as text, the parsed object beside it",
+      "since": "0.2.0",
+      "input": {
+        "write": "assistant",
+        "content": "{\"title\":\"Ship it\",\"steps\":[\"write\",\"test\"]}",
+        "tool_calls": [],
+        "additional_content": {
+          "thinking": "Two steps is enough.",
+          "structured": {
+            "title": "Ship it",
+            "steps": [
+              "write",
+              "test"
+            ]
+          }
+        },
+        "approval_requests": []
+      },
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"{\\\"title\\\":\\\"Ship it\\\",\\\"steps\\\":[\\\"write\\\",\\\"test\\\"]}\",\"tool_calls\":[],\"additional_content\":{\"thinking\":\"Two steps is enough.\",\"structured\":{\"title\":\"Ship it\",\"steps\":[\"write\",\"test\"]}},\"tool_approval_requests\":[]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"{\\\"title\\\":\\\"Ship it\\\",\\\"steps\\\":[\\\"write\\\",\\\"test\\\"]}\",\"tool_calls\":[],\"additional_content\":{\"thinking\":\"Two steps is enough.\",\"structured\":{\"title\":\"Ship it\",\"steps\":[\"write\",\"test\"]}},\"tool_approval_requests\":[]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"{\\\"title\\\":\\\"Ship it\\\",\\\"steps\\\":[\\\"write\\\",\\\"test\\\"]}\",\"tool_calls\":[],\"additional_content\":{\"thinking\":\"Two steps is enough.\",\"structured\":{\"title\":\"Ship it\",\"steps\":[\"write\",\"test\"]}},\"tool_approval_requests\":[]}]"
+      },
+      "agrees": true,
+      "notes": "A structured turn stores the document AS THE ASSISTANT MESSAGE'S TEXT, with the parsed object beside it under `structured`, alongside whatever provider state the turn carried. Storing the object instead would make the row unreadable to every reader that handles text -- which is every reader a thread already has. Pins that the parsed document is metadata, that it sits next to provider state rather than replacing it, and that a nested list inside it stays a list in all three."
+    },
+    {
+      "id": "thr-0012",
+      "title": "a REFUSED structured answer is recorded, with a null document",
+      "since": "0.2.0",
+      "input": {
+        "write": "assistant",
+        "content": "I am afraid I cannot help with that.",
+        "tool_calls": [],
+        "additional_content": {
+          "structured": null
+        },
+        "approval_requests": []
+      },
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"I am afraid I cannot help with that.\",\"tool_calls\":[],\"additional_content\":{\"structured\":null},\"tool_approval_requests\":[]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"I am afraid I cannot help with that.\",\"tool_calls\":[],\"additional_content\":{\"structured\":null},\"tool_approval_requests\":[]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"I am afraid I cannot help with that.\",\"tool_calls\":[],\"additional_content\":{\"structured\":null},\"tool_approval_requests\":[]}]"
+      },
+      "agrees": true,
+      "notes": "The exchange happened, so it is in the thread even though the run failed: a thread that omits the answer it did not like cannot explain the retry sitting next to it. The boundary is the null -- a key present and null is different bytes from a key that is absent, and a language that dropped it would leave a reader unable to tell a refused structured turn from an ordinary reply."
+    },
+    {
+      "id": "thr-0013",
+      "title": "a structured row replays as an ordinary assistant message",
+      "since": "0.2.0",
+      "fold": [
+        {
+          "type": "assistant",
+          "content": "{\"title\":\"Ship it\",\"steps\":[\"write\",\"test\"]}",
+          "tool_calls": [],
+          "additional_content": {
+            "structured": {
+              "title": "Ship it",
+              "steps": [
+                "write",
+                "test"
+              ]
+            }
+          },
+          "tool_approval_requests": []
+        },
+        {
+          "type": "assistant",
+          "content": "Yes, two steps.",
+          "tool_calls": [],
+          "additional_content": {},
+          "tool_approval_requests": []
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"{\\\"title\\\":\\\"Ship it\\\",\\\"steps\\\":[\\\"write\\\",\\\"test\\\"]}\",\"tool_calls\":[],\"additional_content\":{\"structured\":{\"title\":\"Ship it\",\"steps\":[\"write\",\"test\"]}},\"tool_approval_requests\":[]},{\"type\":\"assistant\",\"content\":\"Yes, two steps.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"{\\\"title\\\":\\\"Ship it\\\",\\\"steps\\\":[\\\"write\\\",\\\"test\\\"]}\",\"tool_calls\":[],\"additional_content\":{\"structured\":{\"title\":\"Ship it\",\"steps\":[\"write\",\"test\"]}},\"tool_approval_requests\":[]},{\"type\":\"assistant\",\"content\":\"Yes, two steps.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"{\\\"title\\\":\\\"Ship it\\\",\\\"steps\\\":[\\\"write\\\",\\\"test\\\"]}\",\"tool_calls\":[],\"additional_content\":{\"structured\":{\"title\":\"Ship it\",\"steps\":[\"write\",\"test\"]}},\"tool_approval_requests\":[]},{\"type\":\"assistant\",\"content\":\"Yes, two steps.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]"
+      },
+      "agrees": true,
+      "notes": "What the NEXT turn sends. The document reaches the provider as the text the model wrote, and the parsed object rides along untouched -- a transcript that differed by the shape of the request that produced it is the defect the streaming path already refuses to have. A language that promoted `structured` into the content, or dropped it on replay, would send a different conversation than the other two."
     }
   ],
-  "divergence_note": "All ten rows agree across PHP, TypeScript and Python. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised."
+  "divergence_note": "All thirteen rows agree across PHP, TypeScript and Python. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised. User rows are out of scope here by decision; a draft of thr-0013 that carried them found PHP writing additional_content and additional_attributes as empty LISTS where both ports write neither key, recorded under G-58 rather than pinned in a suite that says it does not cover them."
 }
