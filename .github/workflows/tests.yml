@@ -14,6 +14,7 @@ jobs:
   test:
     name: python ${{ matrix.python }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    needs: third-party
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -40,6 +41,7 @@ jobs:
   static:
     name: Static analysis
     runs-on: ubuntu-latest
+    needs: third-party
     timeout-minutes: 10
 
     steps:
