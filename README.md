@@ -151,7 +151,7 @@ schema = {
 response = runtime.send_structured(session, "Plan the release", schema)
 
 response.structured  # {"title": "Ship it", "steps": ["write", "test"]}
-response.text        # the document as the model wrote it
+response.text  # the document as the model wrote it
 ```
 
 It is the same run as `send()` — the mode's system prompt, its tools, the step
@@ -171,7 +171,7 @@ the text, so a thread that contains a structured answer reads like any other.
 try:
     plan = runtime.send_structured(session, brief, schema).structured
 except HarnessError as error:
-    error.code      # structured_schema_violation, or structured_unreadable
+    error.code  # structured_schema_violation, or structured_unreadable
     error.problems  # every way it missed, not the first
     error.document  # what the model actually said
 ```
