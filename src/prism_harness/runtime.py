@@ -14,6 +14,7 @@ from prism_harness.errors import HarnessError
 from prism_harness.events import HarnessEvents, RunFailed, RunFinished, RunStarted
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.session import Session
+from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import (
     ToolCallInput,
@@ -32,6 +33,7 @@ __all__ = [
     "LlmResponse",
     "LlmToolCall",
     "PendingApproval",
+    "StructuredAgentResponse",
     "record_approval",
 ]
 
@@ -72,6 +74,13 @@ class LlmRequest:
     #: The mode's ``provider_options``, unchanged. A client passes them to its
     #: provider call; the harness does not interpret them.
     provider_options: dict[str, Any] = field(default_factory=dict)
+    #: The JSON Schema a structured turn asks the answer to satisfy.
+    #:
+    #: None on an ordinary turn. A client passes it to its provider's structured
+    #: mode (for prism-ai-core, ``Prism.structured().with_schema()``) and returns
+    #: what it parsed as ``structured``; the harness checks that against this
+    #: same schema before the caller sees it.
+    schema: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +98,12 @@ class LlmResponse:
     #: AssistantMessage uses, so a client built on prism-py can pass
     #: ``response.additional_content`` straight through.
     additional_content: dict[str, Any] = field(default_factory=dict)
+    #: The document a structured turn parsed out of ``text``.
+    #:
+    #: None when the text held none -- an apology in prose, a truncated answer,
+    #: a fence that never closed. The harness tells that case apart from a
+    #: document with the wrong shape, because the caller's next move differs.
+    structured: Any = None
 
 
 LlmClient = Callable[[LlmRequest], LlmResponse]
@@ -115,6 +130,20 @@ class AgentResponse:
     pending_approvals: list[PendingApproval] = field(default_factory=list)
     #: Set when the tree ran out of budget, or was cancelled.
     stopped_because: str | None = None
+
+
+@dataclass(frozen=True)
+class StructuredAgentResponse(AgentResponse):
+    """One structured run's result: the document, and the text it was read from.
+
+    BOTH, not one. ``structured`` is what the caller asked for, and ``text`` is
+    what the model actually sent -- which is also exactly what the thread stored,
+    so a transcript and a parse can be compared rather than trusted.
+    """
+
+    #: Checked against the schema before it got here; a run that could not
+    #: produce one raised.
+    structured: Any = None
 
 
 #: How long resolving approvals may hold the session lock: long enough for a tool to run.
@@ -174,6 +203,54 @@ class AgentRuntime:
         ``additional_content`` is media sent with the prompt. See
         :func:`prism_harness.attachments.admit_attachments` for what is refused.
         """
+        return self._turn(session, prompt, tool_names, context, additional_content)
+
+    def send_structured(
+        self,
+        session: Session,
+        prompt: str,
+        schema: dict[str, Any],
+        tool_names: Sequence[str] | None = None,
+        context: RunContext | None = None,
+        additional_content: Sequence[object] = (),
+    ) -> StructuredAgentResponse:
+        """A turn whose answer is a document.
+
+        The same run as :meth:`send` -- same mode, tools, budget, events,
+        approvals -- with a schema the answer has to satisfy. The schema travels
+        on the request for the client to hand its provider, and what comes back
+        is checked against it here before the caller sees it.
+
+        WHAT THE THREAD KEEPS IS THE TEXT, with the parsed document beside it as
+        ``structured`` in the assistant row's ``additional_content``. Never
+        instead of it: a later turn replays this conversation as messages, and a
+        transcript that reads differently because of the SHAPE of the request
+        that produced it is a difference nothing reports.
+
+        A FAILED DOCUMENT IS STILL RECORDED, and then raised. The exchange
+        happened, and a thread that omits the answer it did not like cannot
+        explain the retry sitting next to it. The run is marked failed and
+        ``RunFailed`` is emitted, as for any other failure.
+
+        :raises HarnessError: ``structured_unreadable`` or
+            ``structured_schema_violation``.
+        """
+        response = self._turn(session, prompt, tool_names, context, additional_content, schema)
+
+        # Narrowed by _turn: with a schema it always returns the structured shape.
+        assert isinstance(response, StructuredAgentResponse)
+
+        return response
+
+    def _turn(
+        self,
+        session: Session,
+        prompt: str,
+        tool_names: Sequence[str] | None = None,
+        context: RunContext | None = None,
+        additional_content: Sequence[object] = (),
+        schema: dict[str, Any] | None = None,
+    ) -> AgentResponse:
         # Refused before a run exists: a bad attachment is a mistake in the call,
         # and it should not cost a run, events or budget.
         attachments = admit_attachments(prompt, additional_content)
@@ -236,9 +313,20 @@ class AgentRuntime:
                 )
                 thread.record([turn], run_id)
 
-            return self._loop(session, mode, run, run_id, provider, model, offered, called)
+            return self._loop(session, mode, run, run_id, provider, model, offered, called, schema)
         except Exception as error:
-            failure = str(error)
+            # THE MODEL'S OWN WORDS DO NOT BELONG IN A RUN ROW OR AN EVENT. A
+            # schema violation names the values that missed, so its message
+            # carries pieces of the document -- and an event carrying those would
+            # put model output in every listener's telemetry, which is the same
+            # reason tool arguments are names-only here. The document is already
+            # in the thread, in full, where it is read deliberately rather than
+            # shipped by default. An error that holds one records its CODE.
+            failure = (
+                error.code
+                if isinstance(error, HarnessError) and error.document is not None
+                else str(error)
+            )
             session.fail_run(run_id, failure)
             self._emit(
                 RunFailed(
@@ -261,6 +349,7 @@ class AgentRuntime:
         model: str,
         offered: list[HarnessTool],
         called: list[str],
+        schema: dict[str, Any] | None = None,
     ) -> AgentResponse:
         thread = session.thread()
         text = ""
@@ -284,6 +373,7 @@ class AgentRuntime:
                     provider=provider,
                     model=model,
                     provider_options=mode.provider_options,
+                    schema=schema,
                 )
             )
 
@@ -302,13 +392,37 @@ class AgentRuntime:
             # The next step's request is built from this row, so it keeps what a
             # provider needs sent back: each call's arguments and provider ids,
             # the turn's provider state, and the approvals it is waiting on (G-58).
-            thread.record(
-                [assistant_row(response.text, calls, response.additional_content, requests)],
-                run_id,
+            answering = schema is not None and not calls
+            metadata = (
+                {**response.additional_content, "structured": response.structured}
+                if answering
+                else response.additional_content
             )
 
+            thread.record([assistant_row(response.text, calls, metadata, requests)], run_id)
+
             if not calls:
-                return self._finish(session, run_id, called, finish_reason, text, run, None)
+                if schema is not None:
+                    # Recorded first, then checked: the exchange happened either
+                    # way, and a failure here fails the run through the caller's
+                    # except.
+                    self._assert_document(schema, response)
+
+                finished = self._finish(session, run_id, called, finish_reason, text, run, None)
+
+                if schema is None:
+                    return finished
+
+                return StructuredAgentResponse(
+                    run_id=finished.run_id,
+                    text=finished.text,
+                    steps=finished.steps,
+                    tool_calls=finished.tool_calls,
+                    finish_reason=finished.finish_reason,
+                    pending_approvals=finished.pending_approvals,
+                    stopped_because=finished.stopped_because,
+                    structured=response.structured,
+                )
 
             # The calls that need nobody run now, as in the reference, and their
             # results are recorded even when the step then stops for a person.
@@ -508,6 +622,22 @@ class AgentRuntime:
             return tool_result_entry(call, f"The tool failed: {error}")
 
         return tool_result_entry(call, result if isinstance(result, str) else json.dumps(result))
+
+    @staticmethod
+    def _assert_document(schema: dict[str, Any], response: LlmResponse) -> None:
+        """Refuse a document the caller cannot use, naming which of the two it is.
+
+        Text holding no document at all and a document with the wrong shape are
+        separate codes because the next move differs: the first is a prompting or
+        budget problem, the second a schema one.
+        """
+        if response.structured is None:
+            raise HarnessError.structured_unreadable(response.text)
+
+        problems = schema_problems(schema, response.structured, schema_name(schema))
+
+        if problems:
+            raise HarnessError.structured_schema_violation(response.text, problems)
 
     def _finish(
         self,

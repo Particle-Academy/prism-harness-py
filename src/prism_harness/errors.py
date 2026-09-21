@@ -64,6 +64,10 @@ class ErrorCode(str, Enum):
     ATTACHMENT_EMPTY = "attachment_empty"
     #: Attachments were offered with an empty prompt, which sends no user message.
     ATTACHMENT_WITHOUT_PROMPT = "attachment_without_prompt"
+    #: A structured turn came back with text holding no readable document.
+    STRUCTURED_UNREADABLE = "structured_unreadable"
+    #: A structured turn returned a document its schema refuses.
+    STRUCTURED_SCHEMA_VIOLATION = "structured_schema_violation"
 
 
 class HarnessError(Exception):
@@ -71,10 +75,25 @@ class HarnessError(Exception):
     compare against either the enum member or the literal.
     """
 
-    def __init__(self, code: ErrorCode | str, message: str) -> None:
+    def __init__(
+        self,
+        code: ErrorCode | str,
+        message: str,
+        document: str | None = None,
+        problems: Sequence[str] = (),
+    ) -> None:
         super().__init__(message)
         self.code: str = code.value if isinstance(code, ErrorCode) else code
         self.message = message
+        #: The model's own text, on a structured failure.
+        #:
+        #: It travels on the error because the first question anyone asks is
+        #: "what did it actually say", and an error that answers it turns a
+        #: support thread into a log line. It is model output: log it where you
+        #: log model output.
+        self.document = document
+        #: Every way a document missed its schema, rather than only the first.
+        self.problems: list[str] = list(problems)
 
     def __repr__(self) -> str:
         return f"HarnessError(code={self.code!r}, message={self.message!r})"
@@ -354,4 +373,34 @@ class HarnessError(Exception):
         return cls(
             ErrorCode.NO_AGENT_RUNTIME,
             f"This session cannot {action}: it was built without an agent runtime.",
+        )
+
+    @classmethod
+    def structured_unreadable(cls, document: str) -> HarnessError:
+        """A structured turn whose text held no document at all.
+
+        Separate from the schema violation because the caller's next move
+        differs: an apology in prose or a truncated answer is a prompting or a
+        budget problem, and a document with the wrong shape is a schema one.
+        """
+        return cls(
+            ErrorCode.STRUCTURED_UNREADABLE,
+            "The model returned no readable document for a structured turn. Its text is on this "
+            "error as document.",
+            document=document,
+        )
+
+    @classmethod
+    def structured_schema_violation(cls, document: str, problems: Sequence[str]) -> HarnessError:
+        """Valid JSON, wrong shape.
+
+        NOT coerced, not trimmed to the fields that fit, and never an empty
+        document: one that fails the contract arriving as ``{}`` reads to the
+        code receiving it exactly like a considered answer of "nothing".
+        """
+        return cls(
+            ErrorCode.STRUCTURED_SCHEMA_VIOLATION,
+            "The model returned a document that does not satisfy the schema: " + " ".join(problems),
+            document=document,
+            problems=problems,
         )

@@ -21,6 +21,7 @@ from prism_harness.runtime import (
     LlmResponse,
     LlmToolCall,
     PendingApproval,
+    StructuredAgentResponse,
     record_approval,
 )
 from prism_harness.session import Participant, Session
@@ -34,6 +35,7 @@ from prism_harness.stores.manager import (
     StoreFactory,
 )
 from prism_harness.stores.memory import MemorySessionStore
+from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagent_runner import SubagentResult, SubagentRunner, SubagentTool
 from prism_harness.subagents import (
     MAX_DEPTH,
@@ -122,6 +124,7 @@ __all__ = [
     "StoreFactory",
     "StoreTaskSource",
     "StoredTask",
+    "StructuredAgentResponse",
     "Subagent",
     "SubagentResult",
     "SubagentRunner",
@@ -141,6 +144,8 @@ __all__ = [
     "canonical_task_json",
     "diagnose",
     "record_approval",
+    "schema_name",
+    "schema_problems",
     "subagent_from_config",
     "task_record",
     "thread_view",

@@ -133,6 +133,70 @@ sent to the provider once. Return a call's provider ids on `LlmToolCall`
 turn as `LlmResponse.additional_content`: they are recorded and come back in
 `messages`.
 
+## Structured turns
+
+When the answer is a document rather than prose, hand the turn a schema:
+
+```python
+schema = {
+    "name": "plan",
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "steps": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["title", "steps"],
+}
+
+response = runtime.send_structured(session, "Plan the release", schema)
+
+response.structured  # {"title": "Ship it", "steps": ["write", "test"]}
+response.text        # the document as the model wrote it
+```
+
+It is the same run as `send()` — the mode's system prompt, its tools, the step
+budget, the events — asking the provider for structured output. Your client
+receives the schema as `request.schema` and returns what it parsed as
+`LlmResponse.structured`; with `prism-ai-core` that is
+`Prism.structured().with_schema()` and the response's `structured`.
+
+**The thread keeps the text, with the parsed object beside it.** The assistant
+message is the raw document, and `structured` rides along in the row's
+`additional_content`. A later turn replays the conversation as messages and reads
+the text, so a thread that contains a structured answer reads like any other.
+
+**A document that misses the schema is refused, not repaired.**
+
+```python
+try:
+    plan = runtime.send_structured(session, brief, schema).structured
+except HarnessError as error:
+    error.code      # structured_schema_violation, or structured_unreadable
+    error.problems  # every way it missed, not the first
+    error.document  # what the model actually said
+```
+
+Nothing is coerced, nothing is trimmed to the fields that fit, and the result is
+never an empty document. An empty plan settles a batch as `done`, which reads
+exactly like a considered answer of "nothing to propose" — the failure this
+refusal exists to prevent. The exchange is still recorded, and the run is marked
+failed: a thread that omits the answer it did not like cannot explain the retry
+sitting next to it. The run row and the `RunFailed` event name the CODE, not the
+message — the message quotes the values that missed, and an event carrying those
+would ship model output to every listener, which is the same reason tool
+arguments are names-only here.
+
+The check reads the schema's own JSON Schema, so a hand-written schema is held to
+the same terms. `schema_problems()` is exported if you want it directly. It
+checks declared types, required keys, enum members, array items, and — where a
+schema closes itself — keys nobody declared. It does not read `$ref`, `allOf`,
+`oneOf` or the numeric and string facets; what it cannot read, it passes, rather
+than reporting a constraint it did not actually check. The same rules as the PHP
+reference, message for message, so a document refused in one language is refused
+in the other for the same stated reason. `True` is not a number here, and a whole
+float reads as the integer JSON writes: both are ways Python alone would have
+answered differently.
+
 ## Approvals
 
 A mode names the tools a person must approve:
