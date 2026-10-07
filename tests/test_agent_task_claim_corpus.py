@@ -66,6 +66,23 @@ AGREEING = [case for case in CASES if case["result"]["py"] == case["result"]["ph
 DIVERGING = [case for case in CASES if case["result"]["py"] != case["result"]["php"]]
 
 
+def _is_skipped(case: dict[str, Any], language: str) -> bool:
+    """Whether this language could not express the row.
+
+    The reason lives in a top-level ``skip`` map and that language's ``result``
+    is ``None``. It used to sit INSIDE the result as ``{"skipped": "..."}``, so
+    a reader asking ``"skipped" in case["result"]["php"]`` now asks it of
+    ``None`` and raises ``TypeError`` rather than answering wrongly -- which is
+    the better of the two failures, but still a reason to move this reader
+    before the fixture rather than after it.
+
+    Both halves are required. A reason beside a verdict would mean the suite
+    claims two different things about one row, and an absent result with no
+    reason is the mandatory-reason rule quietly broken.
+    """
+    return case.get("skip", {}).get(language) is not None and case["result"][language] is None
+
+
 class SeedingFailed(RuntimeError):
     """A row seeded tasks and the source cannot see any of them.
 
@@ -292,7 +309,7 @@ def test_the_fractional_lease_is_refused_here_and_unexpressible_in_php() -> None
     case = _case("atc-0017")
     produced = run_case(case)
 
-    assert "skipped" in case["result"]["php"]
+    assert _is_skipped(case, "php")
     assert produced["outcome"] == "refused"
     assert produced["code"] == "task_lease_invalid"
     assert produced["record"] is None
@@ -309,7 +326,8 @@ def test_the_fractional_lease_refusal_is_a_decision_and_not_a_type_error() -> No
     # ports reach their own guard and choose. Asserted from this side as well
     # as from the TypeScript runner's, so a re-vendor that quietly changed
     # either answer goes red rather than passing.
-    result = _case("atc-0017")["result"]
+    case = _case("atc-0017")
+    result = case["result"]
     refusal = {
         "outcome": "refused",
         "code": "task_lease_invalid",
@@ -317,7 +335,12 @@ def test_the_fractional_lease_refusal_is_a_decision_and_not_a_type_error() -> No
         "pending": None,
     }
 
-    assert "skipped" in result["php"]
+    assert _is_skipped(case, "php")
+    # The negative half, and the actual content of the row: the ports did not
+    # inherit the reference's skip. Without this, a predicate stuck at True
+    # satisfies every assertion above it.
+    assert not _is_skipped(case, "ts")
+    assert not _is_skipped(case, "py")
     assert result["ts"] == refusal
     assert result["py"] == refusal
 
@@ -384,7 +407,9 @@ def test_the_record_carries_the_references_keys_in_the_references_order() -> Non
     for case in CASES:
         reference = case["result"]["php"]
 
-        if "record" not in reference or reference["record"] is None:
+        # `reference` is None for a row PHP cannot express, and `"record" not in
+        # None` raises rather than skipping it.
+        if reference is None or reference.get("record") is None:
             continue
 
         produced = run_case(case)["record"]
