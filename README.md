@@ -110,6 +110,8 @@ A mode can declare `provider_options`. They reach your model client unchanged, a
 `request.provider_options`, on every step of every run in that mode:
 
 ```python
+from prism_harness import ModeRegistry
+
 ModeRegistry({"modes": {"overseer": {"provider_options": {"thinking": {"type": "adaptive"}}}}})
 ```
 
@@ -168,6 +170,8 @@ the text, so a thread that contains a structured answer reads like any other.
 **A document that misses the schema is refused, not repaired.**
 
 ```python
+from prism_harness import HarnessError
+
 try:
     plan = runtime.send_structured(session, brief, schema).structured
 except HarnessError as error:
@@ -202,7 +206,17 @@ answered differently.
 A mode names the tools a person must approve:
 
 ```python
-"guarded": {"system_prompt": "...", "tools": ["read", "delete"], "requires_approval": ["delete"]}
+ModeRegistry(
+    {
+        "modes": {
+            "guarded": {
+                "system_prompt": "...",
+                "tools": ["read", "delete"],
+                "requires_approval": ["delete"],
+            }
+        }
+    }
+)
 ```
 
 A step that calls one stops with `finish_reason == "awaiting_approval"`. The
@@ -210,6 +224,8 @@ calls that need nobody have already run. Record a decision for every pending
 approval, then resume with an empty prompt:
 
 ```python
+from prism_harness import record_approval
+
 response = runtime.send(session, "Clean up the failed run")
 
 if response.finish_reason == "awaiting_approval":
@@ -231,6 +247,8 @@ An agent given a goal keeps working across many requests. `session.tasks()` is
 the list of what remains, in the durable half:
 
 ```python
+from prism_harness import TaskOutcome
+
 tasks = session.tasks()
 tasks.add_many(["Read the brief", "Draft the reply", "Check the numbers"])
 
