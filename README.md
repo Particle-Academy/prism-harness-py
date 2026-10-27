@@ -201,6 +201,15 @@ in the other for the same stated reason. `True` is not a number here, and a whol
 float reads as the integer JSON writes: both are ways Python alone would have
 answered differently.
 
+## Failed model steps
+
+A client response with `finish_reason="error"` or `"unknown"` ends the run with
+`HarnessError.code == "model_step_failed"`. Its `finish_reason` identifies which
+of those two finishes occurred; the error message contains no model output.
+The step, cost, and assistant response are recorded before the error is raised.
+Tools requested by that response are refused, with no pending approval authority,
+so approving or resuming later cannot execute them. A new turn can still be sent.
+
 ## Approvals
 
 A mode names the tools a person must approve:
