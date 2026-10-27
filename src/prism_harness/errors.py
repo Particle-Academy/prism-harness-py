@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import Enum
+from typing import Literal
 
 __all__ = ["ErrorCode", "HarnessError"]
 
@@ -28,6 +29,8 @@ class ErrorCode(str, Enum):
     TOOL_NOT_AVAILABLE = "tool_not_available"
     #: A run was refused -- by budget, by depth, or by a cancelled ledger.
     RUN_NOT_PERMITTED = "run_not_permitted"
+    #: A failed model step is terminal and cannot authorize tool execution.
+    MODEL_STEP_FAILED = "model_step_failed"
     #: A stored payload could not be mapped back into a value object.
     UNMAPPABLE_CONTENT = "unmappable_content"
     #: A session was asked to do something needing a runtime it does not have.
@@ -81,10 +84,14 @@ class HarnessError(Exception):
         message: str,
         document: str | None = None,
         problems: Sequence[str] = (),
+        finish_reason: Literal["error", "unknown"] | None = None,
     ) -> None:
         super().__init__(message)
         self.code: str = code.value if isinstance(code, ErrorCode) else code
         self.message = message
+        if finish_reason is not None and finish_reason not in ("error", "unknown"):
+            raise ValueError("Model step finish reason must be error or unknown")
+        self.finish_reason = finish_reason
         #: The model's own text, on a structured failure.
         #:
         #: It travels on the error because the first question anyone asks is
@@ -145,6 +152,16 @@ class HarnessError(Exception):
     @classmethod
     def run_not_permitted(cls, reason: str) -> HarnessError:
         return cls(ErrorCode.RUN_NOT_PERMITTED, reason)
+
+    @classmethod
+    def model_step_failed(cls, finish_reason: Literal["error", "unknown"]) -> HarnessError:
+        if finish_reason not in ("error", "unknown"):
+            raise ValueError("Model step finish reason must be error or unknown")
+        return cls(
+            ErrorCode.MODEL_STEP_FAILED,
+            f"Model step failed: {finish_reason}.",
+            finish_reason=finish_reason,
+        )
 
     @classmethod
     def unmappable_content(cls, description: str) -> HarnessError:

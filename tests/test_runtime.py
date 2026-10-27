@@ -80,6 +80,80 @@ def scripted(responses: list[LlmResponse]) -> Callable[[LlmRequest], LlmResponse
     return client
 
 
+@pytest.mark.parametrize("finish_reason", ["error", "unknown"])
+@pytest.mark.parametrize("mode", ["chat", "guarded"])
+@pytest.mark.parametrize("shape", ["send", "structured"])
+@pytest.mark.parametrize("with_tools", [False, True])
+def test_failed_model_step_never_dispatches_tools_or_continues_on_resume(
+    finish_reason: str, mode: str, shape: str, with_tools: bool
+) -> None:
+    session = a_session(mode)
+    context = RunContext.root("failed", RunBudget(4))
+    state = {"models": 0, "tools": 0}
+
+    def tool_called() -> None:
+        state["tools"] += 1
+
+    def client(_request: LlmRequest) -> LlmResponse:
+        state["models"] += 1
+        if state["models"] == 1:
+            return LlmResponse(
+                text="partial",
+                finish_reason=finish_reason,
+                cost_usd=0.04,
+                tool_calls=[LlmToolCall("failed-call", "echo", {"value": "must-not-run"})]
+                if with_tools
+                else [],
+            )
+        return LlmResponse(text="resumed", finish_reason="stop", cost_usd=0.01)
+
+    runtime = a_runtime(client, tools=ToolRegistry().register(EchoTool(on_call=tool_called)))
+    failure = None
+    try:
+        if shape == "structured":
+            runtime.send_structured(
+                session,
+                "go",
+                {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
+                context=context,
+            )
+        else:
+            runtime.send(session, "go", context=context)
+    except HarnessError as error:
+        failure = error
+    assert state["models"] == 1
+    assert state["tools"] == 0
+    assert context.ledger.steps == 1
+    assert context.ledger.cost_usd == 0.04
+    assert isinstance(failure, HarnessError)
+    assert failure.code == "model_step_failed"
+    assert failure.finish_reason == finish_reason
+    assert str(failure) == f"Model step failed: {finish_reason}."
+    stored_run = session.run()
+    assert stored_run is not None
+    assert stored_run["status"] == "failed"
+    assert stored_run["failure"] == f"Model step failed: {finish_reason}."
+    rows = [entry.message for entry in session.thread().messages()]
+    assistant = next(row for row in rows if row["type"] == "assistant")
+    assert assistant["tool_approval_requests"] == []
+    assert (
+        any(row["type"] == "tool_result" and "Not run" in json.dumps(row) for row in rows)
+        == with_tools
+    )
+    record_approval(session, "failed-call", True)
+    runtime.send(session, "")
+    assert state["models"] == 2
+    assert state["tools"] == 0
+
+
+def test_failed_model_step_reason_is_bounded_for_dynamic_callers() -> None:
+    factory: Any = HarnessError
+    with pytest.raises(ValueError, match="^Model step finish reason must be error or unknown$"):
+        factory.model_step_failed("owned-not-a-reason")
+    with pytest.raises(ValueError, match="^Model step finish reason must be error or unknown$"):
+        factory("model_step_failed", "bounded", finish_reason="owned-not-a-reason")
+
+
 def a_session(mode: str = "chat") -> Session:
     directory = tempfile.mkdtemp(prefix="prism-harness-runtime-")
     harness = PrismHarness(

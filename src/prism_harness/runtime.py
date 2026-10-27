@@ -383,7 +383,10 @@ class AgentRuntime:
             finish_reason = response.finish_reason
 
             calls = [_call_input(call) for call in response.tool_calls]
-            gated = [call for call in calls if mode.needs_approval(call.name)]
+            failed_finish = finish_reason in ("error", "unknown")
+            gated = (
+                [] if failed_finish else [call for call in calls if mode.needs_approval(call.name)]
+            )
             requests = [
                 {"approval_id": f"apr_{uuid.uuid4().hex}", "tool_call_id": call.id}
                 for call in gated
@@ -400,6 +403,27 @@ class AgentRuntime:
             )
 
             thread.record([assistant_row(response.text, calls, metadata, requests)], run_id)
+
+            if failed_finish:
+                # Refuse, rather than queue, every call so a later resume
+                # cannot dispatch a failed response's requests.
+                if calls:
+                    thread.record(
+                        [
+                            tool_result_row(
+                                [
+                                    tool_result_entry(
+                                        call, f"Not run: model step failed ({finish_reason})."
+                                    )
+                                    for call in calls
+                                ]
+                            )
+                        ],
+                        run_id,
+                    )
+                raise HarnessError.model_step_failed(
+                    "error" if finish_reason == "error" else "unknown"
+                )
 
             if not calls:
                 if schema is not None:
