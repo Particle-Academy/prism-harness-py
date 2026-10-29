@@ -1,0 +1,9 @@
+{
+  "canonical_commit": "831d714332f721398e1510e99f5b344d09c0e20d",
+  "canonical_directory": "https://github.com/Particle-Academy/prism-parity/tree/831d714332f721398e1510e99f5b344d09c0e20d/tools/lock-owner-review",
+  "normalization": "LF line endings; trim end-of-file whitespace; one final newline",
+  "files": {
+    "windows-native.cs": "f5040b3af4449f80a6b462a3fde91ca5ca5741f5dee086e679bf493f2a51c0b0",
+    "windows-context-contract.mjs": "b995d38cf5691aed153f4ea8f8aad68569963fad38956932adc46aca64d77938"
+  }
+}

@@ -34,6 +34,61 @@ session.lock(advance)  # whatever must not happen twice
 `for` is a Python keyword, so the method is `for_` — forced rather than chosen,
 like `Media.as_` in `prism-ai-core`.
 
+## Named agents
+
+Choose a stable id in trusted application code, using [a-z][a-z0-9_-]{0,63}.
+Calls without an agent keep their existing addresses. Named agents have separate
+tools, providers, modes, session state, threads and default task lists.
+
+```python
+from prism_harness import AgentRuntime, LlmResponse, ModeRegistry, ToolRegistry
+
+
+class Lookup:
+    name = "lookup"
+
+    def handle(self, args: dict[str, object]) -> str:
+        return "found"
+
+
+tools, modes = ToolRegistry(), ModeRegistry()
+tools.for_agent("support").register(Lookup(), "app.support")
+modes.for_agent("support").register("reply", {"tools": ["lookup"]}, "app.support").set_default(
+    "reply"
+)
+runtime = AgentRuntime(
+    client=lambda _: LlmResponse(text="done", finish_reason="stop"),
+    tools=tools,
+    modes=modes,
+)  # Replace the synthetic client when connecting a model.
+session = harness.for_agent("support").for_(Participant("User", 7)).session("case:42")
+descriptors = runtime.effective_tools(session, "reply")
+```
+
+A harness constructed with runtime also
+offers for_agent(...).effective_tools(mode, participant, scope). The descriptors
+contain name, owner and source from the model offer resolver. Inspection creates
+no session, thread or index entry, invokes no handler and makes no model/provider
+request or logical state change. Reads may physically purge expired entries,
+exactly as an ordinary store read does. Explicit state writes during resolution
+refuse.
+
+A mode's tool list is its ceiling; caller-supplied names can only narrow it.
+Named agents inherit no legacy authority. Builtins require explicit registration
+and mode selection. A repeated registration fails even for the same owner;
+replace(replacement, predecessor_owner, owner) makes intended replacement
+explicit. Mode replacement likewise names its predecessor.
+
+AgentRuntime's agents map supports provider/model, max_steps_ceiling,
+max_output_tokens_per_call and lock_ttl/lock_wait. Unset scalars use config's
+fallback; explicit None clears nullable defaults. Caps narrow the existing
+RunContext ledger and output budget. ToolAuthorizer's agents map supplies
+enabled/offer/call overrides with invocation-time rechecks. PrismHarness's agents
+map separately controls ttl_seconds, default_scope and default_task_list.
+ParticipantRef requires a registered ParticipantAdapters actor resolver; child
+construction retains its parent's bound actor. Plain Participant values continue
+to work.
+
 ## Resolved, never held
 
 A server handles a request and moves on, so a session cannot be an object kept
@@ -335,11 +390,35 @@ plain WSGI application write `asyncio.run` around a dictionary lookup.
 
 - **`MemorySessionStore`** — volatile, and says so. Its lock is a real
   `threading.Lock` but process-local.
-- **`FileSessionStore`** — durable. Atomic writes (`os.replace`) and a
-  cross-process lock built on `O_CREAT | O_EXCL`, the one primitive atomic on
-  every filesystem worth supporting. Two workers on one machine genuinely
-  exclude each other; two machines over a network filesystem do not, and no
-  file lock can promise that — use a database there.
+- **`FileSessionStore`** — durable. Payload writes remain atomic. Cross-process
+  local locks follow [decision 0022](https://github.com/Particle-Academy/prism-parity/blob/main/docs/decisions/0022-local-file-lock-ownership.md):
+  a complete nonce-bound owner directory is published atomically; TTL expiry
+  never proves that a live holder died. Recovery requires a matching established
+  native boot/PID realm and a proven dead or explicitly released owner. Local
+  filesystems on one host only; SMB/NFS are unsupported.
+
+  On Windows, the first file-lock operation makes one fixed, read-only metadata
+  query using the system Windows PowerShell and CIM module, with a five-second
+  timeout. The process caches the result, including unavailable identity. A
+  failed query keeps locks held; restore system metadata access and restart the
+  process before retrying. No runtime compilation or extra dependency is used.
+
+  **BREAKING CHANGE: Stop all old workers before upgrading the file-lock
+  protocol.** Inspect and archive stale legacy timestamp lockfiles explicitly.
+  The library refuses them with `session_locked` and
+  `legacy_lock_requires_maintenance`, naming the canonical path and action
+  `stop_old_workers_then_inspect_and_archive`. On Windows, Node can replace a
+  legacy file created between preflight and rename; leaving old workers running
+  can break exclusion. No rolling upgrade is supported. The hard stop is a
+  correctness requirement in both ports.
+
+  A blocked Windows reader can delay release. The callback may already have
+  completed when release raises an error; the library does not replay it.
+  Pending cleanup is retried at the owning process's next file-lock operation.
+  The `file_lock_release_pending` warning includes only the key digest and nonce.
+  Read `store.pending_releases()` for this directory's pending digest/nonce entries;
+  the snapshot's length is the count. Querying does not retry or write anything.
+
 
 Implement `SessionStore` for anything else, and declare your own `durability()`:
 only you know whether your Redis is persistent or a disposable cache, and that

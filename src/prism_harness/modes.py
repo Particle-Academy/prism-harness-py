@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
+from prism_harness.address import validate_agent
 from prism_harness.errors import HarnessError
+from prism_harness.registration import RegistrationCollision, registration_owner
 from prism_harness.subagents import Subagent, subagent_from_config
 
 __all__ = ["AgentMode", "ModeRegistry"]
@@ -42,8 +45,62 @@ class AgentMode:
 
 
 class ModeRegistry:
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
-        self._config = config or {}
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        _agent: str | None = None,
+        _root: ModeRegistry | None = None,
+    ) -> None:
+        validate_agent(_agent)
+        self._config = config if config is not None else {}
+        self._agent, self._root = _agent, _root
+        self._agents: dict[str, ModeRegistry] = {}
+        self._owners = {
+            name: registration_owner(self._config.get("owner"), _agent) for name in self.names()
+        }
+
+    def for_agent(self, agent: str | None) -> ModeRegistry:
+        validate_agent(agent)
+        root = self._root if self._root is not None else self
+        if agent is None:
+            return root
+        if agent not in root._agents:
+            agents = root._config.get("agents", {})
+            configured = agents.get(agent, {}) if isinstance(agents, dict) else None
+            if not isinstance(configured, dict):
+                raise ValueError("Agent modes must be configured as a mapping.")
+            config = deepcopy(configured)
+            config.setdefault("default", root.default())
+            root._agents[agent] = ModeRegistry(config, agent, root)
+        return root._agents[agent]
+
+    def register(self, name: str, mode: dict[str, Any], owner: str | None = None) -> ModeRegistry:
+        label = registration_owner(owner, self._agent)
+        if name in self._owners:
+            raise RegistrationCollision(self._agent, name, self._owners[name], label)
+        self._set(name, mode, label)
+        return self
+
+    def replace(
+        self, name: str, mode: dict[str, Any], predecessor_owner: str, owner: str | None = None
+    ) -> ModeRegistry:
+        label = registration_owner(owner, self._agent)
+        if self._owners.get(name) != predecessor_owner:
+            raise ValueError("Replacement must name the registered predecessor owner.")
+        self._set(name, mode, label)
+        return self
+
+    def _set(self, name: str, mode: dict[str, Any], owner: str) -> None:
+        modes = self._config.setdefault("modes", {})
+        if not isinstance(modes, dict):
+            raise TypeError("Modes must be configured as a mapping.")
+        modes[name] = deepcopy(mode)
+        self._owners[name] = owner
+
+    def set_default(self, name: str) -> ModeRegistry:
+        self.resolve(name)
+        self._config["default"] = name
+        return self
 
     def default(self) -> str:
         configured = self._config.get("default")

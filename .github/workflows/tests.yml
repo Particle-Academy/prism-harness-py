@@ -61,6 +61,33 @@ jobs:
       - run: python -m ruff format --check .
       - run: python -m mypy --strict src tests
 
+
+  file-owner-native:
+    name: Production owner locks / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    needs: third-party
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q
+      - name: Production native ownership including Windows Job contexts
+        run: node tools/file-owner-native/gate.mjs py
+
+
   third-party:
     name: Third-party dependency allowlist
     runs-on: ubuntu-latest

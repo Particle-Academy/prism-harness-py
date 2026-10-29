@@ -6,6 +6,7 @@ import secrets
 from dataclasses import dataclass
 from typing import Any
 
+from prism_harness.errors import HarnessError
 from prism_harness.harness import PrismHarness
 from prism_harness.runtime import AgentRuntime
 from prism_harness.session import Session
@@ -51,6 +52,10 @@ class SubagentTool:
         return self._subagent.name
 
     def handle(self, args: dict[str, Any]) -> str:
+        if self._parent.agent is not None and any(key != "task" for key in args):
+            raise HarnessError.run_not_permitted(
+                "Named subagent input may contain only task. Identity changes require an explicit host-owned delegation binding."
+            )
         task = args.get("task")
 
         return self._runner.run(
@@ -123,12 +128,17 @@ class SubagentRunner:
                 f"subagent nesting reached the maximum depth of {MAX_DEPTH}",
             )
 
-        child = self._harness.for_(parent.participant).session(subagent.scope_under(parent.scope))
+        child = self._harness._pending(parent.participant, parent.agent, parent.actor).session(
+            subagent.scope_under(parent.scope)
+        )
 
         # The child's authority comes from ITS mode, not the parent's.
         child.using_mode(subagent.mode)
-        child.using_provider(parent.provider() or "unknown")
-        child.using_model(parent.model() or "unknown")
+        provider, model = parent.provider(), parent.model()
+        if parent.agent is None or provider is not None:
+            child.using_provider(provider or "unknown")
+        if parent.agent is None or model is not None:
+            child.using_model(model or "unknown")
 
         try:
             response = self._runtime.send(child, task, context=child_context)

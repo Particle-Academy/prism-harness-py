@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypedDict
 
+from prism_harness.address import validate_agent
 from prism_harness.attachments import admit_attachments
 from prism_harness.errors import HarnessError
 from prism_harness.events import HarnessEvents, RunFailed, RunFinished, RunStarted
@@ -82,6 +83,12 @@ class LlmRequest:
     #: same schema before the caller sees it.
     schema: dict[str, Any] | None = None
 
+    @property
+    def max_output_tokens(self) -> int | None:
+        """Optional provider ceiling; absent from default dataclass serialization."""
+        value: object = getattr(self, "_max_output_tokens", None)
+        return value if isinstance(value, int) else None
+
 
 @dataclass(frozen=True)
 class LlmResponse:
@@ -153,6 +160,15 @@ _RESOLUTION_LOCK_SECONDS = 300
 _RESOLUTION_WAIT_SECONDS = 30
 
 
+class RuntimeConfig(TypedDict, total=False):
+    provider: str | None
+    model: str | None
+    max_steps_ceiling: int | None
+    max_output_tokens_per_call: int | None
+    lock_ttl: int
+    lock_wait: int
+
+
 class AgentRuntime:
     """Three properties matter more than the mechanics.
 
@@ -177,12 +193,87 @@ class AgentRuntime:
         tools: ToolRegistry,
         authorizer: ToolAuthorizer | None = None,
         events: HarnessEvents | None = None,
+        config: RuntimeConfig | None = None,
+        agents: dict[str, RuntimeConfig] | None = None,
     ) -> None:
         self._client = client
         self._modes = modes
         self._tools = tools
         self._authorizer = authorizer
         self._events = events
+        self._config = config.copy() if config is not None else RuntimeConfig()
+        self._agents = {agent: options.copy() for agent, options in (agents or {}).items()}
+        _validate_runtime_config(self._config)
+        for agent, options in self._agents.items():
+            validate_agent(agent)
+            _validate_runtime_config(options)
+
+    def _settings(self, session: Session) -> RuntimeConfig:
+        return {
+            **self._config,
+            **(self._agents.get(session.agent, {}) if session.agent is not None else {}),
+        }
+
+    def _bounded_run(self, session: Session, run: RunContext) -> RunContext:
+        options, budget = self._settings(session), run.budget
+        steps, output = options.get("max_steps_ceiling"), options.get("max_output_tokens_per_call")
+        if steps is None and output is None:
+            return run
+        return RunContext(
+            run.ledger,
+            RunBudget(
+                budget.max_steps
+                if steps is None
+                else min(budget.max_steps, run.ledger.steps + steps),
+                budget.max_cost_usd,
+                budget.max_seconds,
+                budget.max_output_tokens_per_call
+                if output is None
+                else min(budget.max_output_tokens_per_call or output, output),
+            ),
+            run.parent_run_id,
+            run.depth,
+        )
+
+    def effective_tools(
+        self, session: Session, mode_name: str | None = None
+    ) -> list[dict[str, str]]:
+        mode = self._modes.for_agent(session.agent).resolve(
+            mode_name if mode_name is not None else session.mode()
+        )
+        return self._offer(session, mode)[1]
+
+    def _offer(
+        self, session: Session, mode: AgentMode, requested: Sequence[str] | None = None
+    ) -> tuple[list[HarnessTool], list[dict[str, str]]]:
+        def resolve(view: Session) -> tuple[list[HarnessTool], list[dict[str, str]]]:
+            detailed = self._tools.resolve_detailed(_narrowed_tools(mode.tools, requested), view)
+            tools = {name: entry.tool for name, entry in detailed.items()}
+            if view.agent is not None and "complete_task" in tools:
+                authorizer = (
+                    self._authorizer.for_agent(view.agent) if self._authorizer is not None else None
+                )
+                if authorizer is None or not authorizer.enabled or not authorizer.has_call_policy():
+                    raise HarnessError(
+                        "unsafe_authorization_configuration",
+                        "Named task completion requires enabled authorization and an explicit call policy.",
+                    )
+            offered = (
+                self._authorizer.allowed(view, tools)
+                if self._authorizer is not None
+                else list(tools.values())
+            )
+            ownership = {entry.tool.name: entry for entry in detailed.values()}
+            return offered, [
+                {
+                    "name": tool.name,
+                    "owner": ownership[tool.name].owner,
+                    "source": ownership[tool.name].source,
+                }
+                for tool in offered
+            ]
+
+        return session.resolve_read_only(mode.name, resolve)
 
     def send(
         self,
@@ -254,11 +345,14 @@ class AgentRuntime:
         # Refused before a run exists: a bad attachment is a mistake in the call,
         # and it should not cost a run, events or budget.
         attachments = admit_attachments(prompt, additional_content)
-        mode = self._modes.resolve(session.mode())
-        provider = session.provider() or "unknown"
-        model = session.model() or "unknown"
+        mode = self._modes.for_agent(session.agent).resolve(session.mode())
+        options = self._settings(session)
+        provider = session.provider() or options.get("provider") or "unknown"
+        model = session.model() or options.get("model") or "unknown"
         run_id = str(uuid.uuid4())
-        run = context or RunContext.root(run_id, RunBudget(mode.max_steps))
+        run = self._bounded_run(
+            session, context or RunContext.root(run_id, RunBudget(mode.max_steps))
+        )
         thread = session.thread()
 
         if run.too_deep():
@@ -283,12 +377,17 @@ class AgentRuntime:
         )
 
         try:
-            resolved = self._tools.resolve(list(tool_names) if tool_names else mode.tools, session)
-            offered = (
-                self._authorizer.allowed(session, resolved)
-                if self._authorizer is not None
-                else list(resolved.values())
-            )
+            if session.agent is None:
+                resolved = self._tools.resolve(
+                    list(tool_names) if tool_names else mode.tools, session
+                )
+                offered = (
+                    self._authorizer.allowed(session, resolved)
+                    if self._authorizer is not None
+                    else list(resolved.values())
+                )
+            else:
+                offered = self._offer(session, mode, tool_names)[0]
             called: list[str] = []
 
             # Decisions recorded since the run stopped are acted on FIRST, before
@@ -365,17 +464,20 @@ class AgentRuntime:
                     session, run_id, called, "budget_exhausted", text, run, exhausted
                 )
 
-            response = self._client(
-                LlmRequest(
-                    system_prompt=mode.system_prompt,
-                    messages=thread_view([entry.message for entry in thread.messages()]),
-                    tools=offered,
-                    provider=provider,
-                    model=model,
-                    provider_options=mode.provider_options,
-                    schema=schema,
-                )
+            request = LlmRequest(
+                system_prompt=mode.system_prompt,
+                messages=thread_view([entry.message for entry in thread.messages()]),
+                tools=offered,
+                provider=provider,
+                model=model,
+                provider_options=mode.provider_options,
+                schema=schema,
             )
+            if run.budget.max_output_tokens_per_call is not None:
+                object.__setattr__(
+                    request, "_max_output_tokens", run.budget.max_output_tokens_per_call
+                )
+            response = self._client(request)
 
             run.ledger.record_steps(1)
             run.ledger.record_cost(response.cost_usd)
@@ -551,7 +653,12 @@ class AgentRuntime:
                 run_id,
             )
 
-        session.lock(resolve, _RESOLUTION_LOCK_SECONDS, _RESOLUTION_WAIT_SECONDS)
+        options = self._settings(session)
+        session.lock(
+            resolve,
+            options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
+            options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
+        )
 
     @staticmethod
     def _unresolved(
@@ -738,6 +845,41 @@ def _call_input(call: LlmToolCall) -> ToolCallInput:
         reasoning_id=call.reasoning_id,
         reasoning_summary=call.reasoning_summary,
     )
+
+
+def _validate_runtime_config(config: Mapping[str, object]) -> None:
+    for key in ("provider", "model"):
+        value = config.get(key)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ValueError("Agent provider/model defaults must be nonempty strings or null.")
+    for key in ("max_steps_ceiling", "max_output_tokens_per_call"):
+        value = config.get(key)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+        ):
+            raise ValueError("Agent step/output ceilings must be positive integers or null.")
+    for key in ("lock_ttl", "lock_wait"):
+        if key in config:
+            value = config[key]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < (1 if key == "lock_ttl" else 0)
+            ):
+                raise ValueError(
+                    "Agent lock settings must be whole seconds with positive TTL and nonnegative wait."
+                )
+
+
+def _narrowed_tools(ceiling: Sequence[str], requested: Sequence[str] | None) -> Sequence[str]:
+    if requested is None or "*" in requested:
+        return ceiling
+    if "*" in ceiling:
+        return requested
+    for name in requested:
+        if name not in ceiling:
+            raise HarnessError.tool_not_available(name, ceiling)
+    return requested
 
 
 def _now() -> str:

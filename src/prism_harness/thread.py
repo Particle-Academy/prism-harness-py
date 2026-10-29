@@ -43,6 +43,10 @@ class Thread:
         self._store = store
         self._key = key
 
+    def exists(self) -> bool:
+        """Read only: no allocation, lock or empty transcript write."""
+        return self._store.get(self._key) is not None
+
     def messages(self) -> list[ThreadMessage]:
         stored = self._store.get(self._key)
         if stored is None:

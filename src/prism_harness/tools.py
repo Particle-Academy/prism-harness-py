@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
-from typing import TYPE_CHECKING, Any, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
+from prism_harness.address import validate_agent
 from prism_harness.errors import HarnessError
+from prism_harness.registration import RegistrationCollision, registration_owner
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from prism_harness.session import Session
@@ -45,33 +48,115 @@ OfferPolicy = Callable[["Session", HarnessTool], bool]
 CallPolicy = Callable[["Session", HarnessTool, dict[str, Any]], bool]
 
 
+class AgentAuthorizationOptions(TypedDict, total=False):
+    enabled: bool
+    offer: OfferPolicy | None
+    call: CallPolicy | None
+
+
+@dataclass(frozen=True)
+class ResolvedTool:
+    tool: HarnessTool
+    owner: str
+    source: str
+
+
 class ToolRegistry:
     """Three ways in, because the three answer different questions: a tool that
     is always the same, one that needs the session to build, and a set
     discovered at resolve time -- an MCP server's catalogue, say.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, agent: str | None = None, _root: ToolRegistry | None = None) -> None:
+        validate_agent(agent)
+        self._agent = agent
+        self._root = _root
+        self._agents: dict[str, ToolRegistry] = {}
         self._tools: dict[str, HarnessTool] = {}
         self._factories: dict[str, ToolFactory] = {}
-        self._providers: list[ToolProvider] = []
+        self._metadata: dict[str, tuple[str, str]] = {}
+        self._providers: dict[str, tuple[ToolProvider, str]] = {}
 
-    def register(self, tool: HarnessTool) -> ToolRegistry:
+    def for_agent(self, agent: str | None) -> ToolRegistry:
+        validate_agent(agent)
+        root = self._root if self._root is not None else self
+        if agent is None:
+            return root
+        if agent not in root._agents:
+            root._agents[agent] = ToolRegistry(agent, root)
+        return root._agents[agent]
+
+    def register(self, tool: HarnessTool, owner: str | None = None) -> ToolRegistry:
+        self._claim(tool.name, owner, "static")
         self._tools[tool.name] = tool
         return self
 
-    def register_many(self, tools: Iterable[HarnessTool]) -> ToolRegistry:
+    def register_many(self, tools: Iterable[HarnessTool], owner: str | None = None) -> ToolRegistry:
         for tool in tools:
-            self.register(tool)
+            self.register(tool, owner)
         return self
 
-    def register_factory(self, name: str, factory: ToolFactory) -> ToolRegistry:
+    def register_factory(
+        self, name: str, factory: ToolFactory, owner: str | None = None
+    ) -> ToolRegistry:
+        self._claim(name, owner, "factory")
         self._factories[name] = factory
         return self
 
-    def register_provider(self, provider: ToolProvider) -> ToolRegistry:
-        self._providers.append(provider)
+    def register_provider(
+        self, provider: ToolProvider, owner: str | None = None, name: str | None = None
+    ) -> ToolRegistry:
+        label = registration_owner(owner, self._agent)
+        identifier = (
+            name
+            if name is not None
+            else (f"provider:{len(self._providers)}" if self._agent is None else None)
+        )
+        if not identifier:
+            raise ValueError("A named provider requires a registration name.")
+        previous = self._providers.get(identifier)
+        if previous is not None:
+            raise RegistrationCollision(self._agent, identifier, previous[1], label)
+        self._providers[identifier] = (provider, label)
         return self
+
+    def replace(
+        self, tool: HarnessTool, predecessor_owner: str, owner: str | None = None
+    ) -> ToolRegistry:
+        self._claim(tool.name, owner, "static", predecessor_owner)
+        self._tools[tool.name] = tool
+        return self
+
+    def replace_factory(
+        self, name: str, factory: ToolFactory, predecessor_owner: str, owner: str | None = None
+    ) -> ToolRegistry:
+        self._claim(name, owner, "factory", predecessor_owner)
+        self._factories[name] = factory
+        return self
+
+    def replace_provider(
+        self, name: str, provider: ToolProvider, predecessor_owner: str, owner: str | None = None
+    ) -> ToolRegistry:
+        label = registration_owner(owner, self._agent)
+        previous = self._providers.get(name)
+        if previous is None or previous[1] != predecessor_owner:
+            raise ValueError("Replacement must name the registered predecessor owner.")
+        self._providers[name] = (provider, label)
+        return self
+
+    def _claim(
+        self, name: str, owner: str | None, source: str, predecessor: str | None = None
+    ) -> None:
+        label = registration_owner(owner, self._agent)
+        previous = self._metadata.get(name)
+        if predecessor is not None:
+            if previous is None or previous[0] != predecessor:
+                raise ValueError("Replacement must name the registered predecessor owner.")
+        elif previous is not None:
+            raise RegistrationCollision(self._agent, name, previous[0], label)
+        self._tools.pop(name, None)
+        self._factories.pop(name, None)
+        self._metadata[name] = (label, source)
 
     def names(self) -> list[str]:
         """Every name this registry can produce without a session."""
@@ -87,22 +172,36 @@ class ToolRegistry:
         a tool it cannot get is a misconfiguration, and dropping it quietly
         would leave a run wondering why the model never called it.
         """
+        return {name: entry.tool for name, entry in self.resolve_detailed(names, session).items()}
+
+    def resolve_detailed(
+        self, names: Sequence[str], session: Session | None = None
+    ) -> dict[str, ResolvedTool]:
+        if session is not None and session.agent != self._agent:
+            if self._agent is not None:
+                raise ValueError("Harness registry/session agent mismatch.")
+            return self.for_agent(session.agent).resolve_detailed(names, session)
         provided: dict[str, HarnessTool] = {}
+        metadata = self._metadata.copy()
 
         if session is not None:
-            for provider in self._providers:
+            for provider, owner in self._providers.values():
                 for tool in provider(session):
+                    previous = metadata.get(tool.name)
+                    if previous is not None:
+                        raise RegistrationCollision(self._agent, tool.name, previous[0], owner)
                     provided[tool.name] = tool
+                    metadata[tool.name] = (owner, "provider")
 
         available = sorted({*self._tools, *self._factories, *provided})
         selected = available if "*" in names else list(names)
-        resolved: dict[str, HarnessTool] = {}
+        resolved: dict[str, ResolvedTool] = {}
 
         for name in selected:
             existing = self._tools.get(name) or provided.get(name)
 
             if existing is not None:
-                resolved[name] = existing
+                resolved[name] = ResolvedTool(existing, *metadata[name])
                 continue
 
             factory = self._factories.get(name)
@@ -115,7 +214,17 @@ class ToolRegistry:
                     f"{name} (needs a session to build)", available
                 )
 
-            resolved[name] = factory(session)
+            built = factory(session)
+            if self._agent is not None and built.name != name:
+                raise ValueError(f"Session-bound tool factory [{name}] returned [{built.name}].")
+            if built.name != name:
+                previous = metadata.get(built.name)
+                if previous is not None:
+                    raise RegistrationCollision(
+                        self._agent, built.name, previous[0], metadata[name][0]
+                    )
+                metadata[built.name] = metadata[name]
+            resolved[name] = ResolvedTool(built, *metadata[name])
 
         return resolved
 
@@ -164,16 +273,50 @@ class ToolAuthorizer:
         enabled: bool = False,
         offer: OfferPolicy | None = None,
         call: CallPolicy | None = None,
+        agents: dict[str, AgentAuthorizationOptions] | None = None,
+        _agent: str | None = None,
+        _root: ToolAuthorizer | None = None,
     ) -> None:
+        validate_agent(_agent)
         self.enabled = enabled
         self._offer = offer
         self._call = call
+        self._agent, self._root = _agent, _root
+        self._agents = {agent: options.copy() for agent, options in (agents or {}).items()}
+        self._scoped: dict[str, ToolAuthorizer] = {}
+        for agent in self._agents:
+            validate_agent(agent)
 
         if not enabled and (offer is not None or call is not None):
             raise HarnessError.policy_defined_but_disabled()
 
+    def for_agent(self, agent: str | None) -> ToolAuthorizer:
+        validate_agent(agent)
+        root = self._root if self._root is not None else self
+        if agent is None:
+            return root
+        if agent not in root._scoped:
+            options = root._agents.get(agent, {})
+            enabled = options.get("enabled", root.enabled)
+            offer, call = options.get("offer", root._offer), options.get("call", root._call)
+            if (
+                not isinstance(enabled, bool)
+                or (offer is not None and not callable(offer))
+                or (call is not None and not callable(call))
+            ):
+                raise TypeError("Malformed agent tool authorization options.")
+            root._scoped[agent] = ToolAuthorizer(enabled, offer, call, _agent=agent, _root=root)
+        return root._scoped[agent]
+
+    def has_call_policy(self) -> bool:
+        return self._call is not None
+
     def allowed(self, session: Session, tools: dict[str, HarnessTool]) -> list[HarnessTool]:
         """The tools a run may be offered, each wrapped so the call policy is asked again."""
+        if session.agent != self._agent:
+            if self._agent is not None:
+                raise ValueError("Harness authorizer/session agent mismatch.")
+            return self.for_agent(session.agent).allowed(session, tools)
         if not self.enabled:
             return list(tools.values())
 
@@ -193,6 +336,10 @@ class ToolAuthorizer:
         constructor has already refused the configuration where that silence
         would be mistaken for enforcement.
         """
+        if session.agent != self._agent:
+            if self._agent is not None:
+                raise ValueError("Harness authorizer/session agent mismatch.")
+            return self.for_agent(session.agent).allows_call(session, tool, args)
         if not self.enabled or self._call is None:
             return True
 
