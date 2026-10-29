@@ -37,13 +37,27 @@ class RunBudget:
     max_steps: int
     max_cost_usd: float | None = None
     max_seconds: int | None = None
+    max_output_tokens_per_call: int | None = None
+
+    def __post_init__(self) -> None:
+        output = self.max_output_tokens_per_call
+        if output is not None and (
+            isinstance(output, bool) or not isinstance(output, int) or output < 1
+        ):
+            raise ValueError("Output ceilings must be positive integers or null.")
 
     @classmethod
     def from_config(cls, config: dict[str, Any], default_steps: int = 8) -> RunBudget:
+        output = config.get("max_output_tokens_per_call")
+        if output is not None and (
+            isinstance(output, bool) or not isinstance(output, int) or output < 1
+        ):
+            raise ValueError("Output ceilings must be positive integers or null.")
         return cls(
             max_steps=_int_or(config.get("max_steps"), default_steps),
             max_cost_usd=_float_or_none(config.get("max_cost_usd")),
             max_seconds=_int_or_none(config.get("max_seconds")),
+            max_output_tokens_per_call=output,
         )
 
     def nested_within(self, parent: RunBudget, ledger: RunLedger) -> RunBudget:
@@ -83,6 +97,14 @@ class RunBudget:
                     None
                     if self.max_seconds is None
                     else int(ledger.elapsed_seconds()) + self.max_seconds,
+                )
+            ),
+            max_output_tokens_per_call=(
+                parent.max_output_tokens_per_call
+                if self.max_output_tokens_per_call is None
+                else min(
+                    parent.max_output_tokens_per_call or self.max_output_tokens_per_call,
+                    self.max_output_tokens_per_call,
                 )
             ),
         )

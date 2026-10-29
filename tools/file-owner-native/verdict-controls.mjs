@@ -1,0 +1,11 @@
+import{test}from'node:test';
+import assert from'node:assert/strict';
+import{requireNativeVerdict}from'./verdict.mjs';
+const line='Production native owner proof passed: 1 live holder; 1 dead owner; 3 foreign/unknown controls; 8 report controls.';
+const fixture=()=>({status:0,stdout:JSON.stringify({production:true,backend:'ts',platform:'linux',proof:{live:{probes:1},dead:{result:'nonce-bound-reclaimed',probes:1},held:[0,1,2].map(()=>({probes:0,directory_unchanged:true}))}})+'\n'+line+'\n'});
+test('accepts executed native producer report and verdict',()=>assert.doesNotThrow(()=>requireNativeVerdict(fixture(),'linux','ts')));
+test('rejects empty successful producer',()=>assert.throws(()=>requireNativeVerdict({status:0,stdout:''},'linux','ts')));
+test('rejects failing producer with a success line',()=>assert.throws(()=>requireNativeVerdict({...fixture(),status:1},'linux','ts')));
+test('rejects zero-work native report',()=>{const row=fixture();row.stdout=row.stdout.replace('"probes":1','"probes":0');assert.throws(()=>requireNativeVerdict(row,'linux','ts'));});
+test('rejects wrong backend subject',()=>assert.throws(()=>requireNativeVerdict(fixture(),'linux','py')));
+test('rejects obsolete or vacuous verdict',()=>{const row=fixture();row.stdout=row.stdout.replace('1 dead owner','0 dead owners');assert.throws(()=>requireNativeVerdict(row,'linux','ts'));});

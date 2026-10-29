@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import errno
+import json
+import os
+import secrets
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -18,6 +24,7 @@ from prism_harness import (
     SessionStore,
     SessionStoreManager,
 )
+from prism_harness.stores._file_lock_identity import native_identity
 
 
 def a_file_store() -> FileSessionStore:
@@ -193,23 +200,16 @@ def test_file_survives_a_new_store_instance_over_the_same_directory() -> None:
     assert FileSessionStore(directory).get("k") == {"approval": "pending"}
 
 
-def test_file_reclaims_a_lock_whose_holder_died() -> None:
-    # Left alone, a stale lockfile wedges the key forever -- worse than the
-    # small race in reclaiming it.
-    directory = Path(tempfile.mkdtemp(prefix="prism-harness-store-"))
-    store = FileSessionStore(directory)
-    store.put("k", {})
-
-    lock_path = store._path_for("k").with_suffix(".json.lock")
-    # TERMINATED, because an expiry with nothing marking its end could equally
-    # be the first half of a longer one, and a reader that trusted it would
-    # delete a live holder's lock. This test wrote the unterminated form until
-    # that was fixed, which is the tell that the lockfile FORMAT is shared
-    # surface: a PHP or TypeScript worker in the same directory has to write
-    # the terminator too, or this store will wait its stale locks out instead
-    # of reclaiming them.
-    lock_path.write_text(f"{time.time() - 1000}\n", encoding="utf-8")
-
+def test_file_reclaims_a_proven_dead_same_identity_holder() -> None:
+    store = a_file_store()
+    child = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.getpid())"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    plant_owner(store, int(child.stdout), False)
     assert store.with_lock("k", lambda: "recovered") == "recovered"
 
 
@@ -227,6 +227,28 @@ def test_file_reclaims_a_lock_whose_holder_died() -> None:
 
 def a_lock_path(store: FileSessionStore, key: str) -> Path:
     return store._path_for(key).with_suffix(".json.lock")
+
+
+def plant_owner(store: FileSessionStore, pid: int, released: bool) -> None:
+    identity = native_identity()
+    assert identity is not None and identity["pid_namespace"] is not None
+    nonce = secrets.token_hex(16)
+    path = a_lock_path(store, "k")
+    path.mkdir()
+    (path / ("owner-" + nonce + ".json")).write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "pid": pid,
+                "identity": identity,
+                "nonce": nonce,
+                "released": released,
+                "expires_at": int(time.time()) + 60,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def steals(store: FileSessionStore, key: str) -> bool:
@@ -278,70 +300,72 @@ def test_file_never_reads_an_expiry_it_cannot_tell_is_complete_as_expired() -> N
     assert steals(store, "k") is False
 
 
-def test_file_still_reclaims_a_lock_whose_expiry_is_complete_and_past() -> None:
-    # The control, and it is load-bearing: without it every test above passes on
-    # a store that simply never reclaims anything, which would wedge a key
-    # forever the first time a worker died holding it.
+def test_file_refuses_expired_legacy_even_with_a_complete_timestamp() -> None:
     store = a_file_store()
-    a_lock_path(store, "k").write_text(f"{time.time() - 1000}\n", encoding="utf-8")
+    path = a_lock_path(store, "k")
+    path.write_text("1\n", encoding="utf-8")
+    os.utime(path, (0, 0))
+    assert steals(store, "k") is False
+    assert path.read_text(encoding="utf-8") == "1\n"
 
+
+def test_file_real_release_marks_owner_released_and_reports_cleanup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = a_file_store()
+    real_unlink = Path.unlink
+
+    def blocked(path: Path, missing_ok: bool = False) -> None:
+        if path.name.startswith("owner-") and path.suffix == ".json":
+            raise PermissionError(errno.EACCES, "synthetic cleanup denial")
+        real_unlink(path, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", blocked)
+        with pytest.raises(PermissionError):
+            store.with_lock("k", lambda: "finished")
+        paths = list(a_lock_path(store, "k").iterdir())
+        assert len(paths) == 1
+        assert json.loads(paths[0].read_bytes())["released"] is True
     assert steals(store, "k") is True
 
 
-def test_file_reclaims_a_lock_its_own_release_marked_dead() -> None:
-    # `_release` rewrites a lock it could not unlink with an already-past
-    # expiry. That path has to keep working in whatever format the reader
-    # trusts, or the Windows leak it exists to prevent comes straight back.
+def test_file_publishes_complete_owner_before_callback() -> None:
     store = a_file_store()
-    lock_path = a_lock_path(store, "k")
-    FileSessionStore._release(lock_path)
-    lock_path.write_text("", encoding="utf-8")
-    FileSessionStore._release(lock_path)
-
-    if lock_path.exists():
-        assert steals(store, "k") is True
-
-
-def test_file_writes_the_expiry_before_the_callback_runs() -> None:
-    # The window between "the lockfile exists" and "the lockfile says when it
-    # expires" is where a waiter can be fooled. It must be shut by the time the
-    # holder is doing anything a waiter could contend with.
-    store = a_file_store()
-    seen: list[str] = []
-
-    store.with_lock("k", lambda: seen.append(a_lock_path(store, "k").read_text(encoding="utf-8")))
-
-    assert seen[0] != ""
-    assert float(seen[0].strip()) > time.time()
-
-
-def test_a_lock_this_store_wrote_is_read_back_by_this_store() -> None:
-    # THE WRITER AND THE READER HAVE TO AGREE, and every test above plants its
-    # lockfile by hand -- so all of them would stay green if the store started
-    # writing a payload its own reader refuses. Nothing would break loudly:
-    # locks would simply stop being reclaimable, and a dead holder would wedge
-    # the key until every later caller timed out. A mutation run found this gap
-    # by dropping the terminator from the payload and going green.
-    store = a_file_store()
-    written: list[str] = []
+    seen: list[bytes] = []
 
     def capture() -> None:
-        written.append(a_lock_path(store, "k").read_text(encoding="utf-8"))
+        paths = list(a_lock_path(store, "k").iterdir())
+        assert len(paths) == 1
+        seen.append(paths[0].read_bytes())
 
-    # A ttl already in the past: what the store writes here is a lock that is
-    # expired the moment it exists.
+    store.with_lock("k", capture)
+    assert seen[0].endswith(b"\n")
+    value = json.loads(seen[0])
+    assert value["pid"] == os.getpid() and value["released"] is False
+    assert type(value["expires_at"]) is int and value["expires_at"] >= int(time.time())
+
+
+def test_real_writer_reader_roundtrip_refuses_live_and_reclaims_released() -> None:
+    store = a_file_store()
+    path = a_lock_path(store, "k")
+    captured: list[tuple[str, bytes]] = []
+
+    def capture() -> None:
+        files = list(path.iterdir())
+        captured.append((files[0].name, files[0].read_bytes()))
+        # Expired timestamp does not authorize reentrant acquisition.
+        assert steals(store, "k") is False
+
     store.with_lock("k", capture, ttl_seconds=-1000)
-    a_lock_path(store, "k").write_text(written[0], encoding="utf-8")
-
-    assert steals(store, "k") is True
-
-    # The control, through the same round trip: a live ttl must NOT be
-    # reclaimable, or the assertion above would pass on a reader that reclaims
-    # everything it is shown.
-    store.with_lock("k", capture, ttl_seconds=1000)
-    a_lock_path(store, "k").write_text(written[1], encoding="utf-8")
-
+    path.mkdir()
+    filename, data = captured[0]
+    (path / filename).write_bytes(data)
     assert steals(store, "k") is False
+    released = json.loads(data)
+    released["released"] = True
+    (path / filename).write_text(json.dumps(released) + "\n", encoding="utf-8")
+    assert steals(store, "k") is True
 
 
 def test_two_threads_never_hold_one_key_at_once() -> None:

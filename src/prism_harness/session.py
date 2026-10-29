@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable, Sequence
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, TypeVar
 
+from prism_harness.address import ParticipantRef, SessionAddress
+from prism_harness.address_index import IndexedSessionStore, StoreAddressIndex, store_lock_rank
 from prism_harness.stores.base import SessionStore
 from prism_harness.tasks import DEFAULT_LEASE_SECONDS, StoreTaskSource
 from prism_harness.thread import Thread
@@ -47,18 +49,62 @@ class Session:
 
     def __init__(
         self,
-        participant: Participant,
+        participant: Participant | ParticipantRef,
         scope: str,
         ephemeral: SessionStore,
         durable: SessionStore,
         ttl_seconds: float | None = None,
+        agent: str | None = None,
+        actor: object | None = None,
+        address_index: StoreAddressIndex | None = None,
+        max_addresses_per_participant: int | None = None,
     ) -> None:
-        self.participant = participant
-        self.scope = scope
-        self._ephemeral = ephemeral
-        self._durable = durable
+        if isinstance(participant, ParticipantRef) and actor is None:
+            raise ValueError("Typed participants require an explicit authorization actor.")
+        self._participant = participant
+        self._address = SessionAddress(participant, scope, agent)
+        if address_index is None and (agent is not None or isinstance(participant, ParticipantRef)):
+            address_index = StoreAddressIndex(durable, max_addresses_per_participant)
+        self._actor = participant if actor is None else actor
+        self._address_index = address_index
+        self._raw_durable = durable
+        self._ephemeral = (
+            IndexedSessionStore(ephemeral, address_index, self._address, "ephemeral")
+            if address_index is not None
+            else ephemeral
+        )
+        self._durable = (
+            IndexedSessionStore(durable, address_index, self._address, "durable")
+            if address_index is not None
+            else durable
+        )
         self._ttl_seconds = ttl_seconds
         self._cached_state: dict[str, Any] | None = None
+        self._resolution_only = False
+        self._resolved_mode: str | None = None
+        self._lock_store = self._ephemeral
+        if address_index is not None and store_lock_rank(durable) > store_lock_rank(ephemeral):
+            self._lock_store = self._durable
+
+    @property
+    def address(self) -> SessionAddress:
+        return self._address
+
+    @property
+    def participant(self) -> Participant | ParticipantRef:
+        return self._participant
+
+    @property
+    def scope(self) -> str:
+        return self._address.scope
+
+    @property
+    def agent(self) -> str | None:
+        return self._address.agent
+
+    @property
+    def actor(self) -> object:
+        return self._actor
 
     def key(self) -> str:
         """The address this session is resolved by.
@@ -73,12 +119,13 @@ class Session:
         tooling. Matching the reference exactly is what lets a PHP app and a
         Python agent share ONE store and resolve the same session.
         """
-        digest = hashlib.sha1(self.participant.type.encode("utf-8")).hexdigest()[:12]
-        return f"session:{digest}:{self.participant.id}:{self.scope}"
+        return self._address.session_key()
 
     # -- the ephemeral half ------------------------------------------------
 
     def mode(self) -> str | None:
+        if self._resolved_mode is not None:
+            return self._resolved_mode
         return self._read_str("mode")
 
     def using_mode(self, mode: str) -> Session:
@@ -99,9 +146,10 @@ class Session:
     def state(self) -> dict[str, Any]:
         if self._cached_state is None:
             self._cached_state = self._ephemeral.get(self._ephemeral_key()) or {}
-        return self._cached_state
+        return deepcopy(self._cached_state) if self._resolution_only else self._cached_state
 
     def forget(self) -> Session:
+        self._assert_writable()
         """Drop the ephemeral half. THE CONVERSATION IS UNTOUCHED."""
         self._ephemeral.forget(self._ephemeral_key())
         self._cached_state = None
@@ -110,9 +158,22 @@ class Session:
     # -- the durable half --------------------------------------------------
 
     def thread(self) -> Thread:
-        return Thread(self._durable, f"{self.key()}:thread")
+        self._assert_writable()
+        store = (
+            IndexedSessionStore(
+                self._raw_durable, self._address_index, self.address, "durable", "thread"
+            )
+            if self._address_index is not None
+            else self._durable
+        )
+        return Thread(store, f"{self.key()}:thread")
+
+    def find_thread(self) -> Thread | None:
+        thread = self.thread()
+        return thread if thread.exists() else None
 
     def tasks(self, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> StoreTaskSource:
+        self._assert_writable()
         """This session's task list, in the DURABLE half.
 
         The same reasoning as :meth:`thread`, and the reason the address is the
@@ -126,13 +187,24 @@ class Session:
         :class:`~prism_harness.tasks.StoreTaskSource` checks again anyway,
         because a consumer can build one over any store it likes.
         """
-        return StoreTaskSource(self._durable, f"{self.key()}:tasks", lease_seconds=lease_seconds)
+        store = (
+            IndexedSessionStore(
+                self._raw_durable, self._address_index, self.address, "durable", "tasks"
+            )
+            if self._address_index is not None
+            else self._durable
+        )
+        return StoreTaskSource(store, f"{self.key()}:tasks", lease_seconds=lease_seconds)
 
     def capability(self, name: str) -> dict[str, Any] | None:
         stored = self._durable.get(self._durable_key()) or {}
         capabilities = stored.get("capabilities")
         capability = capabilities.get(name) if isinstance(capabilities, dict) else None
-        return capability if isinstance(capability, dict) else None
+        return (
+            (deepcopy(capability) if self._resolution_only else capability)
+            if isinstance(capability, dict)
+            else None
+        )
 
     def using_capability(self, name: str, state: dict[str, Any]) -> Session:
         return self._write_capabilities(lambda capabilities: {**capabilities, name: state})
@@ -193,6 +265,8 @@ class Session:
         Advance a run inside this, not outside it.
         """
 
+        self._assert_writable()
+
         def run_it() -> R:
             # Re-read inside the lock. State written by whoever held it before
             # us is otherwise invisible to this instance, and acting on a stale
@@ -200,9 +274,23 @@ class Session:
             self._cached_state = None
             return callback(self)
 
-        return self._ephemeral.with_lock(self.key(), run_it, ttl_seconds, wait_seconds)
+        return self._lock_store.with_lock(self.key(), run_it, ttl_seconds, wait_seconds)
 
     # -- internals ----------------------------------------------------------
+
+    def resolve_read_only(self, mode: str, resolve: Callable[[Session], R]) -> R:
+        """Refuse logical mutations; ordinary get() retains expired-entry cleanup."""
+        view = copy(self)
+        view._cached_state = None
+        view._resolution_only, view._resolved_mode = True, mode
+        try:
+            return resolve(view)
+        finally:
+            view._resolution_only, view._cached_state = False, None
+
+    def _assert_writable(self) -> None:
+        if self._resolution_only:
+            raise ValueError("Harness tool resolution is read-only.")
 
     def _ephemeral_key(self) -> str:
         return f"{self.key()}:ephemeral"
@@ -215,12 +303,14 @@ class Session:
         return value if isinstance(value, str) else None
 
     def _write(self, key: str, value: Any) -> Session:
+        self._assert_writable()
         state = {**self.state(), key: value}
         self._ephemeral.put(self._ephemeral_key(), state, self._ttl_seconds)
         self._cached_state = state
         return self
 
     def _write_capabilities(self, mutate: Callable[[dict[str, Any]], dict[str, Any]]) -> Session:
+        self._assert_writable()
         stored = self._durable.get(self._durable_key()) or {}
         capabilities = stored.get("capabilities")
         current = capabilities if isinstance(capabilities, dict) else {}

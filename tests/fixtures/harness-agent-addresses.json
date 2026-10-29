@@ -1,0 +1,760 @@
+{
+  "format": "harness-agent-addresses-v1",
+  "status": "development; no published conformance claim",
+  "oracle": "Authored from approved G154 tuple domains and published legacy key format before native execution; native execution must match, agreement alone is insufficient.",
+  "cases": [
+    {
+      "id": "address-0001",
+      "title": "Published legacy: the ordinary session",
+      "input": {
+        "participant": {
+          "type": "App\\Models\\User",
+          "id": "7"
+        },
+        "scope": "default",
+        "agent": null
+      },
+      "expected": {
+        "session_key": "session:23bd5c8949f6:7:default",
+        "thread_key": "c42dfe87bb5920dc1f2189df01ceba5f8796b5e93231ee90aad93dda965ba34d",
+        "index_key": "cf9f5dfcde78354dee0976665703337627aff527997caa7398ea845cb1ce205b"
+      }
+    },
+    {
+      "id": "address-0002",
+      "title": "Published legacy: a non-default scope",
+      "input": {
+        "participant": {
+          "type": "App\\Models\\User",
+          "id": "7"
+        },
+        "scope": "probe",
+        "agent": null
+      },
+      "expected": {
+        "session_key": "session:23bd5c8949f6:7:probe",
+        "thread_key": "24873d811bd8b181d42d0bb6526083fa3c4e61e93ec9689c8fadfc9a9e07f8e9",
+        "index_key": "443941e19c466464235172f107d15a9d48b95dc9411eeacfbeaf19c3ac04da28"
+      }
+    },
+    {
+      "id": "address-0003",
+      "title": "Published legacy: a different participant id",
+      "input": {
+        "participant": {
+          "type": "App\\Models\\User",
+          "id": "8"
+        },
+        "scope": "default",
+        "agent": null
+      },
+      "expected": {
+        "session_key": "session:23bd5c8949f6:8:default",
+        "thread_key": "289d3902799d0fd7942663138588584b1bd17af4f214e1cab8ba464a72ddcbbe",
+        "index_key": "0a6577d1890487a1b1998363abda20c5b6dedef2fe548fce5504cacfa43a91db"
+      }
+    },
+    {
+      "id": "address-0004",
+      "title": "Published legacy: a different participant type",
+      "input": {
+        "participant": {
+          "type": "App\\Models\\Team",
+          "id": "7"
+        },
+        "scope": "default",
+        "agent": null
+      },
+      "expected": {
+        "session_key": "session:8b2c42dcd03b:7:default",
+        "thread_key": "f11506d75dcfe3e018e937696dbc43b35ad8be889fb8f43db8b7b49eb1d40b01",
+        "index_key": "1aecd229d35d02d814eb3ffaf37038c8f183b62b84a9037aaeb8c751f14775d6"
+      }
+    },
+    {
+      "id": "address-0005",
+      "title": "Published legacy: a short morph alias rather than a class name",
+      "input": {
+        "participant": {
+          "type": "user",
+          "id": "7"
+        },
+        "scope": "default",
+        "agent": null
+      },
+      "expected": {
+        "session_key": "session:12dea96fec20:7:default",
+        "thread_key": "8433d9a8f68cfa68c513ad8df4bdac08b969ba6b70145dc583cdc8495914ba2e",
+        "index_key": "cddcfae7d5f3c17a07cb7c8967fb4957b1a4cd0985bb155f0da029d6868c7e95"
+      }
+    },
+    {
+      "id": "address-0006",
+      "title": "Published legacy: a zero id",
+      "input": {
+        "participant": {
+          "type": "App\\Models\\User",
+          "id": "0"
+        },
+        "scope": "default",
+        "agent": null
+      },
+      "expected": {
+        "session_key": "session:23bd5c8949f6:0:default",
+        "thread_key": "f2d01b1d4a564f7fd4c3a4d91a974621b1d0c4dd4625ba1fa015c65859fd09bf",
+        "index_key": "6c60cd3ae3816399469c3f3347516e4067fbdf89af98dc5fd96c555f956cc3b0"
+      }
+    },
+    {
+      "id": "address-0007",
+      "title": "Published legacy: a ULID primary key",
+      "input": {
+        "participant": {
+          "type": "App\\Models\\User",
+          "id": "01HQ8ZK3M4N5P6Q7R8S9T0V1W2"
+        },
+        "scope": "default",
+        "agent": null
+      },
+      "expected": {
+        "session_key": "session:23bd5c8949f6:01HQ8ZK3M4N5P6Q7R8S9T0V1W2:default",
+        "thread_key": "fddb30e4c9d89c9697057d77cb09d0f7d1ead3d5519b56fa82c57cb7605824ce",
+        "index_key": "28f18485bcd16b9d65bbefe292b3fec864017edc35f9a304b2d8f74bdb7524a9"
+      }
+    },
+    {
+      "id": "address-0008",
+      "title": "Published legacy: a non-ASCII type name",
+      "input": {
+        "participant": {
+          "type": "Ünïcödé\\Mödel",
+          "id": "7"
+        },
+        "scope": "default",
+        "agent": null
+      },
+      "expected": {
+        "session_key": "session:32b953d38c32:7:default",
+        "thread_key": "b53628615fbf4ed909638a98de289360bf80e7572d0bdcd00774853fcfa4247b",
+        "index_key": "a1c5ccbfb069bf3595f7c932be0def17dbc36546bac73d50ecfe2924ad315bd6"
+      }
+    },
+    {
+      "id": "address-0009",
+      "title": "Published legacy: a scope containing the segment separator",
+      "input": {
+        "participant": {
+          "type": "App\\Models\\User",
+          "id": "7"
+        },
+        "scope": "a:b",
+        "agent": null
+      },
+      "expected": {
+        "session_key": "session:23bd5c8949f6:7:a:b",
+        "thread_key": "30fdc694c89ea9171c986b365758d5259a303cf7577f6798c0be2788791c5d6c",
+        "index_key": "ec56b2fe30b721c110deed9fe367e625e0f743fe891f5e331e132042b991c5e0"
+      }
+    },
+    {
+      "id": "address-0010",
+      "title": "Named charlotte",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "charlotte"
+      },
+      "expected": {
+        "session_key": "session:2bb08e7170ede23396636ffcef3de79aaa056359a5f69ace57567ca6e09afa7a",
+        "thread_key": "260efa851dc5e5d6c04973f4c52b1b6365622052a0c413b9b76374170ad5565c",
+        "index_key": "67fc1c46331b08ed0ba4c2d9df26e99575db865a44550c567905ee51b650fe9f"
+      }
+    },
+    {
+      "id": "address-0011",
+      "title": "Named charlotte",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": "7"
+        },
+        "scope": "same",
+        "agent": "charlotte"
+      },
+      "expected": {
+        "session_key": "session:2bb08e7170ede23396636ffcef3de79aaa056359a5f69ace57567ca6e09afa7a",
+        "thread_key": "260efa851dc5e5d6c04973f4c52b1b6365622052a0c413b9b76374170ad5565c",
+        "index_key": "67fc1c46331b08ed0ba4c2d9df26e99575db865a44550c567905ee51b650fe9f"
+      }
+    },
+    {
+      "id": "address-0012",
+      "title": "Named charlotte",
+      "input": {
+        "participant": {
+          "type": "Team",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "charlotte"
+      },
+      "expected": {
+        "session_key": "session:27685e44f71600e4617f0827af7a49f84807cfe7817f840682a7a20ceea2ceb3",
+        "thread_key": "d1b96164bcae7afee12ad5aa2c3b2cdeea3cf7696a3161decba6fab76860d92d",
+        "index_key": "a1eff2308a3ab0eed324a96cb7fbf161d4194a9bb005ab6f87ee2572a52fae4b"
+      }
+    },
+    {
+      "id": "address-0013",
+      "title": "Named charlotte",
+      "input": {
+        "participant": {
+          "type": "机器人/😀",
+          "id": "bot/雪"
+        },
+        "scope": "case:/雪",
+        "agent": "charlotte"
+      },
+      "expected": {
+        "session_key": "session:13ed2ecbc55414d147252c48c56a9bf1caa6727956eb63c8ead7d4681bd96e38",
+        "thread_key": "e4824ed7ec30ee5a023b75cd239e6656beee4ec6d374f55bb640dd3918c79ee7",
+        "index_key": "1695f3aaea87dd7638a15c4b57588e79fae877775f326f64dc789c75b94fcb7b"
+      }
+    },
+    {
+      "id": "address-0014",
+      "title": "Named charlotte",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": "0007"
+        },
+        "scope": "same",
+        "agent": "charlotte"
+      },
+      "expected": {
+        "session_key": "session:90cd56949b25ce36934de0668add18a4454f6d1c081864b37c03fa9a3c54000d",
+        "thread_key": "0a8927ca3038e5a484f13ef87bdbe003e44cdb8bd13dff04b4d6e53ae696f550",
+        "index_key": "459aadb1fcb813151f003de5c032723667bbc37cb48a0e2dcd49db4873d33fb5"
+      }
+    },
+    {
+      "id": "address-0015",
+      "title": "Named charlotte",
+      "input": {
+        "participant": {
+          "type": "A:B",
+          "id": "C"
+        },
+        "scope": "d",
+        "agent": "charlotte"
+      },
+      "expected": {
+        "session_key": "session:77608bf84d5ba33307ea5d7081bd67de15ad58935865fd4788073b1121b9ef30",
+        "thread_key": "e48c0ac36affa9193ac3b87d8b218131d7ede1e3d52d9ed8bb51fa72b3316d1a",
+        "index_key": "20aac0d0ccf6025ab490233647a42cd0ef684d9edf98909af0a2b00956c72fbd"
+      }
+    },
+    {
+      "id": "address-0016",
+      "title": "Named charlotte",
+      "input": {
+        "participant": {
+          "type": "A",
+          "id": "B:C"
+        },
+        "scope": "d",
+        "agent": "charlotte"
+      },
+      "expected": {
+        "session_key": "session:c1f6f08dbf5ed127a7b898d0c96b7d54db7260233c7c155ed873f74ed66e37b0",
+        "thread_key": "bcd9264beeb5296720ee7f6f74874e35934b78ade0268ccff35d7e97f0caa297",
+        "index_key": "7e53bd4914d399e79cb287c5d24c8e7ffe8c8a6e0f60373ee6f1d6a23340096b"
+      }
+    },
+    {
+      "id": "address-0017",
+      "title": "Named charlotte",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "line / 😀",
+        "agent": "charlotte"
+      },
+      "expected": {
+        "session_key": "session:7b3da18e7454a947b230e329b840d7a5ad55481ac482ccec33dbda0422c29e27",
+        "thread_key": "e291b40024a27835014a6b8b3340bb0e9abc24f42aee906f91b1342a2cf76805",
+        "index_key": "0d69f2c9104a23f00aafc46341bc7407149953f52a3cb7617206fe44d7b373f5"
+      }
+    },
+    {
+      "id": "address-0018",
+      "title": "Named charlotte",
+      "input": {
+        "participant": null,
+        "scope": "shared:/雪",
+        "agent": "charlotte"
+      },
+      "expected": {
+        "session_key": null,
+        "thread_key": "0ff8afd9b042d18d8b6529119be974c3a159b697c730f30123b3111b61c1af30",
+        "index_key": "b3c739fb911adbf00a49be087b5f11b02d2116632cea8eca956f7069eec592f7"
+      }
+    },
+    {
+      "id": "address-0019",
+      "title": "Named support",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "support"
+      },
+      "expected": {
+        "session_key": "session:5172459034f248d7dfb4c1ac330cca494c6d36a52bd6079e7a5b3c1647323a4d",
+        "thread_key": "94dfdf4406d7eeb062aa1a889c07746b84840c5d38d7c3fce1aff7d5b1e92fa0",
+        "index_key": "2c7449724b7a426b77e467c54256feeb1a55ceb64493fc9f8b5dfd96de7ee457"
+      }
+    },
+    {
+      "id": "address-0020",
+      "title": "Named support",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": "7"
+        },
+        "scope": "same",
+        "agent": "support"
+      },
+      "expected": {
+        "session_key": "session:5172459034f248d7dfb4c1ac330cca494c6d36a52bd6079e7a5b3c1647323a4d",
+        "thread_key": "94dfdf4406d7eeb062aa1a889c07746b84840c5d38d7c3fce1aff7d5b1e92fa0",
+        "index_key": "2c7449724b7a426b77e467c54256feeb1a55ceb64493fc9f8b5dfd96de7ee457"
+      }
+    },
+    {
+      "id": "address-0021",
+      "title": "Named support",
+      "input": {
+        "participant": {
+          "type": "Team",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "support"
+      },
+      "expected": {
+        "session_key": "session:f63d389731a7a0cdd99727584f5f31c2542562b314f957c02588075fea610cd4",
+        "thread_key": "74b2cadbe62caee2cd0b1d0fae683d0c403b2891162d805e67e1c9ce59baa31a",
+        "index_key": "0e3316104a006ee20c4a69ef340322c724795ea49c1c893314aad8a1d0331cd1"
+      }
+    },
+    {
+      "id": "address-0022",
+      "title": "Named support",
+      "input": {
+        "participant": {
+          "type": "机器人/😀",
+          "id": "bot/雪"
+        },
+        "scope": "case:/雪",
+        "agent": "support"
+      },
+      "expected": {
+        "session_key": "session:a21295c24f22ea62e242e6a6d60b65bde12f98508a70c9c0668d306511e018c7",
+        "thread_key": "0f145ee9198b869eff59d48f3f00056d15a0a3db6332101bb7eae72d416bd088",
+        "index_key": "673dc561396f9c0f28f2521508048a64a057c36d10a06a7bd436175b542aa320"
+      }
+    },
+    {
+      "id": "address-0023",
+      "title": "Named support",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": "0007"
+        },
+        "scope": "same",
+        "agent": "support"
+      },
+      "expected": {
+        "session_key": "session:0555e11af53eef72e8c9e2e5c648221ec8b936728e7037a6c5f6f16440f02bc5",
+        "thread_key": "d5566c05c6a5158e7d35453487ba45f8db88f67e991bc6868e90b633195c38fe",
+        "index_key": "280dc822c18bee6d8be12acc3a606844d52fd121ff15a7806719b84e1c31e69f"
+      }
+    },
+    {
+      "id": "address-0024",
+      "title": "Named support",
+      "input": {
+        "participant": {
+          "type": "A:B",
+          "id": "C"
+        },
+        "scope": "d",
+        "agent": "support"
+      },
+      "expected": {
+        "session_key": "session:d1eaed5715de3a461ea3d83ca2c0c751d0f45021da3eabbe3bdd683c96beea99",
+        "thread_key": "ff8b61f17c9e8f471f9b176fcd241dff6690d9c707bff1c7c7571c8b23b23b8d",
+        "index_key": "538f046bbb76cceb4da2c42056bc32753ac777680b90ed586f606ea9e69f3d44"
+      }
+    },
+    {
+      "id": "address-0025",
+      "title": "Named support",
+      "input": {
+        "participant": {
+          "type": "A",
+          "id": "B:C"
+        },
+        "scope": "d",
+        "agent": "support"
+      },
+      "expected": {
+        "session_key": "session:0dfbadf717565ba17e0061a4c41da9335fb2279b73515153c1f775366ca03e93",
+        "thread_key": "bbd0f49a74c1353cc6788717b1a1f2cfe6b8477cd24dc34c273c51dce52519ad",
+        "index_key": "4c568298669b9c216ef27549b0541611bcea15d1b9a0469e41c35e29dc0ff410"
+      }
+    },
+    {
+      "id": "address-0026",
+      "title": "Named support",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "line / 😀",
+        "agent": "support"
+      },
+      "expected": {
+        "session_key": "session:c3fbba11b5e7c0681dd12424157ad62a12c746a5e7d10c46cbaed3ab1c652ff5",
+        "thread_key": "954484780c84ca151819ca4aec336a9d71c6d89887f68a1d420655909e78402f",
+        "index_key": "e57a7442ea40345d6e8ac44bfc56f89cc4c3e9d8971b596ac2558311718c6d75"
+      }
+    },
+    {
+      "id": "address-0027",
+      "title": "Named support",
+      "input": {
+        "participant": null,
+        "scope": "shared:/雪",
+        "agent": "support"
+      },
+      "expected": {
+        "session_key": null,
+        "thread_key": "a63cc2899e40de5a65cc13fa45f8fda4438a8c0ece529bee9a538b0215b0e126",
+        "index_key": "b60ad08c1af3434a15661867f6149142921418a94346b13c137b98c16ef0eb65"
+      }
+    },
+    {
+      "id": "address-0028",
+      "title": "Named acp_standin",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "acp_standin"
+      },
+      "expected": {
+        "session_key": "session:ddbf35b8036cda357535a9927a26be8c38f97adde2b27fcf5ae22910d3939fd4",
+        "thread_key": "d9b7cec796799a9bad6cb8053c0ed071710944e81c2d9df6d964d9d456d45238",
+        "index_key": "d84dddafb88c2bb25f5bb4cee66a8a1c1f43ff2fb33fb6954791da85a491f62d"
+      }
+    },
+    {
+      "id": "address-0029",
+      "title": "Named acp_standin",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": "7"
+        },
+        "scope": "same",
+        "agent": "acp_standin"
+      },
+      "expected": {
+        "session_key": "session:ddbf35b8036cda357535a9927a26be8c38f97adde2b27fcf5ae22910d3939fd4",
+        "thread_key": "d9b7cec796799a9bad6cb8053c0ed071710944e81c2d9df6d964d9d456d45238",
+        "index_key": "d84dddafb88c2bb25f5bb4cee66a8a1c1f43ff2fb33fb6954791da85a491f62d"
+      }
+    },
+    {
+      "id": "address-0030",
+      "title": "Named acp_standin",
+      "input": {
+        "participant": {
+          "type": "Team",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "acp_standin"
+      },
+      "expected": {
+        "session_key": "session:833f5bd789f6f33898ee32fb1973c02db88a309bb0c961b4e5e5378d3cd6a41a",
+        "thread_key": "df3bc02184678a1f5e595090d5160327ccbfe2362ea37bccc399f29e6824f092",
+        "index_key": "bc383ce264a791697404cd2e8393d5f6c706eb5e97d8db62547e6236f705a7b0"
+      }
+    },
+    {
+      "id": "address-0031",
+      "title": "Named acp_standin",
+      "input": {
+        "participant": {
+          "type": "机器人/😀",
+          "id": "bot/雪"
+        },
+        "scope": "case:/雪",
+        "agent": "acp_standin"
+      },
+      "expected": {
+        "session_key": "session:23a61bf975fa1bb8b64a8504c316c0c4215ef642504f267f9a6e4f8cb902231e",
+        "thread_key": "57fa06efa8e0476c20eb23f5c7d8bac288de67fd9dfb33a5799327e4aebe5048",
+        "index_key": "46eb881b2214669ce904e5519a73277b9b1f1ab96eccdde4a09d6027a0c214a5"
+      }
+    },
+    {
+      "id": "address-0032",
+      "title": "Named acp_standin",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": "0007"
+        },
+        "scope": "same",
+        "agent": "acp_standin"
+      },
+      "expected": {
+        "session_key": "session:1082a663b0f39a7ed8233504770f5eeb8ad2936d3b177afc4c45eb52d9e42e42",
+        "thread_key": "5d6768ab64bb57e43f4dea6d1ec8d1eec1d24ca338ab05ad839cd53652b60164",
+        "index_key": "2e45bc0830480d131d99d1a1ace548468d6dc6964ddd1da49dc901b6656066ac"
+      }
+    },
+    {
+      "id": "address-0033",
+      "title": "Named acp_standin",
+      "input": {
+        "participant": {
+          "type": "A:B",
+          "id": "C"
+        },
+        "scope": "d",
+        "agent": "acp_standin"
+      },
+      "expected": {
+        "session_key": "session:6ef227aa72eff61c241d3dff9f985f252d91c414f7db2a3c67cdfb5f082f8f43",
+        "thread_key": "ba4e5d861799f8b12b92f39eaba964cdf328b1fffdfb6754aa6204a2b5ded764",
+        "index_key": "f2883a708aacb118a669d6dde1c2844fc9fd169c9d7c5cf779b87b703598f664"
+      }
+    },
+    {
+      "id": "address-0034",
+      "title": "Named acp_standin",
+      "input": {
+        "participant": {
+          "type": "A",
+          "id": "B:C"
+        },
+        "scope": "d",
+        "agent": "acp_standin"
+      },
+      "expected": {
+        "session_key": "session:264a13d3906414fd6ecf7cb15dcf876a51bea8f49f7d48a4d9a5576172382ac9",
+        "thread_key": "7838bb16cc34b1f64bc9d35177a266cdc6410c6a444856aaa347392c4742aed2",
+        "index_key": "1caa7befa57f8f795190ec3e13290f9f0594a02fdd1666b998a6065e382f9139"
+      }
+    },
+    {
+      "id": "address-0035",
+      "title": "Named acp_standin",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "line / 😀",
+        "agent": "acp_standin"
+      },
+      "expected": {
+        "session_key": "session:94692528a8db496f9b46dfe6b90c68b211bde56148e94866b2289d6278eece08",
+        "thread_key": "966ce9e1093284020d7806491f50ac4f0b6077d5b2660e722a304a86b2624882",
+        "index_key": "e611d3df33037d0682b0a084d07c82d8da133131f52d5fbc50a914b8fe85d577"
+      }
+    },
+    {
+      "id": "address-0036",
+      "title": "Named acp_standin",
+      "input": {
+        "participant": null,
+        "scope": "shared:/雪",
+        "agent": "acp_standin"
+      },
+      "expected": {
+        "session_key": null,
+        "thread_key": "a991052b6e6a05101b159e2718c4a34b8e238c07a8063c080c8588a8b9263f25",
+        "index_key": "89575b8f2bd991cec9cdec305ad6a4e667af44d1ddd2dc53f905c6c051a55ab9"
+      }
+    },
+    {
+      "id": "address-0037",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": ""
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    },
+    {
+      "id": "address-0038",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "Support"
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    },
+    {
+      "id": "address-0039",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": " support"
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    },
+    {
+      "id": "address-0040",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "support "
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    },
+    {
+      "id": "address-0041",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "support\n"
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    },
+    {
+      "id": "address-0042",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "../support"
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    },
+    {
+      "id": "address-0043",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "a/b"
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    },
+    {
+      "id": "address-0044",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "support:evil"
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    },
+    {
+      "id": "address-0045",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "sυpport"
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    },
+    {
+      "id": "address-0046",
+      "title": "Hostile namespace",
+      "input": {
+        "participant": {
+          "type": "User",
+          "id": 7
+        },
+        "scope": "same",
+        "agent": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expected": {
+        "error": "invalid_address"
+      }
+    }
+  ]
+}

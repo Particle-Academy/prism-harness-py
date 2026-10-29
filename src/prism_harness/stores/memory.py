@@ -44,6 +44,12 @@ class MemorySessionStore:
     def durability(self) -> Durability:
         return Durability.VOLATILE
 
+    def lock_scope(self) -> str:
+        return "process"
+
+    def sharing_scope(self) -> str:
+        return "process"
+
     def get(self, key: str) -> dict[str, Any] | None:
         with self._guard:
             entry = self._entries.get(key)

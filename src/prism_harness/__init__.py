@@ -1,5 +1,12 @@
 """Durable agent sessions for Python -- threads, session state and store drivers."""
 
+from prism_harness.address import ParticipantAdapters, ParticipantRef, SessionAddress
+from prism_harness.address_index import (
+    AddressLimitExceeded,
+    IndexLockScopeUnsupported,
+    IndexRecoveryRequired,
+    StoreAddressIndex,
+)
 from prism_harness.attachments import admit_attachments
 from prism_harness.doctor import DoctorFinding, DoctorReport, diagnose
 from prism_harness.errors import ErrorCode, HarnessError
@@ -11,8 +18,9 @@ from prism_harness.events import (
     RunFinished,
     RunStarted,
 )
-from prism_harness.harness import PendingSession, PrismHarness
+from prism_harness.harness import AgentHarness, AgentHarnessConfig, PendingSession, PrismHarness
 from prism_harness.modes import AgentMode, ModeRegistry
+from prism_harness.registration import RegistrationCollision
 from prism_harness.runtime import (
     AgentResponse,
     AgentRuntime,
@@ -21,6 +29,7 @@ from prism_harness.runtime import (
     LlmResponse,
     LlmToolCall,
     PendingApproval,
+    RuntimeConfig,
     StructuredAgentResponse,
     record_approval,
 )
@@ -82,6 +91,9 @@ __all__ = [
     "MAX_DEPTH",
     "SLOT_DURABLE",
     "SLOT_EPHEMERAL",
+    "AddressLimitExceeded",
+    "AgentHarness",
+    "AgentHarnessConfig",
     "AgentMode",
     "AgentResponse",
     "AgentRuntime",
@@ -100,6 +112,8 @@ __all__ = [
     "HarnessEvents",
     "HarnessListener",
     "HarnessTool",
+    "IndexLockScopeUnsupported",
+    "IndexRecoveryRequired",
     "LlmClient",
     "LlmRequest",
     "LlmResponse",
@@ -108,19 +122,25 @@ __all__ = [
     "ModeRegistry",
     "OfferPolicy",
     "Participant",
+    "ParticipantAdapters",
+    "ParticipantRef",
     "PendingApproval",
     "PendingSession",
     "PrismHarness",
+    "RegistrationCollision",
     "RunBudget",
     "RunContext",
     "RunFailed",
     "RunFinished",
     "RunLedger",
     "RunStarted",
+    "RuntimeConfig",
     "Session",
+    "SessionAddress",
     "SessionStore",
     "SessionStoreManager",
     "SkillRegistry",
+    "StoreAddressIndex",
     "StoreFactory",
     "StoreTaskSource",
     "StoredTask",
