@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "prism-ai-harness"
-version = "0.4.1"
+version = "0.4.2"
 description = "Durable agent sessions for Python — threads, session state and store drivers."
 readme = "README.md"
 license = "MIT"
