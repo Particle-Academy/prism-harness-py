@@ -405,6 +405,13 @@ plain WSGI application write `asyncio.run` around a dictionary lookup.
   native boot/PID realm and a proven dead or explicitly released owner. Local
   filesystems on one host only; SMB/NFS are unsupported.
 
+  State readers close their handles before decoding the document. On Windows,
+  replacement of a state file can fail while another process holds it open,
+  even with delete sharing. Permission failures retry for up to 750 ms. If the
+  reader stays open or access is permanently denied, the original native error
+  is raised and the temporary file is removed; the previous state stays intact.
+  Other errors and POSIX replacement do not retry. Callbacks are never replayed.
+
   On Windows, the first file-lock operation makes one fixed, read-only metadata
   query using the system Windows PowerShell and CIM module, with a fifteen-second
   timeout. Established identities and detected container conditions are cached
