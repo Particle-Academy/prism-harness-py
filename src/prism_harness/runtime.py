@@ -386,7 +386,7 @@ class AgentRuntime:
         )
 
         try:
-            if session.agent is None:
+            if session.agent is None and not self._narrow_requested_tools:
                 resolved = self._tools.resolve(
                     list(tool_names) if tool_names else mode.tools, session
                 )
