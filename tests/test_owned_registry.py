@@ -37,7 +37,7 @@ class Lookup:
 
 
 def test_same_owner_static_factory_collision_refused() -> None:
-    registry = ToolRegistry().register(Lookup())
+    registry = ToolRegistry(refuse_duplicates=True).register(Lookup())
     with pytest.raises(ValueError, match=r"owners \[legacy\] and \[legacy\]"):
         registry.register_factory("lookup", lambda _: Lookup())
 

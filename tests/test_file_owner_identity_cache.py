@@ -1,4 +1,4 @@
-"""Unknown and established identity are sampled only once in each process."""
+"""Definitive identity is cached; transient failures retry after a bounded interval."""
 
 from __future__ import annotations
 
@@ -16,6 +16,64 @@ _HOST: identity.LockIdentity = {
     "boot_id": "cim-utc-ticks:638000000000000000",
     "pid_namespace": "win32:kernel",
 }
+
+
+@pytest.fixture(autouse=True)
+def preserve_identity_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "_established",
+        "_established_pid",
+        "_identity_gate",
+        "_retry_at",
+        "_definitive",
+        "_duration_ms",
+    ):
+        monkeypatch.setattr(identity, name, getattr(identity, name))
+
+
+def test_transient_failure_retries_after_interval_once_under_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [0.0]
+    calls: list[int] = []
+
+    def read() -> identity.LockIdentity | None:
+        calls.append(os.getpid())
+        time.sleep(0.01)
+        return None if len(calls) == 1 else _HOST.copy()
+
+    monkeypatch.setattr(identity, "_established_pid", None)
+    monkeypatch.setattr(identity, "_read_native_identity", read)
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    assert identity.file_lock_identity_status()["sampled"] is False and not calls
+    assert identity.native_identity() is None
+    now[0] = 59.999
+    assert identity.native_identity() is None and len(calls) == 1
+    assert identity.file_lock_identity_status()["code"] == "file_lock_identity_unavailable"
+    now[0] = 60.0
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        assert list(workers.map(lambda _: identity.native_identity(), range(8))) == [_HOST] * 8
+    assert len(calls) == 2
+    now[0] = 99999999
+    assert identity.native_identity() == _HOST and len(calls) == 2
+    assert identity.file_lock_identity_status()["definitive"] is True
+
+
+def test_positive_container_result_never_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [0.0]
+    calls: list[int] = []
+
+    def read() -> identity.LockIdentity:
+        calls.append(1)
+        return {**_HOST, "pid_namespace": None}
+
+    monkeypatch.setattr(identity, "_established_pid", None)
+    monkeypatch.setattr(identity, "_read_native_identity", read)
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    assert identity.native_identity() == {**_HOST, "pid_namespace": None}
+    now[0] = 99999999
+    assert identity.native_identity() == {**_HOST, "pid_namespace": None} and len(calls) == 1
+    assert identity.file_lock_identity_status()["definitive"] is True
 
 
 @pytest.mark.parametrize("first", [None, {**_HOST, "pid_namespace": None}, _HOST])

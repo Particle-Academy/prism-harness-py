@@ -74,18 +74,21 @@ class SessionAddress:
         self, participant: Participant | ParticipantRef | None, scope: str, agent: str | None = None
     ) -> None:
         validate_agent(agent)
-        if not isinstance(scope, str):
-            raise TypeError("Harness addresses require UTF-8 scopes.")
-        scope.encode("utf-8")
-        if participant is not None:
-            if (
-                not isinstance(participant.type, str)
-                or isinstance(participant.id, bool)
-                or not isinstance(participant.id, (str, int))
-            ):
-                raise ValueError("Harness addresses require UTF-8 types and integer or string ids.")
-            participant.type.encode("utf-8")
-            str(participant.id).encode("utf-8")
+        if agent is not None or isinstance(participant, ParticipantRef):
+            if not isinstance(scope, str):
+                raise TypeError("Harness addresses require UTF-8 scopes.")
+            scope.encode("utf-8")
+            if participant is not None:
+                if (
+                    not isinstance(participant.type, str)
+                    or isinstance(participant.id, bool)
+                    or not isinstance(participant.id, (str, int))
+                ):
+                    raise ValueError(
+                        "Harness addresses require UTF-8 types and integer or string ids."
+                    )
+                participant.type.encode("utf-8")
+                str(participant.id).encode("utf-8")
         object.__setattr__(
             self, "participant_type", None if participant is None else participant.type
         )

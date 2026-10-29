@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from ctypes import wintypes
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -24,24 +25,53 @@ class LockIdentity(TypedDict):
 _established: LockIdentity | None = None
 _established_pid: int | None = None
 _identity_gate = threading.Lock()
+_retry_at = 0.0
+_definitive = False
+_duration_ms = 0.0
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
 
 def native_identity() -> LockIdentity | None:
-    """Sample once per process, retaining unknown proof until process exit."""
-    global _established, _established_pid
+    """Cache definitive identity permanently and transient failures for sixty seconds."""
+    global _established, _established_pid, _retry_at, _definitive, _duration_ms
     with _identity_gate:
-        if _established_pid != os.getpid():
+        if _established_pid != os.getpid() or (not _definitive and time.monotonic() >= _retry_at):
+            start = time.monotonic()
             _established = _read_native_identity()
+            _duration_ms = (time.monotonic() - start) * 1000
+            _definitive = _established is not None and (
+                _established["pid_namespace"] is not None or _established["platform"] == "win32"
+            )
+            _retry_at = time.monotonic() + 60
             _established_pid = os.getpid()
         return None if _established is None else _established.copy()
 
 
+def file_lock_identity_status() -> dict[str, object]:
+    """Process metadata snapshot only: no query or filesystem I/O."""
+    with _identity_gate:
+        sampled = _established_pid == os.getpid()
+        available = (
+            sampled and _established is not None and _established["pid_namespace"] is not None
+        )
+        return {
+            "sampled": sampled,
+            "recovery_available": available,
+            "definitive": sampled and _definitive,
+            "retry_after_ms": None
+            if not sampled or _definitive
+            else max(0.0, (_retry_at - time.monotonic()) * 1000),
+            "sample_duration_ms": _duration_ms if sampled else 0.0,
+            "code": "file_lock_identity_unavailable" if sampled and not available else None,
+        }
+
+
 def _reset_identity_after_fork() -> None:
-    global _established, _established_pid, _identity_gate
+    global _established, _established_pid, _identity_gate, _retry_at, _definitive, _duration_ms
     _established = None
     _established_pid = None
     _identity_gate = threading.Lock()
+    _retry_at, _definitive, _duration_ms = 0.0, False, 0.0
 
 
 if hasattr(os, "register_at_fork"):

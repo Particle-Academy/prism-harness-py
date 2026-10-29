@@ -50,7 +50,12 @@ class ModeRegistry:
         config: dict[str, Any] | None = None,
         _agent: str | None = None,
         _root: ModeRegistry | None = None,
+        *,
+        refuse_duplicates: bool = False,
     ) -> None:
+        if not isinstance(refuse_duplicates, bool):
+            raise TypeError("refuse_duplicates must be a boolean")
+        self._refuse_duplicates = refuse_duplicates
         validate_agent(_agent)
         self._config = config if config is not None else {}
         self._agent, self._root = _agent, _root
@@ -71,12 +76,14 @@ class ModeRegistry:
                 raise ValueError("Agent modes must be configured as a mapping.")
             config = deepcopy(configured)
             config.setdefault("default", root.default())
-            root._agents[agent] = ModeRegistry(config, agent, root)
+            root._agents[agent] = ModeRegistry(
+                config, agent, root, refuse_duplicates=root._refuse_duplicates
+            )
         return root._agents[agent]
 
     def register(self, name: str, mode: dict[str, Any], owner: str | None = None) -> ModeRegistry:
         label = registration_owner(owner, self._agent)
-        if name in self._owners:
+        if (self._agent is not None or self._refuse_duplicates) and name in self._owners:
             raise RegistrationCollision(self._agent, name, self._owners[name], label)
         self._set(name, mode, label)
         return self

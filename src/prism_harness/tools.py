@@ -67,7 +67,16 @@ class ToolRegistry:
     discovered at resolve time -- an MCP server's catalogue, say.
     """
 
-    def __init__(self, agent: str | None = None, _root: ToolRegistry | None = None) -> None:
+    def __init__(
+        self,
+        agent: str | None = None,
+        _root: ToolRegistry | None = None,
+        *,
+        refuse_duplicates: bool = False,
+    ) -> None:
+        if not isinstance(refuse_duplicates, bool):
+            raise TypeError("refuse_duplicates must be a boolean")
+        self._refuse_duplicates = refuse_duplicates
         validate_agent(agent)
         self._agent = agent
         self._root = _root
@@ -75,6 +84,8 @@ class ToolRegistry:
         self._tools: dict[str, HarnessTool] = {}
         self._factories: dict[str, ToolFactory] = {}
         self._metadata: dict[str, tuple[str, str]] = {}
+        self._static_owners: dict[str, str] = {}
+        self._factory_owners: dict[str, str] = {}
         self._providers: dict[str, tuple[ToolProvider, str]] = {}
 
     def for_agent(self, agent: str | None) -> ToolRegistry:
@@ -83,12 +94,15 @@ class ToolRegistry:
         if agent is None:
             return root
         if agent not in root._agents:
-            root._agents[agent] = ToolRegistry(agent, root)
+            root._agents[agent] = ToolRegistry(
+                agent, root, refuse_duplicates=root._refuse_duplicates
+            )
         return root._agents[agent]
 
     def register(self, tool: HarnessTool, owner: str | None = None) -> ToolRegistry:
         self._claim(tool.name, owner, "static")
         self._tools[tool.name] = tool
+        self._static_owners[tool.name] = registration_owner(owner, self._agent)
         return self
 
     def register_many(self, tools: Iterable[HarnessTool], owner: str | None = None) -> ToolRegistry:
@@ -101,6 +115,7 @@ class ToolRegistry:
     ) -> ToolRegistry:
         self._claim(name, owner, "factory")
         self._factories[name] = factory
+        self._factory_owners[name] = registration_owner(owner, self._agent)
         return self
 
     def register_provider(
@@ -115,7 +130,7 @@ class ToolRegistry:
         if not identifier:
             raise ValueError("A named provider requires a registration name.")
         previous = self._providers.get(identifier)
-        if previous is not None:
+        if self._strict() and previous is not None:
             raise RegistrationCollision(self._agent, identifier, previous[1], label)
         self._providers[identifier] = (provider, label)
         return self
@@ -125,6 +140,7 @@ class ToolRegistry:
     ) -> ToolRegistry:
         self._claim(tool.name, owner, "static", predecessor_owner)
         self._tools[tool.name] = tool
+        self._static_owners[tool.name] = registration_owner(owner, self._agent)
         return self
 
     def replace_factory(
@@ -132,6 +148,7 @@ class ToolRegistry:
     ) -> ToolRegistry:
         self._claim(name, owner, "factory", predecessor_owner)
         self._factories[name] = factory
+        self._factory_owners[name] = registration_owner(owner, self._agent)
         return self
 
     def replace_provider(
@@ -152,11 +169,17 @@ class ToolRegistry:
         if predecessor is not None:
             if previous is None or previous[0] != predecessor:
                 raise ValueError("Replacement must name the registered predecessor owner.")
-        elif previous is not None:
+        elif self._strict() and previous is not None:
             raise RegistrationCollision(self._agent, name, previous[0], label)
-        self._tools.pop(name, None)
-        self._factories.pop(name, None)
+        if self._strict() or predecessor is not None:
+            self._tools.pop(name, None)
+            self._factories.pop(name, None)
+            self._static_owners.pop(name, None)
+            self._factory_owners.pop(name, None)
         self._metadata[name] = (label, source)
+
+    def _strict(self) -> bool:
+        return self._agent is not None or self._refuse_duplicates
 
     def names(self) -> list[str]:
         """Every name this registry can produce without a session."""
@@ -188,7 +211,7 @@ class ToolRegistry:
             for provider, owner in self._providers.values():
                 for tool in provider(session):
                     previous = metadata.get(tool.name)
-                    if previous is not None:
+                    if self._strict() and previous is not None:
                         raise RegistrationCollision(self._agent, tool.name, previous[0], owner)
                     provided[tool.name] = tool
                     metadata[tool.name] = (owner, "provider")
@@ -201,7 +224,10 @@ class ToolRegistry:
             existing = self._tools.get(name) or provided.get(name)
 
             if existing is not None:
-                resolved[name] = ResolvedTool(existing, *metadata[name])
+                details = (
+                    (self._static_owners[name], "static") if name in self._tools else metadata[name]
+                )
+                resolved[name] = ResolvedTool(existing, *details)
                 continue
 
             factory = self._factories.get(name)
@@ -215,16 +241,16 @@ class ToolRegistry:
                 )
 
             built = factory(session)
-            if self._agent is not None and built.name != name:
+            if self._strict() and built.name != name:
                 raise ValueError(f"Session-bound tool factory [{name}] returned [{built.name}].")
             if built.name != name:
                 previous = metadata.get(built.name)
-                if previous is not None:
+                if self._strict() and previous is not None:
                     raise RegistrationCollision(
                         self._agent, built.name, previous[0], metadata[name][0]
                     )
                 metadata[built.name] = metadata[name]
-            resolved[name] = ResolvedTool(built, *metadata[name])
+            resolved[name] = ResolvedTool(built, self._factory_owners[name], "factory")
 
         return resolved
 

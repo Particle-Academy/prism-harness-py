@@ -163,20 +163,36 @@ def test_raises_session_locked_rather_than_running_the_callback_anyway(
     store: SessionStore,
 ) -> None:
     ran_while_held = threading.Event()
+    acquired, release = threading.Event(), threading.Event()
+    failures: list[BaseException] = []
 
     def hold() -> None:
-        time.sleep(0.3)
+        acquired.set()
+        assert release.wait(timeout=10), "the holder was never released"
 
-    held = threading.Thread(target=lambda: store.with_lock("k", hold))
+    def holder() -> None:
+        try:
+            store.with_lock("k", hold)
+        except BaseException as error:
+            failures.append(error)
+            acquired.set()
+            raise
+
+    held = threading.Thread(target=holder)
     held.start()
-    time.sleep(0.02)
-
-    with pytest.raises(HarnessError) as caught:
-        store.with_lock("k", ran_while_held.set, wait_seconds=0.05)
-
-    assert caught.value.code == "session_locked"
-    assert not ran_while_held.is_set()
-    held.join()
+    try:
+        assert acquired.wait(timeout=20), "the holder never acquired its lock"
+        assert not failures
+        with pytest.raises(HarnessError) as caught:
+            store.with_lock("k", ran_while_held.set, wait_seconds=0.05)
+        assert caught.value.code == "session_locked"
+        assert not ran_while_held.is_set()
+        assert not release.is_set()
+    finally:
+        release.set()
+        held.join(timeout=10)
+    assert not held.is_alive()
+    assert not failures
 
 
 # -- driver-specific ---------------------------------------------------------

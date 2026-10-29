@@ -195,7 +195,11 @@ class AgentRuntime:
         events: HarnessEvents | None = None,
         config: RuntimeConfig | None = None,
         agents: dict[str, RuntimeConfig] | None = None,
+        narrow_requested_tools: bool = False,
     ) -> None:
+        if not isinstance(narrow_requested_tools, bool):
+            raise TypeError("narrow_requested_tools must be a boolean")
+        self._narrow_requested_tools = narrow_requested_tools
         self._client = client
         self._modes = modes
         self._tools = tools
@@ -247,7 +251,12 @@ class AgentRuntime:
         self, session: Session, mode: AgentMode, requested: Sequence[str] | None = None
     ) -> tuple[list[HarnessTool], list[dict[str, str]]]:
         def resolve(view: Session) -> tuple[list[HarnessTool], list[dict[str, str]]]:
-            detailed = self._tools.resolve_detailed(_narrowed_tools(mode.tools, requested), view)
+            names = (
+                _narrowed_tools(mode.tools, requested)
+                if session.agent is not None or self._narrow_requested_tools
+                else (requested or mode.tools)
+            )
+            detailed = self._tools.resolve_detailed(names, view)
             tools = {name: entry.tool for name, entry in detailed.items()}
             if view.agent is not None and "complete_task" in tools:
                 authorizer = (

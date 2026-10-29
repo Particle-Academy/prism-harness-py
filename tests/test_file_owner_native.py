@@ -15,14 +15,31 @@ import pytest
 
 from prism_harness import FileSessionStore, HarnessError
 from prism_harness.stores import _file_owner_lock as locks
-from prism_harness.stores._file_lock_identity import native_identity, pid_is_dead
+from prism_harness.stores._file_lock_identity import (
+    file_lock_identity_status,
+    native_identity,
+    pid_is_dead,
+)
 
 
 def test_native_independent_live_dead_and_foreign_unknown_production_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    before = file_lock_identity_status()
+    started = time.monotonic()
     local = native_identity()
+    print(
+        json.dumps(
+            {
+                "native_identity_setup": True,
+                "platform": sys.platform,
+                "elapsed_ms": (time.monotonic() - started) * 1000,
+                "before": before,
+                "status": file_lock_identity_status(),
+            }
+        )
+    )
     assert local is not None and local["pid_namespace"] is not None
     nonce = secrets.token_hex(16)
     spec = tmp_path / "spec.json"

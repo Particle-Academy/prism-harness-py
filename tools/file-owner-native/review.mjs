@@ -15,13 +15,18 @@ const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>/^(PATH
 if(backend==='py')env.PYTHONPATH=join(ROOT,'src');
 function execute(exe,args,extra={},timeout=60000){
  const child=spawnSync(exe,args,{cwd:ROOT,env:{...env,...extra},encoding:'utf8',windowsHide:true,timeout,maxBuffer:4*1024*1024});
+ if(extra.PRISM_FILE_OWNER_NATIVE_REPORT){fs.writeFileSync(extra.PRISM_FILE_OWNER_NATIVE_REPORT+'.stdout.log',child.stdout??'',{flag:'wx'});fs.writeFileSync(extra.PRISM_FILE_OWNER_NATIVE_REPORT+'.stderr.log',child.stderr??'',{flag:'wx'});}
  assert(!child.error,'Native command must execute: '+child.error?.code);
  assert.equal(child.status,0,child.stdout+'\n'+child.stderr);return child.stdout;
 }
 function proof(report){
  const args=backend==='ts'?['node_modules/vitest/vitest.mjs','run','test/file-owner-native.test.ts']:['-m','pytest','-q','-s','tests/test_file_owner_native.py'];
- execute(backend==='ts'?process.execPath:(env.PRISM_FILE_OWNER_PYTHON??'python'),args,{PRISM_FILE_OWNER_NATIVE_REPORT:report});
+ const stdout=execute(backend==='ts'?process.execPath:(env.PRISM_FILE_OWNER_PYTHON??'python'),args,{PRISM_FILE_OWNER_NATIVE_REPORT:report});
  const value=JSON.parse(fs.readFileSync(report,'utf8'));
+ const metadata=stdout.replace(/\x1b\[[0-9;]*m/g,'').split(/\r?\n/).filter(line=>line.includes('"native_identity_setup"')).map(line=>JSON.parse(line.slice(line.indexOf('{'))));
+ assert(metadata.length>0,'Native metadata timing must be measured');
+ assert(metadata.every(row=>row.native_identity_setup===true&&row.platform===process.platform&&typeof row.elapsed_ms==='number'&&row.elapsed_ms>=0));
+ value.metadata_setup=metadata;fs.writeFileSync(report,JSON.stringify(value));
  assert.equal(value.backend,backend);assert.equal(value.production,true);
  assert.equal(value.identity.platform,process.platform);assert.equal(typeof value.identity.pid_namespace,'string');
  assert.notEqual(value.holder_pid,value.prober_pid);assert.deepEqual(value.identity,value.holder_identity);

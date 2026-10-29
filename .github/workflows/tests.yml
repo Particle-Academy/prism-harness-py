@@ -86,6 +86,14 @@ jobs:
       - run: python -m pytest -q
       - name: Production native ownership including Windows Job contexts
         run: node tools/file-owner-native/gate.mjs py
+      - name: Preserve hosted POSIX interval evidence
+        if: always() && runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: py-owner-overlap-${{ matrix.os }}
+          path: ${{ runner.temp }}/prism-file-overlap-*
+          if-no-files-found: ignore
+          retention-days: 7
 
 
   third-party:

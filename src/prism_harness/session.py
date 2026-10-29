@@ -62,6 +62,8 @@ class Session:
         if isinstance(participant, ParticipantRef) and actor is None:
             raise ValueError("Typed participants require an explicit authorization actor.")
         self._participant = participant
+        self._legacy_identity = agent is None and not isinstance(participant, ParticipantRef)
+        self._legacy_scope = scope
         self._address = SessionAddress(participant, scope, agent)
         if address_index is None and (agent is not None or isinstance(participant, ParticipantRef)):
             address_index = StoreAddressIndex(durable, max_addresses_per_participant)
@@ -88,15 +90,31 @@ class Session:
 
     @property
     def address(self) -> SessionAddress:
-        return self._address
+        return (
+            SessionAddress(self._participant, self._legacy_scope)
+            if self._legacy_identity
+            else self._address
+        )
 
     @property
     def participant(self) -> Participant | ParticipantRef:
         return self._participant
 
+    @participant.setter
+    def participant(self, value: Participant | ParticipantRef) -> None:
+        if not self._legacy_identity or isinstance(value, ParticipantRef):
+            raise AttributeError("Named and ParticipantRef session identity is immutable")
+        self._participant = value
+
     @property
     def scope(self) -> str:
-        return self._address.scope
+        return self._legacy_scope if self._legacy_identity else self._address.scope
+
+    @scope.setter
+    def scope(self, value: str) -> None:
+        if not self._legacy_identity:
+            raise AttributeError("Named and ParticipantRef session identity is immutable")
+        self._legacy_scope = value
 
     @property
     def agent(self) -> str | None:
@@ -119,7 +137,7 @@ class Session:
         tooling. Matching the reference exactly is what lets a PHP app and a
         Python agent share ONE store and resolve the same session.
         """
-        return self._address.session_key()
+        return self.address.session_key()
 
     # -- the ephemeral half ------------------------------------------------
 
