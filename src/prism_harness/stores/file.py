@@ -13,6 +13,7 @@ from typing import Any
 from prism_harness.errors import HarnessError
 from prism_harness.stores._file_lock_identity import file_lock_identity_status
 from prism_harness.stores._file_owner_lock import pending_file_owner_releases, with_file_owner_lock
+from prism_harness.stores._file_state_io import read_state_text, replace_state_file
 from prism_harness.stores.base import Durability, T
 
 __all__ = ["FileSessionStore"]
@@ -59,7 +60,7 @@ class FileSessionStore:
 
     def get(self, key: str) -> dict[str, Any] | None:
         try:
-            raw = self._path_for(key).read_text(encoding="utf-8")
+            raw = read_state_text(self._path_for(key))
         except FileNotFoundError:
             return None
 
@@ -100,7 +101,7 @@ class FileSessionStore:
         try:
             # Atomic on both POSIX and Windows. A reader sees the whole old
             # payload or the whole new one, never half of either.
-            os.replace(temporary, target)
+            replace_state_file(temporary, target)
         except OSError:
             temporary.unlink(missing_ok=True)
             raise
