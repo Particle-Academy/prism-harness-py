@@ -82,6 +82,7 @@ def test_dispatcher_has_only_the_declared_read_only_pid_symbols() -> None:
             "subprocess",
             "sys",
             "threading",
+            "time",
             "pathlib",
             "typing",
             "prism_harness.stores._file_lock_windows_identity",
@@ -133,7 +134,7 @@ def test_absolute_binary_fixed_script_minimal_environment_and_timeout(
         "TEMP": r"C:\owned-temp",
         "TMP": r"C:\owned-temp",
     }
-    assert options["timeout"] == 5 and options["shell"] is False
+    assert options["timeout"] == 15 and options["shell"] is False
     assert options["creationflags"] == 0x08000000 and options["check"] is True
 
 

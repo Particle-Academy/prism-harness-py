@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from prism_harness.errors import HarnessError
+from prism_harness.stores._file_lock_identity import file_lock_identity_status
 from prism_harness.stores._file_owner_lock import pending_file_owner_releases, with_file_owner_lock
 from prism_harness.stores.base import Durability, T
 
@@ -47,6 +48,10 @@ class FileSessionStore:
 
     def lock_scope(self) -> str:
         return "host"
+
+    def identity_status(self) -> dict[str, object]:
+        """Process metadata snapshot, without starting discovery or performing I/O."""
+        return file_lock_identity_status()
 
     def sharing_scope(self) -> str:
         """Local filesystem on one host. SMB/NFS sharing is unsupported."""

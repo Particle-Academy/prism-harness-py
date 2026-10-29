@@ -1,4 +1,4 @@
-"""One fixed first-party metadata query per process, master2797 / decision0022."""
+"""Fixed first-party metadata query, master2797 / decision0022."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 
-# Kept byte-identical to TS; native_identity caches every result, including unknown.
+# Kept byte-identical to TS; native_identity bounds retries after transient failures.
 _COMMAND = r"""
 $ErrorActionPreference = 'Stop'
 $PSModuleAutoloadingPreference = 'None'
@@ -51,7 +51,7 @@ def windows_identity() -> tuple[str, str | None] | None:
             env=env,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=15,
             check=True,
             creationflags=0x08000000,
             shell=False,

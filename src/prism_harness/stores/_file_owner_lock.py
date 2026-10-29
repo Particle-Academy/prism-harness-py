@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import stat
+import sys
 import threading
 import time
 import warnings
@@ -190,7 +191,7 @@ def clean_owner(
             time.sleep(0.005)
 
 
-def _inspect(lock: Path, local: LockIdentity) -> str:
+def _inspect(lock: Path, local: LockIdentity | None) -> str:
     try:
         info = lock.lstat()
         if stat.S_ISLNK(info.st_mode) or int(getattr(info, "st_file_attributes", 0)) & 0x400:
@@ -214,7 +215,7 @@ def _inspect(lock: Path, local: LockIdentity) -> str:
                 return "held"
         owner = parse_owner(read_owner_bytes(path), path.name)
         # Do not consult a foreign or unknown PID realm, even if released.
-        if owner is None or not same_identity(owner["identity"], local):
+        if owner is None or local is None or not same_identity(owner["identity"], local):
             return "held"
         if not owner["released"] and not pid_is_dead(owner["pid"]):
             return "held"
@@ -300,7 +301,13 @@ def with_file_owner_lock(
         pass
     identity = native_identity()
     if identity is None:
-        raise HarnessError("session_locked", "file_lock_identity_unavailable: " + str(lock))
+        if sys.platform not in ("win32", "linux", "darwin"):
+            raise HarnessError("session_locked", "Unsupported file-lock platform")
+        identity = {
+            "platform": cast(Any, sys.platform),
+            "boot_id": "unknown",
+            "pid_namespace": None,
+        }
     owner: FileLockOwner = {
         "version": 2,
         "pid": os.getpid(),
@@ -309,6 +316,15 @@ def with_file_owner_lock(
         "released": False,
         "expires_at": expires,
     }
+    if identity["pid_namespace"] is None:
+        warnings.warn(
+            "file_lock_identity_unavailable "
+            + json.dumps(
+                {"key_digest": lock.name.removesuffix(".json.lock"), "nonce": owner["nonce"]}
+            ),
+            RuntimeWarning,
+            stacklevel=2,
+        )
     candidate = Path(str(lock) + ".candidate-" + owner["nonce"])
     if candidate.parent != lock.parent or candidate.name == lock.name:
         raise RuntimeError("Lock publication must stay inside its parent")
