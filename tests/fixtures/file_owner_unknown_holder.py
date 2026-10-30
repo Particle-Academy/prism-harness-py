@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
 from unittest.mock import patch
 
 from prism_harness import FileSessionStore
@@ -26,19 +27,28 @@ def hold() -> None:
         json.dumps({"nonce": spec["nonce"], "pid": os.getpid()}), encoding="utf-8"
     )
     os.replace(root / "ready.tmp", root / "ready.json")
-    deadline = time.monotonic() + 25
-    while True:
+
+    # Commands travel over the already-owned pipe. A filesystem sharing denial
+    # on an unrelated command path must not make the holder abandon its lock.
+    commands: Queue[str | OSError | UnicodeError] = Queue(maxsize=1)
+
+    def read_command() -> None:
         try:
-            command = json.loads((root / "command.json").read_text(encoding="utf-8"))
-            assert command == {"nonce": spec["nonce"], "action": spec["action"]}
-            if command["action"] == "crash":
-                os._exit(0)
-            return
-        except FileNotFoundError:
-            pass
-        if time.monotonic() > deadline:
-            raise RuntimeError("Owned unknown holder barrier timed out")
-        time.sleep(0.01)
+            commands.put(sys.stdin.readline())
+        except (OSError, UnicodeError) as error:
+            commands.put(error)
+
+    Thread(target=read_command, daemon=True).start()
+    try:
+        raw = commands.get(timeout=25)
+    except Empty as error:
+        raise RuntimeError("Owned unknown holder barrier timed out") from error
+    if isinstance(raw, (OSError, UnicodeError)):
+        raise raw
+    command = json.loads(raw)
+    assert command == {"nonce": spec["nonce"], "action": spec["action"]}
+    if command["action"] == "crash":
+        os._exit(0)
 
 
 with (

@@ -17,17 +17,22 @@ from prism_harness.stores._file_lock_identity import native_identity
 
 
 @pytest.mark.parametrize("action", ["release", "crash"])
+@pytest.mark.parametrize("blocked_command_path", [False, True])
 def test_real_unknown_worker_excludes_and_preserves_release_or_crash(
-    action: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    action: str, blocked_command_path: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     known = native_identity()
     assert known is not None and known["pid_namespace"] is not None
     nonce = secrets.token_hex(16)
     spec = tmp_path / "spec.json"
     spec.write_text(json.dumps({"root": str(tmp_path), "nonce": nonce, "action": action}))
+    if blocked_command_path:
+        # Unrelated namespace entries must not become the process command channel.
+        (tmp_path / "command.json").mkdir()
     script = Path(__file__).parent / "fixtures/file_owner_unknown_holder.py"
     child = subprocess.Popen(
         [sys.executable, str(script), str(spec)],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -36,8 +41,9 @@ def test_real_unknown_worker_excludes_and_preserves_release_or_crash(
     commanded = False
 
     def command() -> None:
-        (tmp_path / "command.tmp").write_text(json.dumps({"nonce": nonce, "action": action}))
-        os.replace(tmp_path / "command.tmp", tmp_path / "command.json")
+        assert child.stdin is not None
+        child.stdin.write(json.dumps({"nonce": nonce, "action": action}) + "\n")
+        child.stdin.flush()
 
     try:
         deadline = time.monotonic() + 20
@@ -90,6 +96,29 @@ def test_real_unknown_worker_excludes_and_preserves_release_or_crash(
         if not commanded and child.poll() is None:
             command()
         child.communicate(timeout=30)
+
+
+@pytest.mark.parametrize("wire", ["", "{}\n", '{"nonce":"wrong","action":"crash"}\n'])
+def test_unknown_holder_refuses_eof_malformed_and_foreign_pipe_commands(
+    wire: str, tmp_path: Path
+) -> None:
+    spec = tmp_path / "spec.json"
+    spec.write_text(
+        json.dumps({"root": str(tmp_path), "nonce": secrets.token_hex(16), "action": "crash"})
+    )
+    script = Path(__file__).parent / "fixtures/file_owner_unknown_holder.py"
+    child = subprocess.Popen(
+        [sys.executable, str(script), str(spec)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=0x08000000 if os.name == "nt" else 0,
+    )
+    _, stderr = child.communicate(input=wire, timeout=30)
+    assert (tmp_path / "ready.json").exists(), stderr
+    assert child.returncode != 0, "An invalid command must not execute the requested crash"
+    assert "JSONDecodeError" in stderr or "AssertionError" in stderr
 
 
 def test_unknown_identity_acquires_releases_and_excludes_another_store(
