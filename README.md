@@ -73,9 +73,18 @@ request or logical state change. Reads may physically purge expired entries,
 exactly as an ordinary store read does. Explicit state writes during resolution
 refuse.
 
-A named agent's mode list is its ceiling; caller-supplied names can only narrow it.
-Legacy sessions retain caller-list selection, including the empty-list fallback;
-set `AgentRuntime(..., narrow_requested_tools=True)` to apply the ceiling there.
+The mode list is the ceiling for named and legacy sessions. Caller-supplied
+names narrow it; omitting names uses the mode's full list, and an explicit empty
+list offers no tools. A requested `*` selects the mode's ceiling. Other names
+outside it fail before the model is called.
+
+Legacy callers that intentionally need the previous replacement behavior can
+set `AgentRuntime(..., allow_legacy_tool_list_widening=True)`. This permits
+widening only in the legacy namespace; the configured authorizer still filters
+the offer and tool calls. This opt-out also preserves the old empty-list
+fallback. Named agents always retain their ceiling. Remove an old explicit
+`narrow_requested_tools=False`: it now raises a migration error. Explicit `True`
+remains supported, and conflicts with the widening opt-out.
 Named agents inherit no legacy authority. Builtins require explicit registration
 and mode selection. A named-agent repeated registration fails even for the same owner;
 replace(replacement, predecessor_owner, owner) makes intended replacement
