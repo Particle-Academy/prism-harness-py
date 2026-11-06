@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
 
 from prism_harness import FileSessionStore
 from prism_harness.stores._file_lock_identity import native_identity
@@ -19,22 +20,29 @@ store = FileSessionStore(root / "store")
 
 
 def hold() -> None:
-    (root / "ready.tmp").write_text(
+    print(
         json.dumps({"nonce": spec["nonce"], "pid": os.getpid(), "identity": identity}),
-        encoding="utf-8",
+        flush=True,
     )
-    os.replace(root / "ready.tmp", root / "ready.json")
-    deadline = time.monotonic() + 25
-    while True:
+    # An unrelated filesystem sharing denial must not interrupt the real holder.
+    commands: Queue[str | OSError | UnicodeError] = Queue(maxsize=1)
+
+    def read_command() -> None:
         try:
-            message = json.loads((root / "crash.json").read_text(encoding="utf-8"))
-            assert message["nonce"] == spec["nonce"]
-            os._exit(0)
-        except FileNotFoundError:
-            pass
-        if time.monotonic() > deadline:
-            raise RuntimeError("Owned holder barrier timed out")
-        time.sleep(0.01)
+            commands.put(sys.stdin.readline())
+        except (OSError, UnicodeError) as error:
+            commands.put(error)
+
+    Thread(target=read_command, daemon=True).start()
+    try:
+        raw = commands.get(timeout=25)
+    except Empty as error:
+        raise RuntimeError("Owned holder barrier timed out") from error
+    if isinstance(raw, (OSError, UnicodeError)):
+        raise raw
+    message = json.loads(raw)
+    assert message == {"nonce": spec["nonce"], "action": "crash"}
+    os._exit(0)
 
 
 store.with_lock("native-key", hold, ttl_seconds=1)
