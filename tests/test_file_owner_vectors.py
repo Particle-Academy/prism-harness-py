@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import secrets
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -13,6 +16,19 @@ import pytest
 from prism_harness import FileSessionStore, HarnessError
 from prism_harness.stores import _file_owner_lock as locks
 from prism_harness.stores._file_lock_identity import native_identity
+
+CLEANUP_VECTOR = json.loads(
+    (Path(__file__).parent / "fixtures" / "file-lock-cleanup-os-refusal.json").read_text(
+        encoding="utf-8"
+    )
+)
+assert CLEANUP_VECTOR["id"] == "cleanup-refused-by-os"
+assert CLEANUP_VECTOR["os_errors"]["py"] == [5, 32]
+assert CLEANUP_VECTOR["required_cases"] == [
+    "held-then-cleared",
+    "budget-exhausted",
+    "unrelated-error",
+]
 
 
 def test_canonical_reparse_metadata_is_refused_before_rename(
@@ -73,6 +89,112 @@ def fixture(tmp_path: Path) -> tuple[FileSessionStore, Path]:
 def plant(lock: Path, value: locks.FileLockOwner) -> None:
     lock.mkdir()
     (lock / name(value)).write_bytes(raw(value))
+
+
+class WindowsOpenHandleError(PermissionError):
+    """Expose Windows error metadata when the regression runs on any platform."""
+
+    def __init__(self, winerror: int, path: Path) -> None:
+        super().__init__(errno.EACCES, "open Windows handle", str(path))
+        self.winerror = winerror
+
+
+@pytest.mark.parametrize("winerror", CLEANUP_VECTOR["os_errors"]["py"])
+def test_release_temporary_waits_for_windows_handle_before_reinspection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, winerror: int
+) -> None:
+    store, lock = fixture(tmp_path)
+    value = owner()
+    value["released"] = True
+    plant(lock, value)
+    temporary = lock / ("owner-" + value["nonce"] + ".release.tmp")
+    temporary.write_bytes(raw(value))
+    original_unlink = Path.unlink
+    held = True
+    denied: list[int] = []
+    backoffs: list[float] = []
+    entered: list[bool] = []
+
+    def unlink(path: Path, missing_ok: bool = False) -> None:
+        if path == temporary and held:
+            denied.append(winerror)
+            raise WindowsOpenHandleError(winerror, path)
+        original_unlink(path, missing_ok=missing_ok)
+
+    def backoff(seconds: float) -> None:
+        nonlocal held
+        assert entered == []
+        assert (lock / name(value)).read_bytes() == raw(value)
+        assert temporary.read_bytes() == raw(value)
+        backoffs.append(seconds)
+        held = False
+
+    def callback() -> int:
+        assert not held
+        assert backoffs == [0.025]
+        assert not (lock / name(value)).exists()
+        entered.append(True)
+        return 7
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    monkeypatch.setattr(
+        locks, "time", SimpleNamespace(time=time.time, monotonic=lambda: 10.0, sleep=backoff)
+    )
+    assert store.with_lock("k", callback) == 7
+    assert denied == [winerror]
+    assert entered == [True]
+    assert not lock.exists()
+
+
+@pytest.mark.parametrize("winerror", CLEANUP_VECTOR["os_errors"]["py"])
+def test_release_temporary_refuses_at_existing_wait_budget_without_taking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, winerror: int
+) -> None:
+    store, lock = fixture(tmp_path)
+    value = owner()
+    value["released"] = True
+    plant(lock, value)
+    temporary = lock / ("owner-" + value["nonce"] + ".release.tmp")
+    temporary.write_bytes(raw(value))
+    original_unlink = Path.unlink
+    denied: list[int] = []
+
+    def unlink(path: Path, missing_ok: bool = False) -> None:
+        if path == temporary:
+            denied.append(winerror)
+            raise WindowsOpenHandleError(winerror, path)
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(HarnessError):
+        store.with_lock("k", lambda: pytest.fail("held file must not grant entry"), wait_seconds=0)
+    assert denied == [winerror]
+    assert (lock / name(value)).read_bytes() == raw(value)
+    assert temporary.read_bytes() == raw(value)
+
+
+def test_release_temporary_unrelated_io_error_remains_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, lock = fixture(tmp_path)
+    value = owner()
+    value["released"] = True
+    plant(lock, value)
+    temporary = lock / ("owner-" + value["nonce"] + ".release.tmp")
+    temporary.write_bytes(raw(value))
+    original_unlink = Path.unlink
+
+    def unlink(path: Path, missing_ok: bool = False) -> None:
+        if path == temporary:
+            raise OSError(errno.EIO, "device error", str(path))
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(OSError) as raised:
+        store.with_lock("k", lambda: pytest.fail("I/O error must not grant entry"), wait_seconds=0)
+    assert raised.value.errno == errno.EIO
+    assert (lock / name(value)).read_bytes() == raw(value)
+    assert temporary.read_bytes() == raw(value)
 
 
 def test_closed_record_parser_refuses_schema_and_encoding_violations() -> None:
