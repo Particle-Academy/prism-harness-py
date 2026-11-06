@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
+
+### Fixed
+
+- Fixed: on Windows, a lock cleanup refused because another worker still holds the file now waits instead of crashing.
 
 ### Breaking changes
 
