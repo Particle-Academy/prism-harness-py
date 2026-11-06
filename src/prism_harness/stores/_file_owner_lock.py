@@ -219,13 +219,15 @@ def _inspect(lock: Path, local: LockIdentity | None) -> str:
             return "held"
         if not owner["released"] and not pid_is_dead(owner["pid"]):
             return "held"
+        # Windows may still hold the proven stale owner's temporary file open.
+        # Cleanup must share inspection's held classification and wait budget.
+        clean_owner(lock, owner, temporary)
     except OSError as error:
         if error.errno == errno.ENOENT:
             return "retry"
         if error.errno in _HELD:
             return "held"
         raise
-    clean_owner(lock, owner, temporary)
     return "retry"
 
 
