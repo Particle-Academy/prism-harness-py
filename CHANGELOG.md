@@ -2,6 +2,10 @@
 
 ## 0.5.0
 
+### Fixed
+
+- Fixed: on Windows, a lock cleanup refused because another worker still holds the file now waits instead of crashing.
+
 ### Breaking changes
 
 - Caller-supplied tool names now narrow a legacy session's mode list by default,
