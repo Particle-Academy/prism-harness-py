@@ -1,0 +1,823 @@
+{
+  "suite": "harness-tool-list-default",
+  "schema_version": 1,
+  "corpus_version": "0.1.18",
+  "generated_by": "PHP: tools/harness-tool-list/ToolListReferenceTest.php against normal Packagist harness 0.22.2; TS/Py: the vendored native-entry tests with PRISM_TOOL_LIST_RECORDING. All result columns are execution output.",
+  "pins_note": "G159 tool-list default only. PHP executes send and stream; ports execute send and structured send because they have no stream API. The independent expected field was written before native recording. Outside-mode port typed refusal is intentionally retained; PHP legacy filtering differs. No G125 closure or unsupported port capability is claimed.",
+  "cases": [
+    {
+      "id": "htld-0001",
+      "title": "foreign tool cannot widen a restricted mode",
+      "names": [
+        "outside"
+      ],
+      "expected": null,
+      "since": "0.1.18",
+      "notes": "A caller cannot add authority outside the active mode. PHP legacy runs filter; ports deliberately retain their typed refusal. Named sessions refuse before reaching the model.",
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              []
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              []
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0002",
+      "title": "mixed list cannot widen a restricted mode",
+      "names": [
+        "inside",
+        "outside"
+      ],
+      "expected": null,
+      "since": "0.1.18",
+      "notes": "A caller cannot add authority outside the active mode. PHP legacy runs filter; ports deliberately retain their typed refusal. Named sessions refuse before reaching the model.",
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0003",
+      "title": "caller subset narrows the mode",
+      "names": [
+        "inside"
+      ],
+      "expected": [
+        "inside"
+      ],
+      "since": "0.1.18",
+      "notes": "Execute the public turn entry and inspect the tools actually offered to the fake model, without executing a tool.",
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0004",
+      "title": "omitted list offers the whole mode",
+      "names": null,
+      "expected": [
+        "inside",
+        "second"
+      ],
+      "since": "0.1.18",
+      "notes": "Execute the public turn entry and inspect the tools actually offered to the fake model, without executing a tool.",
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0005",
+      "title": "explicit empty list offers no tools",
+      "names": [],
+      "expected": [],
+      "since": "0.1.18",
+      "notes": "Execute the public turn entry and inspect the tools actually offered to the fake model, without executing a tool.",
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              []
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              []
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              []
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              []
+            ],
+            "error": null
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              []
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              []
+            ],
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0006",
+      "title": "caller wildcard retains the ceiling",
+      "names": [
+        "*"
+      ],
+      "expected": [
+        "inside",
+        "second"
+      ],
+      "since": "0.1.18",
+      "notes": "Execute the public turn entry and inspect the tools actually offered to the fake model, without executing a tool.",
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0007",
+      "title": "wildcard with a foreign name still retains the ceiling",
+      "names": [
+        "*",
+        "outside"
+      ],
+      "expected": [
+        "inside",
+        "second"
+      ],
+      "since": "0.1.18",
+      "notes": "Execute the public turn entry and inspect the tools actually offered to the fake model, without executing a tool.",
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0008",
+      "title": "unrestricted mode may select a registered tool",
+      "names": [
+        "outside"
+      ],
+      "wildcardMode": true,
+      "expected": [
+        "outside"
+      ],
+      "since": "0.1.18",
+      "notes": "Execute the public turn entry and inspect the tools actually offered to the fake model, without executing a tool.",
+      "named": false,
+      "authorize": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "outside"
+              ]
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "outside"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "outside"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "outside"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "outside"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "outside"
+              ]
+            ],
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0009",
+      "title": "offer authorization further narrows the default list",
+      "names": null,
+      "authorize": true,
+      "expected": [
+        "inside"
+      ],
+      "since": "0.1.18",
+      "notes": "Execute the public turn entry and inspect the tools actually offered to the fake model, without executing a tool.",
+      "named": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0010",
+      "title": "named agent refuses a foreign tool",
+      "names": [
+        "outside"
+      ],
+      "named": true,
+      "expected": null,
+      "since": "0.1.18",
+      "notes": "A caller cannot add authority outside the active mode. PHP legacy runs filter; ports deliberately retain their typed refusal. Named sessions refuse before reaching the model.",
+      "authorize": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [],
+            "error": {
+              "class": "LogicException",
+              "message": "A requested tool is not available in the active agent mode."
+            }
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [],
+            "error": {
+              "class": "LogicException",
+              "message": "A requested tool is not available in the active agent mode."
+            }
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [],
+            "error": {
+              "code": "tool_not_available"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0011",
+      "title": "named agent may select a subset",
+      "names": [
+        "inside"
+      ],
+      "named": true,
+      "expected": [
+        "inside"
+      ],
+      "since": "0.1.18",
+      "notes": "Execute the public turn entry and inspect the tools actually offered to the fake model, without executing a tool.",
+      "authorize": false,
+      "wildcardMode": false,
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ]
+            ],
+            "error": null
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-"""Legacy narrowing is explicit; named mode ceilings always apply to every turn."""
+"""An explicit legacy widening opt-out preserves replacement; named ceilings remain strict."""
 
 from pathlib import Path
 
@@ -68,7 +68,13 @@ def test_explicit_legacy_narrowing_and_native_defaults(
             text="done", finish_reason="stop", structured={"answer": "done"}, cost_usd=0
         )
 
-    runtime = AgentRuntime(client, modes, tools, narrow_requested_tools=narrow)
+    runtime = AgentRuntime(
+        client,
+        modes,
+        tools,
+        narrow_requested_tools=True if narrow else None,
+        allow_legacy_tool_list_widening=not narrow and not named,
+    )
 
     def turn() -> None:
         if structured:

@@ -195,11 +195,23 @@ class AgentRuntime:
         events: HarnessEvents | None = None,
         config: RuntimeConfig | None = None,
         agents: dict[str, RuntimeConfig] | None = None,
-        narrow_requested_tools: bool = False,
+        narrow_requested_tools: bool | None = None,
+        allow_legacy_tool_list_widening: bool = False,
     ) -> None:
-        if not isinstance(narrow_requested_tools, bool):
+        if narrow_requested_tools is not None and not isinstance(narrow_requested_tools, bool):
             raise TypeError("narrow_requested_tools must be a boolean")
-        self._narrow_requested_tools = narrow_requested_tools
+        if not isinstance(allow_legacy_tool_list_widening, bool):
+            raise TypeError("allow_legacy_tool_list_widening must be a boolean")
+        if narrow_requested_tools is False:
+            raise ValueError(
+                "narrow_requested_tools=False is no longer supported. Remove it; use "
+                "allow_legacy_tool_list_widening=True only to explicitly permit legacy tool-list widening."
+            )
+        if narrow_requested_tools is True and allow_legacy_tool_list_widening:
+            raise ValueError(
+                "narrow_requested_tools=True conflicts with allow_legacy_tool_list_widening=True."
+            )
+        self._narrow_requested_tools = not allow_legacy_tool_list_widening
         self._client = client
         self._modes = modes
         self._tools = tools
