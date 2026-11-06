@@ -186,7 +186,7 @@ def test_native_independent_live_dead_and_foreign_unknown_production_rows(
             "container_path": "unmeasured; no container created",
         }
         report = os.environ.get("PRISM_FILE_OWNER_NATIVE_REPORT")
-        if report:
+        if report and not blocked_control_paths:
             with Path(report).open("x", encoding="utf-8") as stream:
                 json.dump(proof, stream)
         print(json.dumps(proof))
