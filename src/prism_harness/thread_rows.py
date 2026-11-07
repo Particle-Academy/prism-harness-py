@@ -109,6 +109,60 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return view
 
 
+def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], bool] | None:
+    """Stored approval authority, separate from the provider replay view."""
+    decisions: dict[str, bool] = {}
+    for row in reversed(thread_view(rows)):
+        if row.get("type") == "tool_result":
+            for response in row.get("tool_approval_responses", []):
+                if isinstance(response.get("approval_id"), str):
+                    decisions.setdefault(response["approval_id"], response.get("approved") is True)
+            continue
+        if row.get("type") == "user":
+            return None
+        if row.get("type") != "assistant":
+            continue
+        requests = row.get("tool_approval_requests", [])
+        if not requests:
+            return None
+        ids = {request["approval_id"] for request in requests}
+        stored = next(
+            (
+                candidate
+                for candidate in reversed(rows)
+                if candidate.get("type") == "assistant"
+                and isinstance(candidate.get("tool_approval_requests"), list)
+                and len(candidate["tool_approval_requests"]) == len(requests)
+                and all(
+                    isinstance(request, dict)
+                    and isinstance(request.get("approval_id"), str)
+                    and request["approval_id"] in ids
+                    for request in candidate["tool_approval_requests"]
+                )
+            ),
+            None,
+        )
+        scope = stored.get("harness_tool_names") if stored is not None else None
+        if isinstance(scope, list) and all(
+            isinstance(name, str) and name not in ("", "*") for name in scope
+        ):
+            return list(dict.fromkeys(scope)), False
+        approved_calls = {
+            request["tool_call_id"]
+            for request in requests
+            if decisions.get(request["approval_id"]) is True
+        }
+        names = [
+            call["name"]
+            for call in row.get("tool_calls", [])
+            if call.get("id") in approved_calls
+            and isinstance(call.get("name"), str)
+            and call["name"] not in ("", "*")
+        ]
+        return list(dict.fromkeys(names)), True
+    return None
+
+
 def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, Any] | None:
     kind = row.get("type")
 

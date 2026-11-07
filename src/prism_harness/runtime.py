@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import (
     ToolCallInput,
+    approval_tool_scope,
     assistant_row,
     thread_view,
     tool_result_entry,
@@ -409,12 +411,26 @@ class AgentRuntime:
                 )
             else:
                 offered = self._offer(session, mode, tool_names)[0]
+            scope = approval_tool_scope([entry.message for entry in thread.messages()])
+            if scope is not None:
+                names, legacy = scope
+                if legacy:
+                    logging.getLogger(__name__).warning(
+                        "Pending approval has no valid stored tool scope; offering approved requests only."
+                    )
+                offered = [
+                    tool
+                    for tool in offered
+                    if tool.name in names and ("*" in mode.tools or tool.name in mode.tools)
+                ]
             called: list[str] = []
 
             # Decisions recorded since the run stopped are acted on FIRST, before
             # a new prompt is recorded, so the results land after the calls they
             # answer rather than after the new turn.
-            self._resolve_approvals(session, mode, offered, run_id, called)
+            offered = self._resolve_approvals(
+                session, mode, offered, run_id, called, scope is not None and scope[1]
+            )
 
             if prompt != "":
                 # With attachments, the shape prism-ai-core's UserMessage.to_dict()
@@ -525,7 +541,10 @@ class AgentRuntime:
                 else response.additional_content
             )
 
-            thread.record([assistant_row(response.text, calls, metadata, requests)], run_id)
+            row = assistant_row(response.text, calls, metadata, requests)
+            if requests:
+                row["harness_tool_names"] = [tool.name for tool in offered]
+            thread.record([row], run_id)
 
             if failed_finish:
                 # Refuse, rather than queue, every call so a later resume
@@ -613,7 +632,8 @@ class AgentRuntime:
         offered: list[HarnessTool],
         run_id: str,
         called: list[str],
-    ) -> None:
+        legacy_diagnostic_emitted: bool,
+    ) -> list[HarnessTool]:
         """Act on the decisions recorded for the last turn that stopped for a person.
 
         The model is NOT asked again. Asked again, a provider issues the call
@@ -633,20 +653,27 @@ class AgentRuntime:
         # A read without the lock first: nearly every send() has nothing to
         # resolve and should not wait on the session lock to find that out.
         if self._unresolved(session, mode) is None:
-            return
+            return list(offered)
 
         # Then under the session lock, reading again inside it. Two workers
         # resuming the same session at once would otherwise both find the
         # approved call with no result, and both run it. The second now waits,
         # finds the result the first recorded, and runs nothing. If it cannot get
         # the lock it raises, and nothing runs.
-        def resolve(live: Session) -> None:
+        def resolve(live: Session) -> list[HarnessTool]:
             work = self._unresolved(live, mode)
 
             if work is None:
-                return
+                return list(offered)
 
-            calls, results, decisions, approval_ids = work
+            calls, results, decisions, approval_ids, scope = work
+            # Bind calls, decisions and scope from the same locked snapshot.
+            # A concurrent narrower approval also bounds the continuation.
+            if scope is not None and scope[1] and not legacy_diagnostic_emitted:
+                logging.getLogger(__name__).warning(
+                    "Pending approval has no valid stored tool scope; offering approved requests only."
+                )
+            bounded = [tool for tool in offered if scope is not None and tool.name in scope[0]]
             resolved: list[dict[str, Any]] = []
 
             for row in calls:
@@ -661,7 +688,7 @@ class AgentRuntime:
 
                 if decision is not None and decision["approved"]:
                     called.append(call.name)
-                    resolved.append(self._run_approved(offered, call))
+                    resolved.append(self._run_approved(bounded, call))
                 elif decision is None:
                     resolved.append(tool_result_entry(call, "No approval response provided"))
                 else:
@@ -673,9 +700,10 @@ class AgentRuntime:
                 [tool_result_row([*results.values(), *resolved], list(decisions.values()))],
                 run_id,
             )
+            return bounded
 
         options = self._settings(session)
-        session.lock(
+        return session.lock(
             resolve,
             options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
             options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
@@ -690,11 +718,13 @@ class AgentRuntime:
             dict[str, dict[str, Any]],
             dict[str, dict[str, Any]],
             dict[str, str],
+            tuple[list[str], bool] | None,
         ]
         | None
     ):
         """The gated calls of the last tool-calling turn that have no result yet."""
-        view = thread_view([entry.message for entry in session.thread().messages()])
+        rows = [entry.message for entry in session.thread().messages()]
+        view = thread_view(rows)
         index = next(
             (
                 i
@@ -726,7 +756,9 @@ class AgentRuntime:
             and (row["id"] in approval_ids or mode.needs_approval(row["name"]))
         ]
 
-        return (calls, results, decisions, approval_ids) if calls else None
+        return (
+            (calls, results, decisions, approval_ids, approval_tool_scope(rows)) if calls else None
+        )
 
     @classmethod
     def _run_approved(cls, offered: Sequence[HarnessTool], call: ToolCallInput) -> dict[str, Any]:

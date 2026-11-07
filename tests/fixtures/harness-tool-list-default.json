@@ -1,9 +1,9 @@
 {
   "suite": "harness-tool-list-default",
   "schema_version": 1,
-  "corpus_version": "0.1.18",
-  "generated_by": "PHP: tools/harness-tool-list/ToolListReferenceTest.php against normal Packagist harness 0.22.2; TS/Py: the vendored native-entry tests with PRISM_TOOL_LIST_RECORDING. All result columns are execution output.",
-  "pins_note": "G159 tool-list default only. PHP executes send and stream; ports execute send and structured send because they have no stream API. The independent expected field was written before native recording. Outside-mode port typed refusal is intentionally retained; PHP legacy filtering differs. No G125 closure or unsupported port capability is claimed.",
+  "corpus_version": "0.1.22",
+  "generated_by": "Source candidate: tools/harness-tool-list/ToolListReferenceTest.php and vendored TS/Py native recorders. All 84 observations are measured; the 66 original observations are unchanged. Published PHP regeneration is required after the coordinated package releases.",
+  "pins_note": "Tool-list defaults and durable resume scope. The first eleven cases retain their original observations. New approve/deny rows and a full-offer positive control compare actual model offers and handler counts against expectations written before recording. Native port refusals remain visible. Initial structured/uncapped-stream approval recording, additional legacy/race controls, G125 and published-artifact readiness are not claimed by these three new rows.",
   "cases": [
     {
       "id": "htld-0001",
@@ -815,6 +815,441 @@
               ]
             ],
             "error": null
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0012",
+      "title": "an approved turn keeps its narrowed offer",
+      "names": [
+        "inside"
+      ],
+      "expected": [
+        "inside"
+      ],
+      "resumeApproval": true,
+      "expectedHandlers": {
+        "inside": 1,
+        "second": 0
+      },
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "since": "0.1.22",
+      "notes": "A real initial pause, fresh Session and resume are measured. Independent handler counts and offered names must pass before a native observation is recorded. PHP send/stream and port send/structured entrypoints retain their own native refusals.",
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 1,
+              "second": 0
+            }
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 1,
+              "second": 0
+            }
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": {
+              "code": "tool_not_available"
+            },
+            "handlers": {
+              "inside": 1,
+              "second": 0
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": {
+              "code": "tool_not_available"
+            },
+            "handlers": {
+              "inside": 1,
+              "second": 0
+            }
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": {
+              "code": "tool_not_available"
+            },
+            "handlers": {
+              "inside": 1,
+              "second": 0
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": {
+              "code": "tool_not_available"
+            },
+            "handlers": {
+              "inside": 1,
+              "second": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0013",
+      "title": "a denied turn keeps its narrowed offer",
+      "names": [
+        "inside"
+      ],
+      "expected": [
+        "inside"
+      ],
+      "resumeApproval": false,
+      "expectedHandlers": {
+        "inside": 0,
+        "second": 0
+      },
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "since": "0.1.22",
+      "notes": "A real initial pause, fresh Session and resume are measured. Independent handler counts and offered names must pass before a native observation is recorded. PHP send/stream and port send/structured entrypoints retain their own native refusals.",
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 0,
+              "second": 0
+            }
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 0,
+              "second": 0
+            }
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": {
+              "code": "tool_not_available"
+            },
+            "handlers": {
+              "inside": 0,
+              "second": 0
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": {
+              "code": "tool_not_available"
+            },
+            "handlers": {
+              "inside": 0,
+              "second": 0
+            }
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": {
+              "code": "tool_not_available"
+            },
+            "handlers": {
+              "inside": 0,
+              "second": 0
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside"
+              ],
+              [
+                "inside"
+              ]
+            ],
+            "error": {
+              "code": "tool_not_available"
+            },
+            "handlers": {
+              "inside": 0,
+              "second": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "htld-0014",
+      "title": "a full turn can execute its offered second tool",
+      "names": null,
+      "expected": [
+        "inside",
+        "second"
+      ],
+      "resumeApproval": true,
+      "expectedHandlers": {
+        "inside": 1,
+        "second": 1
+      },
+      "named": false,
+      "authorize": false,
+      "wildcardMode": false,
+      "since": "0.1.22",
+      "notes": "A real initial pause, fresh Session and resume are measured. Independent handler counts and offered names must pass before a native observation is recorded. PHP send/stream and port send/structured entrypoints retain their own native refusals.",
+      "result": {
+        "php": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 1,
+              "second": 1
+            }
+          },
+          "stream": {
+            "entry": "stream",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 1,
+              "second": 1
+            }
+          }
+        },
+        "ts": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 1,
+              "second": 1
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 1,
+              "second": 1
+            }
+          }
+        },
+        "py": {
+          "send": {
+            "entry": "send",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 1,
+              "second": 1
+            }
+          },
+          "structured": {
+            "entry": "structured",
+            "requests": [
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ],
+              [
+                "inside",
+                "second"
+              ]
+            ],
+            "error": null,
+            "handlers": {
+              "inside": 1,
+              "second": 1
+            }
           }
         }
       }
