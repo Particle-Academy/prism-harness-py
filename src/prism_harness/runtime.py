@@ -21,6 +21,7 @@ from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import (
     ToolCallInput,
+    approval_run_steps,
     approval_tool_scope,
     assistant_row,
     thread_view,
@@ -473,7 +474,13 @@ class AgentRuntime:
                 )
             else:
                 offered = self._offer(session, mode, tool_names)[0]
-            scope = approval_tool_scope([entry.message for entry in thread.messages()])
+            stored = [entry.message for entry in thread.messages()]
+            scope = approval_tool_scope(stored)
+            # A resume continues the paused run's step count; it never opens a
+            # new allowance. Only for a root run: a child's steps are already on
+            # the tree ledger its caller hands back in.
+            if prompt == "" and context is None:
+                run.ledger.record_steps(approval_run_steps(stored) or 0)
             if scope is not None:
                 names, legacy = scope
                 if legacy:

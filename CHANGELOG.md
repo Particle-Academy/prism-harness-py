@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+- A run's step limit (`max_steps`, and `max_steps_ceiling` for a named agent)
+  now covers the whole run, including every pause for an approval and every
+  resume after one. A resume (`send(session, "")`) continues the paused run's step count
+  instead of starting a new one, also when another worker resumes it from
+  persisted state. The count is read from the stored thread rows, so no new
+  state is written. A resume that finds the limit already reached still runs
+  the calls a person approved, then finishes with `budget_exhausted` without
+  another model call. A new prompt starts a new run with its own limit, as
+  before.
+
 ### Added
 
 - Modes and subagent declarations take an optional `provider` and `model`. A run
