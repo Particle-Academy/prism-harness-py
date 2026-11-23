@@ -514,3 +514,35 @@ def test_an_enabled_authorizer_keeps_the_scope_and_tier_the_policy_decides_on() 
     )
     assert destructive.runtime.send(destructive.session, "go").finish_reason == "awaiting_approval"
     assert destructive.ran == []
+
+
+def test_a_failing_policy_check_stops_the_run_and_runs_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    w = world([call("read")], allow({"tool": "read"}))
+
+    def failing(self: ToolPolicy, tool: Any) -> bool:
+        raise RuntimeError("check failed")
+
+    monkeypatch.setattr(ToolPolicy, "allows", failing)
+
+    with pytest.raises(RuntimeError, match="check failed"):
+        w.runtime.send(w.session, "go")
+
+    assert w.ran == []
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_a_failing_event_listener_still_pauses_for_a_person() -> None:
+    w = world([call("read")], None)
+
+    def failing(event: HarnessEvent) -> None:
+        raise RuntimeError("listener failed")
+
+    w.runtime._events.listen(failing)  # type: ignore[union-attr]
+
+    response = w.runtime.send(w.session, "go")
+
+    assert response.finish_reason == "awaiting_approval"
+    assert w.ran == []
