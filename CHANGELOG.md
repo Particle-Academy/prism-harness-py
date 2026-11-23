@@ -30,9 +30,18 @@
   a call already waiting keeps waiting, and a call the old policy allowed is
   refused if the new one no longer does. The policy is never sent to the model
   and has no tool surface.
-- A tool may carry optional `server` (the MCP server it comes from, set by the
-  code that connected it) and `tier` (`read_only`, `write`, `destructive`;
-  advisory). `ToolRegistry.declarations()` lists the static tools.
+- A tool may carry optional `server` (the MCP server it comes from) and `tier`
+  (`read_only`, `write`, `destructive`; advisory).
+  `ToolRegistry.declarations()` lists the static tools.
+- A tool that arrives through `register_provider` is scoped by the registry:
+  its `server` is the provider's registered name, whatever the tool itself
+  declares (`ScopedTool`). A provider that forgets to set `server`, or a tool
+  that claims another server, can no longer make a provider's tool match an
+  unscoped entry or another server's entry. Only a natively registered tool
+  matches an entry without `server`. Name a provider
+  (`register_provider(provider, owner, name)`) to give a policy a stable scope
+  to list; an unnamed one is scoped as `provider:<n>`. `AuthorizedTool` now
+  exposes `server` and `tier`, which it used to drop.
 - Events `ToolAutoAllowed`, `ToolApprovalAsked`, `ToolApproved` and
   `ToolDenied` (`tool_auto_allowed` ... `tool_denied`) for every call to an
   approval-gated tool, carrying `policy_revision`, `server`, `tool`,

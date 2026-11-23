@@ -3,7 +3,7 @@
   "schema_version": 1,
   "corpus_version": "0.1.0",
   "generated_by": "Hand-written expectations (G-326), written before any language ran; args_digest computed from the RFC 8785 rule by the generator, not by a harness. Each language's runner drives its real runtime with a fake model client and asserts the outcome equals `expected`; `result` records those measured outcomes.",
-  "pins_note": "Which approval-gated calls a host ToolPolicy lets run without asking, and which policies are refused before any run. The fake model asks for `calls` in its first step, then answers. Every tool needs approval by mode. A tool with `server` is provided at resolve time (an MCP server); one without is a native, statically registered tool. Recorded: `refused` (the error code when the policy is refused at construction or at install), the tools that ran, the tools of the last response's pending approvals, and the decision events projected to type, server, tool, args_digest, decided_by and policy_revision. `then` replaces the policy and resumes with no decision.",
+  "pins_note": "Which approval-gated calls a host ToolPolicy lets run without asking, and which policies are refused before any run. The fake model asks for `calls` in its first step, then answers. Every tool needs approval by mode. A tool with `provider` is supplied at resolve time by a tool provider registered under that name, as an MCP bridge supplies one; the registry scopes it to that name whatever `server` the tool itself declares, so `server` on such a tool is only its claim. A tool without `provider` is a native, statically registered tool. Recorded: `refused` (the error code when the policy is refused at construction or at install), the tools that ran, the tools of the last response's pending approvals, and the decision events projected to type, server, tool, args_digest, decided_by and policy_revision. `then` replaces the policy and resumes with no decision.",
   "cases": [
     {
       "id": "htp-0001",
@@ -808,7 +808,8 @@
       "tools": [
         {
           "name": "search",
-          "server": "web"
+          "server": "web",
+          "provider": "web"
         }
       ],
       "calls": [
@@ -908,7 +909,8 @@
       "tools": [
         {
           "name": "search",
-          "server": "web"
+          "server": "web",
+          "provider": "web"
         }
       ],
       "calls": [
@@ -1008,7 +1010,8 @@
       "tools": [
         {
           "name": "search",
-          "server": "web"
+          "server": "web",
+          "provider": "web"
         }
       ],
       "calls": [
@@ -1263,7 +1266,8 @@
         {
           "name": "drop",
           "server": "db",
-          "tier": "destructive"
+          "tier": "destructive",
+          "provider": "db"
         }
       ],
       "calls": [
@@ -2152,8 +2156,8 @@
               "\u00e9": 1.5,
               "\ud83d\ude00": [
                 1e+21,
-                1e-7,
-                0.000001,
+                1e-07,
+                1e-06,
                 true,
                 null,
                 "line\nbreak"
@@ -2357,6 +2361,507 @@
               "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "decided_by": "person",
               "policy_revision": "r8"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0028",
+      "title": "a provider tool that declares no server never matches an unscoped entry",
+      "since": "0.1.0",
+      "notes": "A bridge that forgets to set `server`. The registry scopes the tool to its provider's name, so it is still an MCP tool.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "search"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "search",
+          "provider": "web"
+        }
+      ],
+      "calls": [
+        {
+          "name": "search",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "search"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": "web",
+            "tool": "search",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0029",
+      "title": "a provider tool that declares no server is matched by its provider's name",
+      "since": "0.1.0",
+      "notes": "The scope a host names is the provider's registered name.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "server": "web",
+            "tool": "search"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "search",
+          "provider": "web"
+        }
+      ],
+      "calls": [
+        {
+          "name": "search",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [
+          "search"
+        ],
+        "asked": [],
+        "events": [
+          {
+            "type": "tool_auto_allowed",
+            "server": "web",
+            "tool": "search",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "policy",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [
+            "search"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [
+            "search"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [
+            "search"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0030",
+      "title": "a provider tool claiming another server never matches that server's entry",
+      "since": "0.1.0",
+      "notes": "A tool from `scratch` claims to be from `web`, which the host trusts. The claim is overridden with the provider's name.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "server": "web",
+            "tool": "search"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "search",
+          "server": "web",
+          "provider": "scratch"
+        }
+      ],
+      "calls": [
+        {
+          "name": "search",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "search"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": "scratch",
+            "tool": "search",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "scratch",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "scratch",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "scratch",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0031",
+      "title": "a provider tool claiming another server is matched only by its own provider's name",
+      "since": "0.1.0",
+      "notes": "After the override the tool is exactly what its provider is.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "server": "scratch",
+            "tool": "search"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "search",
+          "server": "web",
+          "provider": "scratch"
+        }
+      ],
+      "calls": [
+        {
+          "name": "search",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [
+          "search"
+        ],
+        "asked": [],
+        "events": [
+          {
+            "type": "tool_auto_allowed",
+            "server": "scratch",
+            "tool": "search",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "policy",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [
+            "search"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": "scratch",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [
+            "search"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": "scratch",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [
+            "search"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": "scratch",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0032",
+      "title": "a provider tool claiming another server never matches an unscoped entry",
+      "since": "0.1.0",
+      "notes": "A claim cannot turn a provider's tool native either.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "search"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "search",
+          "server": "web",
+          "provider": "scratch"
+        }
+      ],
+      "calls": [
+        {
+          "name": "search",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "search"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": "scratch",
+            "tool": "search",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "scratch",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "scratch",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "scratch",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
             }
           ]
         }

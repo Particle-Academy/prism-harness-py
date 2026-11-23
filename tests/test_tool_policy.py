@@ -31,6 +31,7 @@ from prism_harness import (
     Participant,
     PrismHarness,
     Session,
+    ToolAuthorizer,
     ToolPolicy,
     ToolRegistry,
     args_digest,
@@ -96,6 +97,7 @@ def world(
     calls: list[LlmToolCall],
     policy: ToolPolicy | None,
     register: Callable[[ToolRegistry, list[str]], None] = read_only,
+    authorizer: ToolAuthorizer | None = None,
 ) -> World:
     directory = tempfile.mkdtemp(prefix="prism-harness-tool-policy-")
     harness = PrismHarness(
@@ -118,7 +120,14 @@ def world(
             return LlmResponse(text="", finish_reason="tool_calls", tool_calls=calls)
         return LlmResponse(text="done", finish_reason="stop")
 
-    runtime = AgentRuntime(client=client, modes=MODES, tools=tools, events=bus, tool_policy=policy)
+    runtime = AgentRuntime(
+        client=client,
+        modes=MODES,
+        tools=tools,
+        events=bus,
+        tool_policy=policy,
+        authorizer=authorizer,
+    )
     return World(session, runtime, ran, events, requests)
 
 
@@ -234,7 +243,7 @@ def mcp(
 ) -> Callable[[ToolRegistry, list[str]], None]:
     def register(tools: ToolRegistry, ran: list[str]) -> None:
         tools.register_provider(
-            lambda session: [Tool(name, ran, server=server, tier=tier)], f"mcp.{server}"
+            lambda session: [Tool(name, ran, server=server, tier=tier)], f"mcp.{server}", server
         )
 
     return register
@@ -398,3 +407,110 @@ def test_canonical_json_follows_rfc_8785() -> None:
     )
     assert canonical_json({"\U0001f600": 1, "\uff5e": 2}) == '{"\U0001f600":1,"\uff5e":2}'
     assert canonical_json({"s": 'a"b\\c\n\u0001\u2028'}) == '{"s":"a\\"b\\\\c\\n\\u0001\u2028"}'
+
+
+# A tool that reaches the agent through a provider is scoped by the registry.
+# An MCP bridge registers a PROVIDER. Whether its tools count as MCP tools must
+# not depend on the bridge remembering to set `server`, or on what a tool claims
+# about itself: the registry scopes them with the provider's registered name.
+# Only a natively registered tool matches an unscoped entry.
+
+
+@dataclass
+class Named:
+    name: str
+    ran: list[str]
+    label: str
+
+    def handle(self, args: dict[str, Any]) -> Any:
+        self.ran.append(self.label)
+        return "ok"
+
+
+def provided(
+    provider: str, name: str, server: str | None = None, tier: str | None = None
+) -> Callable[[ToolRegistry, list[str]], None]:
+    def register(tools: ToolRegistry, ran: list[str]) -> None:
+        tools.register_provider(
+            lambda session: [Tool(name, ran, server=server, tier=tier)], None, provider
+        )
+
+    return register
+
+
+def test_a_provider_tool_that_declares_no_server_never_matches_an_unscoped_entry() -> None:
+    w = world([call("read")], allow({"tool": "read"}), provided("files", "read"))
+    assert w.runtime.send(w.session, "go").finish_reason == "awaiting_approval"
+    assert w.ran == []
+    assert [(d["type"], d["server"]) for d in decisions(w.events)] == [
+        ("tool_approval_asked", "files")
+    ]
+
+
+def test_a_provider_tool_is_matched_by_its_provider_name() -> None:
+    w = world([call("read")], allow({"server": "files", "tool": "read"}), provided("files", "read"))
+    w.runtime.send(w.session, "go")
+    assert w.ran == ["read"]
+    assert [(d["type"], d["server"]) for d in decisions(w.events)] == [
+        ("tool_auto_allowed", "files")
+    ]
+
+
+def test_a_provider_tool_claiming_another_server_gets_its_provider_name_instead() -> None:
+    spoof = provided("scratch", "read", server="files")
+
+    claimed = world([call("read")], allow({"server": "files", "tool": "read"}), spoof)
+    assert claimed.runtime.send(claimed.session, "go").finish_reason == "awaiting_approval"
+    assert claimed.ran == []
+    assert decisions(claimed.events)[0]["server"] == "scratch"
+
+    unscoped = world([call("read")], allow({"tool": "read"}), spoof)
+    assert unscoped.runtime.send(unscoped.session, "go").finish_reason == "awaiting_approval"
+    assert unscoped.ran == []
+
+    real = world([call("read")], allow({"server": "scratch", "tool": "read"}), spoof)
+    real.runtime.send(real.session, "go")
+    assert real.ran == ["read"]
+
+
+def test_a_native_tool_named_like_a_provider_tool_is_the_one_an_unscoped_entry_matches() -> None:
+    def both(tools: ToolRegistry, ran: list[str]) -> None:
+        tools.register(Named("read", ran, "native"))
+        tools.register_provider(lambda session: [Named("read", ran, "provider")], None, "files")
+
+    native = world([call("read")], allow({"tool": "read"}), both)
+    native.runtime.send(native.session, "go")
+    assert native.ran == ["native"]
+    assert decisions(native.events)[0]["server"] is None
+
+    # A factory resolves AFTER a provider, so here the provider's tool is the
+    # one offered, and an unscoped entry must not reach it.
+    def factory(tools: ToolRegistry, ran: list[str]) -> None:
+        tools.register_factory("read", lambda session: Named("read", ran, "native"))
+        tools.register_provider(lambda session: [Named("read", ran, "provider")], None, "files")
+
+    shadowed = world([call("read")], allow({"tool": "read"}), factory)
+    assert shadowed.runtime.send(shadowed.session, "go").finish_reason == "awaiting_approval"
+    assert shadowed.ran == []
+
+
+def test_an_enabled_authorizer_keeps_the_scope_and_tier_the_policy_decides_on() -> None:
+    def guarded(policy: ToolPolicy, register: Callable[[ToolRegistry, list[str]], None]) -> World:
+        return world([call("read")], policy, register, ToolAuthorizer(enabled=True))
+
+    mcp_tool = guarded(allow({"tool": "read"}), provided("files", "read"))
+    assert mcp_tool.runtime.send(mcp_tool.session, "go").finish_reason == "awaiting_approval"
+    assert mcp_tool.ran == []
+
+    def declared_server(tools: ToolRegistry, ran: list[str]) -> None:
+        tools.register(Tool("read", ran, server="files"))
+
+    declared = guarded(allow({"tool": "read"}), declared_server)
+    assert declared.runtime.send(declared.session, "go").finish_reason == "awaiting_approval"
+    assert declared.ran == []
+
+    destructive = guarded(
+        allow({"server": "files", "tool": "read"}), provided("files", "read", tier="destructive")
+    )
+    assert destructive.runtime.send(destructive.session, "go").finish_reason == "awaiting_approval"
+    assert destructive.ran == []

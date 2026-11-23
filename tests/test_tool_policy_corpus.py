@@ -3,8 +3,9 @@
 Mirrors prism-harness-ts/test/tool-policy-corpus.test.ts. Every row's
 ``expected`` was written by hand before any language recorded. This runner
 drives the real runtime with a fake model that asks for the row's calls, then
-answers. Every tool needs approval by mode; a tool with ``server`` is provided
-at resolve time, as an MCP bridge provides one.
+answers. Every tool needs approval by mode; a tool with ``provider`` is
+supplied at resolve time by a provider registered under that name, as an MCP
+bridge supplies one, and ``server`` on it is only its claim.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from prism_harness import (
     ModeRegistry,
     Participant,
     PrismHarness,
+    Session,
     ToolPolicy,
     ToolRegistry,
 )
@@ -55,15 +57,19 @@ def record(row: dict[str, Any]) -> dict[str, Any]:
     ran: list[str] = []
     events: list[HarnessEvent] = []
     registry = ToolRegistry()
-    provided: list[CorpusTool] = []
+    provided: dict[str, list[CorpusTool]] = {}
     for spec in row["tools"]:
         tool = CorpusTool(spec["name"], ran, spec.get("server"), spec.get("tier"))
-        if tool.server is None:
+        if "provider" not in spec:
             registry.register(tool)
         else:
-            provided.append(tool)
-    if provided:
-        registry.register_provider(lambda session: list(provided), "mcp")
+            provided.setdefault(spec["provider"], []).append(tool)
+    for name, tools in provided.items():
+
+        def supply(session: Session, tools: list[CorpusTool] = tools) -> list[CorpusTool]:
+            return list(tools)
+
+        registry.register_provider(supply, "mcp", name)
     modes = ModeRegistry(
         {
             "default": "guarded",
