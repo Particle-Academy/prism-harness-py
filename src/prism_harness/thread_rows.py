@@ -15,6 +15,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from prism_harness.tool_arguments import usable_arguments
+
 __all__ = [
     "ToolCallInput",
     "assistant_row",
@@ -183,6 +185,22 @@ def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], b
     return None
 
 
+def unusable_stored_calls(rows: Sequence[Mapping[str, Any]]) -> set[str]:
+    """The ids of stored calls whose arguments cannot be used.
+
+    Read from the rows as written, because the thread view has already replaced
+    such arguments with none, and an approved call must not run on an empty set
+    nobody sent.
+    """
+    return {
+        _text(call.get("id"))
+        for row in rows
+        if row.get("type") == "assistant"
+        for call in _dicts(row.get("tool_calls"))
+        if usable_arguments(call.get("arguments")) is None
+    }
+
+
 def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, Any] | None:
     kind = row.get("type")
 
@@ -193,7 +211,7 @@ def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, 
                 ToolCallInput(
                     id=_text(call.get("id")),
                     name=_text(call.get("name")),
-                    arguments=call["arguments"] if isinstance(call.get("arguments"), dict) else {},
+                    arguments=usable_arguments(call.get("arguments")) or {},
                     result_id=_nullable_text(call.get("result_id")),
                     reasoning_id=_nullable_text(call.get("reasoning_id")),
                     reasoning_summary=call["reasoning_summary"]

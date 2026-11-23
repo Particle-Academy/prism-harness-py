@@ -13,6 +13,14 @@
   runs the calls a person approved, then finishes with `budget_exhausted`
   without another model call. A new prompt starts a new run with its own
   limit, as before.
+- A tool call whose arguments are not a JSON object (unparsed text, a list,
+  a number, a map with integer-like keys, or values a follow-up request could
+  not carry) no longer fails the turn. It is recorded with no arguments, asks
+  nobody to approve it, is not passed to a call policy or handler, and is
+  answered to the model as not run. The same check applies when an approved
+  call is resumed from stored rows. An empty string, `0`, `null`, `[]` and
+  `{}` all mean no arguments, and a tool taking none still runs with `{}`.
+  JSON text naming values is read as those values.
 
 ## 0.5.0
 
