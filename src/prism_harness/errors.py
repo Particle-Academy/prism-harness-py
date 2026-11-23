@@ -47,6 +47,8 @@ class ErrorCode(str, Enum):
     UNSAFE_AUTHORIZATION_CONFIGURATION = "unsafe_authorization_configuration"
     #: A tool call was refused by the call-time policy.
     CALL_NOT_AUTHORIZED = "call_not_authorized"
+    #: A host tool policy names something that may never run without asking, or is malformed.
+    TOOL_POLICY_REFUSED = "tool_policy_refused"
     #: A skill file was asked for that would resolve outside its own skill.
     SKILL_PATH_REFUSED = "skill_path_refused"
     #: A task was added under an id the source already holds.

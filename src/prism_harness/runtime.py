@@ -14,7 +14,17 @@ from typing import Any, TypedDict
 from prism_harness.address import validate_agent
 from prism_harness.attachments import admit_attachments
 from prism_harness.errors import HarnessError
-from prism_harness.events import HarnessEvents, RunFailed, RunFinished, RunStarted
+from prism_harness.events import (
+    HarnessEvent,
+    HarnessEvents,
+    RunFailed,
+    RunFinished,
+    RunStarted,
+    ToolApprovalAsked,
+    ToolApproved,
+    ToolAutoAllowed,
+    ToolDenied,
+)
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
@@ -28,6 +38,7 @@ from prism_harness.thread_rows import (
     tool_result_entry,
     tool_result_row,
 )
+from prism_harness.tool_policy import ToolPolicy, args_digest, tool_declaration
 from prism_harness.tools import HarnessTool, ToolAuthorizer, ToolRegistry
 
 __all__ = [
@@ -204,6 +215,7 @@ class AgentRuntime:
         agents: dict[str, RuntimeConfig] | None = None,
         narrow_requested_tools: bool | None = None,
         allow_legacy_tool_list_widening: bool = False,
+        tool_policy: ToolPolicy | None = None,
     ) -> None:
         if narrow_requested_tools is not None and not isinstance(narrow_requested_tools, bool):
             raise TypeError("narrow_requested_tools must be a boolean")
@@ -230,6 +242,54 @@ class AgentRuntime:
         for agent, options in self._agents.items():
             validate_agent(agent)
             _validate_runtime_config(options)
+        self._tool_policy = self._admit_policy(tool_policy or ToolPolicy.none())
+
+    @property
+    def tool_policy(self) -> ToolPolicy:
+        """The host tool policy in force (G-326)."""
+        return self._tool_policy
+
+    def set_tool_policy(self, policy: ToolPolicy) -> None:
+        """Replace the host tool policy (G-326).
+
+        Applies from the next tool call. A call already waiting on a person
+        keeps waiting: a policy that would now allow it does not run it. A call
+        the old policy allowed that has not started yet is refused, not run,
+        when the new policy no longer allows it, so a revoke takes effect at
+        once. Validated against the registered tools' declarations: a policy
+        naming a tool that declares ``destructive`` raises ``HarnessError``
+        (``tool_policy_refused``) and the old policy stays.
+        """
+        self._tool_policy = self._admit_policy(policy)
+
+    def _admit_policy(self, policy: ToolPolicy) -> ToolPolicy:
+        if not isinstance(policy, ToolPolicy):
+            raise TypeError("tool_policy must be a ToolPolicy")
+        return ToolPolicy.from_json(policy.to_json(), self._tools.declarations())
+
+    def _tool_decision(
+        self,
+        kind: type[ToolAutoAllowed | ToolApprovalAsked | ToolApproved | ToolDenied],
+        session: Session,
+        run_id: str,
+        call: ToolCallInput,
+        tool: HarnessTool | None,
+        decided_by: str,
+    ) -> None:
+        if self._events is None:
+            return
+        self._events.emit(
+            kind(
+                run_id=run_id,
+                session_key=session.key(),
+                policy_revision=self._tool_policy.revision,
+                server=tool_declaration(tool).server if tool is not None else None,
+                tool=call.name,
+                args_digest=args_digest(dict(call.arguments)),
+                decided_by=decided_by,
+                harness_agent=session.agent,
+            )
+        )
 
     def _settings(self, session: Session) -> RuntimeConfig:
         return {
@@ -600,9 +660,18 @@ class AgentRuntime:
 
             calls = [_call_input(call) for call in response.tool_calls]
             failed_finish = finish_reason in ("error", "unknown")
-            gated = (
-                [] if failed_finish else [call for call in calls if mode.needs_approval(call.name)]
-            )
+            # The host policy is read per call, never cached for the run, so a
+            # replacement applies from the next call (G-326).
+            auto_allowed: list[ToolCallInput] = []
+            gated: list[ToolCallInput] = []
+            for call in [] if failed_finish else calls:
+                if not mode.needs_approval(call.name):
+                    continue
+                declared = _offered(offered, call.name)
+                if declared is not None and self._tool_policy.allows(declared):
+                    auto_allowed.append(call)
+                else:
+                    gated.append(call)
             requests = [
                 {"approval_id": f"apr_{uuid.uuid4().hex}", "tool_call_id": call.id}
                 for call in gated
@@ -671,9 +740,29 @@ class AgentRuntime:
             # results are recorded even when the step then stops for a person.
             results: list[dict[str, Any]] = []
 
+            for call in gated:
+                self._tool_decision(
+                    ToolApprovalAsked, session, run_id, call, _offered(offered, call.name), "person"
+                )
+
             for call in calls:
                 if call in gated:
                     continue
+
+                if call in auto_allowed:
+                    # Checked again at the moment it would run: a revoke since
+                    # the step began refuses it rather than letting it stand.
+                    declared = _offered(offered, call.name)
+                    if declared is None or not self._tool_policy.allows(declared):
+                        self._tool_decision(ToolDenied, session, run_id, call, declared, "policy")
+                        results.append(
+                            tool_result_entry(
+                                call,
+                                "Not run: this call needs approval, and the tool policy no longer allows it.",
+                            )
+                        )
+                        continue
+                    self._tool_decision(ToolAutoAllowed, session, run_id, call, declared, "policy")
 
                 called.append(call.name)
                 results.append(self._invoke(offered, call))
@@ -763,12 +852,16 @@ class AgentRuntime:
                 approval_id = approval_ids.get(row["id"])
                 decision = decisions.get(approval_id) if approval_id is not None else None
 
+                declared = _offered(bounded, call.name)
                 if decision is not None and decision["approved"]:
+                    self._tool_decision(ToolApproved, live, run_id, call, declared, "person")
                     called.append(call.name)
                     resolved.append(self._run_approved(bounded, call))
                 elif decision is None:
+                    self._tool_decision(ToolDenied, live, run_id, call, declared, "person")
                     resolved.append(tool_result_entry(call, "No approval response provided"))
                 else:
+                    self._tool_decision(ToolDenied, live, run_id, call, declared, "person")
                     resolved.append(
                         tool_result_entry(call, decision["reason"] or "User denied tool execution")
                     )
@@ -933,9 +1026,13 @@ class AgentRuntime:
             stopped_because=stopped_because,
         )
 
-    def _emit(self, event: RunStarted | RunFinished | RunFailed) -> None:
+    def _emit(self, event: HarnessEvent) -> None:
         if self._events is not None:
             self._events.emit(event)
+
+
+def _offered(offered: Sequence[HarnessTool], name: str) -> HarnessTool | None:
+    return next((tool for tool in offered if tool.name == name), None)
 
 
 def record_approval(

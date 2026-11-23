@@ -18,6 +18,7 @@ __all__ = [
     "CallPolicy",
     "HarnessTool",
     "OfferPolicy",
+    "ScopedTool",
     "ToolAuthorizer",
     "ToolFactory",
     "ToolProvider",
@@ -181,6 +182,16 @@ class ToolRegistry:
     def _strict(self) -> bool:
         return self._agent is not None or self._refuse_duplicates
 
+    def declarations(self) -> list[object]:
+        """The statically registered tools, for what they declare about themselves.
+
+        A tool may carry ``server`` (the MCP server it comes from) and ``tier``
+        (``read_only``, ``write`` or ``destructive``; advisory). For a tool that
+        arrives through ``register_provider`` the REGISTRY sets ``server`` to the
+        provider's registered name, whatever the tool itself says.
+        """
+        return list(self._tools.values())
+
     def names(self) -> list[str]:
         """Every name this registry can produce without a session."""
         return sorted({*self._tools, *self._factories})
@@ -208,12 +219,12 @@ class ToolRegistry:
         metadata = self._metadata.copy()
 
         if session is not None:
-            for provider, owner in self._providers.values():
+            for server, (provider, owner) in self._providers.items():
                 for tool in provider(session):
                     previous = metadata.get(tool.name)
                     if self._strict() and previous is not None:
                         raise RegistrationCollision(self._agent, tool.name, previous[0], owner)
-                    provided[tool.name] = tool
+                    provided[tool.name] = scoped_tool(tool, server)
                     metadata[tool.name] = (owner, "provider")
 
         available = sorted({*self._tools, *self._factories, *provided})
@@ -255,6 +266,48 @@ class ToolRegistry:
         return resolved
 
 
+class ScopedTool:
+    """A provider's tool, scoped to the provider's registered name (G-326).
+
+    OVERRIDES rather than refuses a tool that claims another server: refusing
+    would let one tool with a bad claim take every tool of every provider out of
+    the run, and once overridden the claim has no effect anyway, because the
+    tool can then only match a policy entry that names the provider it really
+    came from. Everything else is read from the original tool.
+    """
+
+    __slots__ = ("_server", "_tool")
+
+    def __init__(self, tool: HarnessTool, server: str) -> None:
+        self._tool = tool
+        self._server = server
+
+    @property
+    def name(self) -> str:
+        return self._tool.name
+
+    @property
+    def server(self) -> str:
+        return self._server
+
+    def handle(self, args: dict[str, Any]) -> Any:
+        return self._tool.handle(args)
+
+    def __getattr__(self, key: str) -> Any:
+        # Only reached for a name this class does not define. Its own slots are
+        # refused here so a half-built copy cannot recurse looking for them.
+        if key in ScopedTool.__slots__:
+            raise AttributeError(key)
+        return getattr(self._tool, key)
+
+
+def scoped_tool(tool: HarnessTool, server: str) -> HarnessTool:
+    """``tool`` with ``server`` set to the provider's name; ``tool`` itself when it already is."""
+    if getattr(tool, "server", None) == server:
+        return tool
+    return ScopedTool(tool, server)
+
+
 class AuthorizedTool:
     """A tool that asks the policy AGAIN, at call time, with the arguments.
 
@@ -272,6 +325,19 @@ class AuthorizedTool:
     @property
     def name(self) -> str:
         return self._tool.name
+
+    # Carried through, because the host tool policy decides on them: a wrapper
+    # that dropped ``server`` would let an unscoped entry match an MCP tool, and
+    # one that dropped ``tier`` would let a destructive tool run unasked.
+    @property
+    def server(self) -> str | None:
+        server = getattr(self._tool, "server", None)
+        return server if isinstance(server, str) else None
+
+    @property
+    def tier(self) -> str | None:
+        tier = getattr(self._tool, "tier", None)
+        return tier if isinstance(tier, str) else None
 
     def handle(self, args: dict[str, Any]) -> Any:
         if not self._authorizer.allows_call(self._session, self._tool, args):
