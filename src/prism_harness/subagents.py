@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-__all__ = ["MAX_DEPTH", "RunBudget", "RunContext", "RunLedger", "Subagent", "subagent_from_config"]
+from prism_harness.errors import HarnessError
+
+__all__ = [
+    "MAX_DEPTH",
+    "ChildBinding",
+    "RunBudget",
+    "RunContext",
+    "RunLedger",
+    "Subagent",
+    "subagent_from_config",
+]
 
 #: How deep a run tree may nest.
 #:
@@ -132,6 +142,10 @@ class RunLedger:
         self._unmetered_runs = 0
         self._cancelled = False
         self._cancel_reason: str | None = None
+        # Spend by agent label, inside this one account. A label is not a
+        # second ledger: every charge also lands in the tree's total above.
+        self._agent_cost: dict[str, float] = {}
+        self._agent_unmetered: dict[str, int] = {}
 
     @classmethod
     def start(cls, root_run_id: str) -> RunLedger:
@@ -163,7 +177,14 @@ class RunLedger:
     def record_steps(self, steps: int) -> None:
         self._steps += max(0, steps)
 
-    def record_cost(self, usd: float | None) -> None:
+    def agent_cost_usd(self, agent: str) -> float:
+        """What calls labelled with ``agent`` have spent in this tree."""
+        return self._agent_cost.get(agent, 0.0)
+
+    def agent_unmetered_runs(self, agent: str) -> int:
+        return self._agent_unmetered.get(agent, 0)
+
+    def record_cost(self, usd: float | None, agent: str | None = None) -> None:
         """Charge a run's cost to the tree.
 
         NONE IS NOT ZERO. A provider's reported cost is nullable because not
@@ -175,9 +196,13 @@ class RunLedger:
         """
         if usd is None:
             self._unmetered_runs += 1
+            if agent is not None:
+                self._agent_unmetered[agent] = self._agent_unmetered.get(agent, 0) + 1
             return
 
         self._cost_usd += max(0.0, usd)
+        if agent is not None:
+            self._agent_cost[agent] = self._agent_cost.get(agent, 0.0) + max(0.0, usd)
 
     def cancel(self, reason: str = "cancelled") -> None:
         """Stop the tree.
@@ -258,6 +283,15 @@ class Subagent:
     #: Deterministic, so a cold worker resuming the tree lands on the same child
     #: conversation instead of starting a fresh one. Defaults to the name.
     scope_suffix: str | None = None
+    #: The provider and model the child runs on, above any mode (G-321).
+    provider: str | None = None
+    model: str | None = None
+    #: The named agent the child runs as. Only an agent the parent mode lists in
+    #: its ``agents`` may be named here: authority is declared, never inherited.
+    agent: str | None = None
+    #: Put the parent's SESSION override in the child's session slot. Off by
+    #: default: the override belongs to the parent's session, not its tree.
+    inherit_session_model: bool = False
 
     def scope_under(self, parent_scope: str) -> str:
         """The scope the child session resolves under.
@@ -286,7 +320,35 @@ def subagent_from_config(name: str, config: dict[str, Any]) -> Subagent:
         mode=mode if isinstance(mode, str) and mode else name,
         budget=RunBudget.from_config(config),
         scope_suffix=scope if isinstance(scope, str) else None,
+        provider=_nonempty_or_none(config.get("provider")),
+        model=_nonempty_or_none(config.get("model")),
+        agent=_nonempty_or_none(config.get("agent")),
+        inherit_session_model=config.get("inherit_session_model") is True,
     )
+
+
+@dataclass(frozen=True)
+class ChildBinding:
+    """What a subagent child's provider and model resolve from, beside its own mode.
+
+    Attached by the runner, so a child resolves, field by field:
+
+    1. the parent's session override -- only when the subagent asked for it;
+    2. the subagent declaration;
+    3. the child's own mode;
+    4. the parent's MODE -- only when the child runs in the parent's agent;
+    5. the child agent's default, then the global default.
+
+    The child session's own override slot is not consulted: the runner owns
+    that address.
+    """
+
+    session_provider: str | None = None
+    session_model: str | None = None
+    declared_provider: str | None = None
+    declared_model: str | None = None
+    parent_mode_provider: str | None = None
+    parent_mode_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -301,6 +363,12 @@ class RunContext:
     budget: RunBudget
     parent_run_id: str | None = None
     depth: int = 0
+    #: The named agent spending through this context, as ``harness_agent``.
+    agent: str | None = None
+    #: That agent's ``spend_ceiling``, evaluated against THIS ledger.
+    spend_ceiling: float | None = None
+    #: Set by the runner for a subagent child; None resolves like a root run.
+    binding: ChildBinding | None = None
 
     @classmethod
     def root(cls, run_id: str, budget: RunBudget) -> RunContext:
@@ -327,8 +395,35 @@ class RunContext:
             depth=self.depth + 1,
         )
 
+    def with_binding(self, binding: ChildBinding) -> RunContext:
+        return replace(self, binding=binding)
+
+    def agent_stop(self) -> HarnessError | None:
+        """Why this context's agent may not call a model again, or None.
+
+        Checked before every model call. Unmetered first: a ceiling the
+        provider reports no cost against cannot be enforced, and continuing
+        would spend without limit under a cap the operator believes holds.
+        """
+        if self.agent is None or self.spend_ceiling is None:
+            return None
+
+        unmetered = self.ledger.agent_unmetered_runs(self.agent)
+        if unmetered > 0:
+            return HarnessError.budget_unpriced(self.agent, unmetered)
+
+        spent = self.ledger.agent_cost_usd(self.agent)
+        if spent >= self.spend_ceiling:
+            return HarnessError.agent_spend_ceiling_exceeded(self.agent, spent, self.spend_ceiling)
+
+        return None
+
     def too_deep(self) -> bool:
         return self.depth >= MAX_DEPTH
+
+
+def _nonempty_or_none(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _lesser(a: float | None, b: float | None) -> float | None:

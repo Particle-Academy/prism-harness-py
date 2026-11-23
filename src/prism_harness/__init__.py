@@ -48,6 +48,7 @@ from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagent_runner import SubagentResult, SubagentRunner, SubagentTool
 from prism_harness.subagents import (
     MAX_DEPTH,
+    ChildBinding,
     RunBudget,
     RunContext,
     RunLedger,
@@ -102,6 +103,7 @@ __all__ = [
     "AgentTaskSource",
     "AuthorizedTool",
     "CallPolicy",
+    "ChildBinding",
     "DoctorFinding",
     "DoctorReport",
     "Durability",

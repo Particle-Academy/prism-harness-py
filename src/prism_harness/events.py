@@ -29,6 +29,10 @@ class RunStarted:
     root_run_id: str = ""
     depth: int = 0
     at: str = ""
+    #: The named agent this run spends as (G-321), or None in the legacy
+    #: namespace -- where :meth:`HarnessEvents.to_dict` omits it, so a legacy
+    #: event keeps its shape. Unrelated to agent-integrations' presence id.
+    harness_agent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,10 @@ class RunFinished:
     steps: int = 0
     cost_usd: float | None = None
     at: str = ""
+    #: The named agent this run spends as (G-321), or None in the legacy
+    #: namespace -- where :meth:`HarnessEvents.to_dict` omits it, so a legacy
+    #: event keeps its shape. Unrelated to agent-integrations' presence id.
+    harness_agent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,10 @@ class RunFailed:
     failure: str = ""
     steps: int = 0
     at: str = ""
+    #: The named agent this run spends as (G-321), or None in the legacy
+    #: namespace -- where :meth:`HarnessEvents.to_dict` omits it, so a legacy
+    #: event keeps its shape. Unrelated to agent-integrations' presence id.
+    harness_agent: str | None = None
 
 
 HarnessEvent = RunStarted | RunFinished | RunFailed
@@ -111,4 +123,7 @@ class HarnessEvents:
     @staticmethod
     def to_dict(event: HarnessEvent) -> dict[str, Any]:
         """For a consumer that wants to persist or forward the event as data."""
-        return {"type": event.type, **asdict(event)}
+        data = {"type": event.type, **asdict(event)}
+        if data.get("harness_agent") is None:
+            data.pop("harness_agent", None)
+        return data

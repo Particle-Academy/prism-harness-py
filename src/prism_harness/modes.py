@@ -32,6 +32,12 @@ class AgentMode:
     requires_approval: list[str] = field(default_factory=list)
     #: Options handed to the provider on every run in this mode, unchanged.
     provider_options: dict[str, Any] = field(default_factory=dict)
+    #: The provider and model runs in this mode use, below a session override
+    #: and above the agent default (G-321).
+    provider: str | None = None
+    model: str | None = None
+    #: Named agents this mode's subagents may run as. Declared, never inherited.
+    agents: list[str] = field(default_factory=list)
 
     def needs_approval(self, tool: str) -> bool:
         """Whether a named tool needs a human before it runs IN THIS MODE.
@@ -149,18 +155,36 @@ class ModeRegistry:
                 wanted, "system_prompt must be a string and max_steps a positive integer"
             )
 
+        provider, model = _binding(mode)
+        if provider is False or model is False:
+            raise HarnessError.mode_declaration(
+                f"Harness mode [{wanted}] declares a malformed provider/model: "
+                "expected a nonempty string or null."
+            )
+        agents = _agent_list(mode.get("agents"))
+        if agents is None:
+            raise HarnessError.mode_declaration(
+                f"Harness mode [{wanted}] declares a malformed agents list: each entry must be "
+                "a lowercase agent id of 1-64 ASCII bytes."
+            )
+
         return AgentMode(
             name=wanted,
             system_prompt=prompt,
             tools=_strings(mode.get("tools")),
             skills=_strings(mode.get("skills")),
             max_steps=max_steps,
-            subagents=self._subagents_for(wanted, mode),
+            subagents=self._subagents_for(wanted, mode, agents),
             requires_approval=_strings(mode.get("requires_approval")),
             provider_options=_provider_options(wanted, mode.get("provider_options")),
+            provider=provider if isinstance(provider, str) else None,
+            model=model if isinstance(model, str) else None,
+            agents=agents,
         )
 
-    def _subagents_for(self, name: str, mode: dict[str, Any]) -> dict[str, Subagent]:
+    def _subagents_for(
+        self, name: str, mode: dict[str, Any], agents: list[str]
+    ) -> dict[str, Subagent]:
         """The nested agents a mode may call.
 
         DECLARED PER MODE, which is the point: a subagent is authority, and
@@ -177,15 +201,26 @@ class ModeRegistry:
             raise HarnessError.mode_malformed(name, "its subagent list is not a mapping")
 
         subagents: dict[str, Subagent] = {}
-        modes = self._config.get("modes")
 
         for key, config in declared.items():
             if not isinstance(key, str) or not isinstance(config, dict):
                 raise HarnessError.mode_malformed(name, f"subagent [{key}] is not an object")
 
+            self._check_subagent_binding(name, key, config, agents)
             subagent = subagent_from_config(key, config)
 
-            if not isinstance(modes, dict) or not isinstance(modes.get(subagent.mode), dict):
+            # The child runs in the DELEGATED agent when one is named, so that is
+            # where its mode has to exist. Names only: resolving it here would
+            # recurse through every agent a mode can reach.
+            target = (
+                self
+                if subagent.agent is None or subagent.agent == self._agent
+                else self.for_agent(subagent.agent)
+            )
+            target_modes = target._config.get("modes")
+            if not isinstance(target_modes, dict) or not isinstance(
+                target_modes.get(subagent.mode), dict
+            ):
                 raise HarnessError.mode_malformed(
                     name,
                     f"it declares subagent [{key}], whose mode [{subagent.mode}] is not configured",
@@ -194,6 +229,71 @@ class ModeRegistry:
             subagents[key] = subagent
 
         return subagents
+
+    def _check_subagent_binding(
+        self, name: str, key: str, config: dict[str, Any], agents: list[str]
+    ) -> None:
+        """A subagent's provider, model and agent, refused before any run.
+
+        The agent id is held to the identifier rule exactly -- never trimmed,
+        never case-folded. A near-miss that was normalised would select another
+        agent's authority under a name nobody declared.
+        """
+        provider, model = _binding(config)
+        if provider is False or model is False:
+            raise HarnessError.mode_declaration(
+                f"Harness mode [{name}] declares subagent [{key}] with a malformed "
+                "provider/model: expected a nonempty string or null."
+            )
+
+        inherit = config.get("inherit_session_model", False)
+        if not isinstance(inherit, bool):
+            raise HarnessError.mode_declaration(
+                f"Harness mode [{name}] declares subagent [{key}] with a malformed "
+                "inherit_session_model: expected a boolean."
+            )
+
+        agent = config.get("agent")
+        if agent is None:
+            return
+        if not _valid_agent(agent):
+            raise HarnessError.mode_declaration(
+                f"Harness mode [{name}] declares subagent [{key}] with a malformed agent id: "
+                "agent ids are lowercase identifiers of 1-64 ASCII bytes."
+            )
+        if agent != self._agent and agent not in agents:
+            raise HarnessError.mode_declaration(
+                f"Harness mode [{name}] declares subagent [{key}] for agent [{agent}], which "
+                "the mode does not list in its agents."
+            )
+
+
+def _valid_agent(value: object) -> bool:
+    try:
+        validate_agent(value)  # type: ignore[arg-type]
+    except ValueError:
+        return False
+    return isinstance(value, str)
+
+
+def _binding(config: dict[str, Any]) -> tuple[str | None | bool, str | None | bool]:
+    """``provider`` and ``model``: a nonempty string, None, or False when malformed."""
+
+    def one(value: object) -> str | None | bool:
+        if value is None:
+            return None
+        return value if isinstance(value, str) and value else False
+
+    return one(config.get("provider")), one(config.get("model"))
+
+
+def _agent_list(value: object) -> list[str] | None:
+    """A mode's delegable agents, or None when any entry is not an agent id."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(_valid_agent(entry) for entry in value):
+        return None
+    return list(value)
 
 
 def _strings(value: Any) -> list[str]:
