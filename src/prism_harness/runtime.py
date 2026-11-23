@@ -37,7 +37,9 @@ from prism_harness.thread_rows import (
     thread_view,
     tool_result_entry,
     tool_result_row,
+    unusable_stored_calls,
 )
+from prism_harness.tool_arguments import usable_arguments
 from prism_harness.tool_policy import ToolPolicy, args_digest, tool_declaration
 from prism_harness.tools import HarnessTool, ToolAuthorizer, ToolRegistry
 
@@ -661,7 +663,7 @@ class AgentRuntime:
             # A client can hand back arguments it could not parse. Such a call is
             # recorded with none, asks nobody and runs nothing: the model is told.
             unusable = {
-                call.id for call in response.tool_calls if not isinstance(call.arguments, Mapping)
+                call.id for call in response.tool_calls if usable_arguments(call.arguments) is None
             }
             calls = [_call_input(call) for call in response.tool_calls]
             failed_finish = finish_reason in ("error", "unknown")
@@ -854,6 +856,7 @@ class AgentRuntime:
                 )
             bounded = [tool for tool in offered if scope is not None and tool.name in scope[0]]
             resolved: list[dict[str, Any]] = []
+            unusable = unusable_stored_calls([entry.message for entry in live.thread().messages()])
 
             for row in calls:
                 call = ToolCallInput(
@@ -866,7 +869,13 @@ class AgentRuntime:
                 decision = decisions.get(approval_id) if approval_id is not None else None
 
                 declared = _offered(bounded, call.name)
-                if decision is not None and decision["approved"]:
+                if decision is not None and decision["approved"] and call.id in unusable:
+                    resolved.append(
+                        tool_result_entry(
+                            call, f"Not run: the arguments for {call.name} are not a JSON object."
+                        )
+                    )
+                elif decision is not None and decision["approved"]:
                     self._tool_decision(ToolApproved, live, run_id, call, declared, "person")
                     called.append(call.name)
                     resolved.append(self._run_approved(bounded, call))
@@ -1081,7 +1090,7 @@ def _call_input(call: LlmToolCall) -> ToolCallInput:
     return ToolCallInput(
         id=call.id,
         name=call.name,
-        arguments=call.arguments if isinstance(call.arguments, Mapping) else {},
+        arguments=usable_arguments(call.arguments) or {},
         result_id=call.result_id,
         reasoning_id=call.reasoning_id,
         reasoning_summary=call.reasoning_summary,
