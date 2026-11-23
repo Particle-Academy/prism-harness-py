@@ -74,7 +74,7 @@ def _decode(text: str) -> Any:
 
 
 def _has_lone_surrogate(text: str) -> bool:
-    return any("\ud800" <= char <= "\udfff" for char in text)
+    return not text.isascii() and any("\ud800" <= char <= "\udfff" for char in text)
 
 
 def _is_finite_number(value: float) -> bool:
@@ -91,23 +91,14 @@ def _is_finite_number(value: float) -> bool:
 
 
 def _can_be_sent_back(root: dict[str, Any]) -> bool:
-    """Walked with a stack, so deep input cannot overflow the call stack here."""
-    pending: list[tuple[Any, int]] = [(root, 1)]
+    """Walked a level at a time, so deep input cannot overflow the call stack."""
+    level: list[Any] = [root]
+    depth = 1
 
-    while pending:
-        value, depth = pending.pop()
+    while level:
+        following: list[Any] = []
 
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, (int, float)):
-            if not _is_finite_number(value):
-                return False
-        elif isinstance(value, str):
-            if _has_lone_surrogate(value):
-                return False
-        elif isinstance(value, (list, dict)):
-            if depth > _MAX_ARGUMENT_DEPTH:
-                return False
+        for value in level:
             if isinstance(value, dict):
                 for key in value:
                     if (
@@ -116,9 +107,26 @@ def _can_be_sent_back(root: dict[str, Any]) -> bool:
                         or _has_lone_surrogate(key)
                     ):
                         return False
-                pending.extend((item, depth + 1) for item in value.values())
+                items = value.values()
             else:
-                pending.extend((item, depth + 1) for item in value)
+                items = value
+
+            for item in items:
+                if isinstance(item, bool):
+                    continue
+                if isinstance(item, (int, float)):
+                    if not _is_finite_number(item):
+                        return False
+                elif isinstance(item, str):
+                    if _has_lone_surrogate(item):
+                        return False
+                elif isinstance(item, (list, dict)):
+                    if depth >= _MAX_ARGUMENT_DEPTH:
+                        return False
+                    following.append(item)
+
+        level = following
+        depth += 1
 
     try:
         json.dumps(root, allow_nan=False)
