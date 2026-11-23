@@ -190,6 +190,73 @@ ModeRegistry({"modes": {"overseer": {"provider_options": {"thinking": {"type": "
 A value that is not a map is refused when the mode is resolved, with
 `mode_malformed`.
 
+## Provider and model per mode and subagent
+
+A mode, and a subagent declaration, can name a `provider` and a `model`. Each is
+resolved on its own, so a mode can change the model and keep the agent's provider:
+
+```python
+ModeRegistry(
+    {
+        "agents": {
+            "planner": {
+                "owner": "app",
+                "modes": {
+                    "plan": {
+                        "model": "big-model",
+                        "agents": ["researcher"],
+                        "subagents": {
+                            "summarise": {"mode": "summarise", "model": "small-model"},
+                            "research": {"mode": "research", "agent": "researcher"},
+                        },
+                    },
+                    "summarise": {},
+                },
+            },
+            "researcher": {"owner": "app", "modes": {"research": {}}},
+        },
+    }
+)
+```
+
+A run takes the first of: the session override (`using_provider()` /
+`using_model()`), the mode, the agent default (`agents=` on `AgentRuntime`),
+the global default.
+
+A subagent's child run takes the first of:
+
+1. the parent's session override, only when the subagent sets
+   `inherit_session_model: True`;
+2. the subagent's own `provider` / `model`;
+3. the mode the child runs in;
+4. the parent's mode, only when the child stays in the parent's agent;
+5. the child agent's default, then the global default.
+
+The child's own session override slot is not consulted, and the runner never
+writes one.
+
+A subagent can run as another named agent with `agent: <id>`, but only when the
+parent mode lists that id in `agents`. Its mode is looked up in that agent. An
+agent id is never trimmed or case-folded: `" researcher"` and `"Researcher"` are
+refused, like an agent the mode does not list. All of these fail with
+`mode_malformed` when the mode resolves, before any model call.
+
+### Spend ceilings per agent
+
+`agents={"researcher": {"spend_ceiling": 0.50}}` caps what that agent may spend
+in one run tree, in USD. It is counted in the tree's own ledger, beside every
+other agent's spend; it is not a second account. Before each model call:
+
+- a call by that agent that reported no cost fails the run with
+  `budget_unpriced`, because a ceiling with no numbers cannot hold;
+- spend at or past the ceiling fails it with `agent_spend_ceiling_exceeded`.
+
+A subagent refused this way comes back to its parent as a framed result, and the
+parent carries on. Ceilings are per run tree; there is no per-day window.
+
+Every event of a named agent's run carries `harness_agent`. A legacy run's events
+leave it out of `HarnessEvents.to_dict()`, so their shape is unchanged.
+
 ## What your model client receives
 
 `request.messages` is the thread, oldest first, in the shape the PHP reference

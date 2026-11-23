@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -169,6 +170,9 @@ class RuntimeConfig(TypedDict, total=False):
     max_output_tokens_per_call: int | None
     lock_ttl: int
     lock_wait: int
+    #: Positive finite USD this NAMED agent may spend per root run tree, against
+    #: the tree's own ledger. Read only from ``agents=``; no per-day window.
+    spend_ceiling: float | None
 
 
 class AgentRuntime:
@@ -232,7 +236,12 @@ class AgentRuntime:
             **(self._agents.get(session.agent, {}) if session.agent is not None else {}),
         }
 
+    def mode_for(self, session: Session) -> AgentMode:
+        """The mode a session's next run resolves, refusing a malformed one."""
+        return self._modes.for_agent(session.agent).resolve(session.mode())
+
     def _bounded_run(self, session: Session, run: RunContext) -> RunContext:
+        run = self._labelled(session, run)
         options, budget = self._settings(session), run.budget
         steps, output = options.get("max_steps_ceiling"), options.get("max_output_tokens_per_call")
         if steps is None and output is None:
@@ -251,6 +260,60 @@ class AgentRuntime:
             ),
             run.parent_run_id,
             run.depth,
+            run.agent,
+            run.spend_ceiling,
+            run.binding,
+        )
+
+    def _labelled(self, session: Session, run: RunContext) -> RunContext:
+        """The context spending as this session's agent, under that agent's ceiling.
+
+        Same ledger, always: a label is not a second account.
+        """
+        ceiling = (
+            self._agents.get(session.agent, {}).get("spend_ceiling")
+            if session.agent is not None
+            else None
+        )
+        return RunContext(
+            run.ledger,
+            run.budget,
+            run.parent_run_id,
+            run.depth,
+            session.agent,
+            ceiling,
+            run.binding,
+        )
+
+    def _binding(self, session: Session, mode: AgentMode, run: RunContext) -> tuple[str, str]:
+        """Provider and model, each resolved on its own (G-321).
+
+        Root: session override > mode > agent default > global. A subagent
+        child: the parent's session override only when the subagent asked,
+        then the declaration, its own mode, the parent's mode within the same
+        agent, then the agent and global defaults. See :class:`ChildBinding`.
+        """
+        options = self._settings(session)
+        child = run.binding
+        if child is None:
+            providers = [session.provider(), mode.provider]
+            models = [session.model(), mode.model]
+        else:
+            providers = [
+                child.session_provider,
+                child.declared_provider,
+                mode.provider,
+                child.parent_mode_provider,
+            ]
+            models = [
+                child.session_model,
+                child.declared_model,
+                mode.model,
+                child.parent_mode_model,
+            ]
+        return (
+            _first([*providers, options.get("provider")]),
+            _first([*models, options.get("model")]),
         )
 
     def effective_tools(
@@ -369,13 +432,11 @@ class AgentRuntime:
         # and it should not cost a run, events or budget.
         attachments = admit_attachments(prompt, additional_content)
         mode = self._modes.for_agent(session.agent).resolve(session.mode())
-        options = self._settings(session)
-        provider = session.provider() or options.get("provider") or "unknown"
-        model = session.model() or options.get("model") or "unknown"
         run_id = str(uuid.uuid4())
         run = self._bounded_run(
             session, context or RunContext.root(run_id, RunBudget(mode.max_steps))
         )
+        provider, model = self._binding(session, mode, run)
         thread = session.thread()
 
         if run.too_deep():
@@ -396,6 +457,7 @@ class AgentRuntime:
                 root_run_id=run.root_run_id,
                 depth=run.depth,
                 at=_now(),
+                harness_agent=session.agent,
             )
         )
 
@@ -471,6 +533,7 @@ class AgentRuntime:
                     failure=failure,
                     steps=run.ledger.steps,
                     at=_now(),
+                    harness_agent=session.agent,
                 )
             )
             raise
@@ -501,6 +564,13 @@ class AgentRuntime:
                     session, run_id, called, "budget_exhausted", text, run, exhausted
                 )
 
+            # This agent's own ceiling, in the same ledger. Raised rather than
+            # finished: a subagent child refused here comes back to its parent
+            # as a framed result, and only this agent stops.
+            refused = run.agent_stop()
+            if refused is not None:
+                raise refused
+
             request = LlmRequest(
                 system_prompt=mode.system_prompt,
                 messages=thread_view([entry.message for entry in thread.messages()]),
@@ -517,7 +587,7 @@ class AgentRuntime:
             response = self._client(request)
 
             run.ledger.record_steps(1)
-            run.ledger.record_cost(response.cost_usd)
+            run.ledger.record_cost(response.cost_usd, run.agent)
             text = response.text
             finish_reason = response.finish_reason
 
@@ -843,6 +913,7 @@ class AgentRuntime:
                 steps=run.ledger.steps,
                 cost_usd=None if run.ledger.unmetered_runs > 0 else run.ledger.cost_usd,
                 at=_now(),
+                harness_agent=session.agent,
             )
         )
 
@@ -905,6 +976,14 @@ def _validate_runtime_config(config: Mapping[str, object]) -> None:
         value = config.get(key)
         if value is not None and (not isinstance(value, str) or not value):
             raise ValueError("Agent provider/model defaults must be nonempty strings or null.")
+    ceiling = config.get("spend_ceiling")
+    if ceiling is not None and (
+        isinstance(ceiling, bool)
+        or not isinstance(ceiling, (int, float))
+        or not math.isfinite(ceiling)
+        or ceiling <= 0
+    ):
+        raise ValueError("Agent spend_ceiling must be a positive finite number of USD or null.")
     for key in ("max_steps_ceiling", "max_output_tokens_per_call"):
         value = config.get(key)
         if value is not None and (
@@ -922,6 +1001,14 @@ def _validate_runtime_config(config: Mapping[str, object]) -> None:
                 raise ValueError(
                     "Agent lock settings must be whole seconds with positive TTL and nonnegative wait."
                 )
+
+
+def _first(values: Sequence[str | None]) -> str:
+    """The first configured value; empty strings are refused at config time."""
+    for value in values:
+        if value:
+            return value
+    return "unknown"
 
 
 def _narrowed_tools(ceiling: Sequence[str], requested: Sequence[str] | None) -> Sequence[str]:

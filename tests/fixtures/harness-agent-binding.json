@@ -1,0 +1,1432 @@
+{
+  "suite": "harness-agent-binding",
+  "schema_version": 1,
+  "corpus_version": "0.1.0",
+  "generated_by": "Hand-written expectations (G-321 E), written before any language ran. Each language's runner drives its real runtime with a fake model client and asserts the outcome equals `expected`; `result` records those measured outcomes.",
+  "pins_note": "Which provider and model a run, and a subagent's child, actually request, and which delegations are refused before any request. The fake: when run.delegate is set the parent's first step calls that subagent tool with task `t`, the child answers, the parent then answers. Recorded: provider and model of the FIRST parent and FIRST child request; `refused: config` when the run is refused before any provider request.",
+  "cases": [
+    {
+      "id": "hab-0001",
+      "title": "agent default applies when the mode names nothing",
+      "since": "0.1.0",
+      "notes": "Baseline: agent > global.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": null
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "agent-model"
+        },
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          },
+          "child": null
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          },
+          "child": null
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          },
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0002",
+      "title": "a mode model overrides the agent model",
+      "since": "0.1.0",
+      "notes": "mode > agent.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "model": "mode-model"
+            }
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": null
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "mode-model"
+        },
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "mode-model"
+          },
+          "child": null
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "mode-model"
+          },
+          "child": null
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "mode-model"
+          },
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0003",
+      "title": "a mode provider overrides the agent provider, field by field",
+      "since": "0.1.0",
+      "notes": "Provider and model resolve independently; the mode sets only the provider.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "provider": "anthropic",
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "provider": "custom-cheap"
+            }
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": null
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "custom-cheap",
+          "model": "agent-model"
+        },
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "custom-cheap",
+            "model": "agent-model"
+          },
+          "child": null
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "custom-cheap",
+            "model": "agent-model"
+          },
+          "child": null
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "custom-cheap",
+            "model": "agent-model"
+          },
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0004",
+      "title": "a session override beats the mode",
+      "since": "0.1.0",
+      "notes": "session > mode.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "model": "mode-model"
+            }
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": "session-model",
+        "delegate": null
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "session-model"
+        },
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "session-model"
+          },
+          "child": null
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "session-model"
+          },
+          "child": null
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "session-model"
+          },
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0005",
+      "title": "the legacy namespace honours a mode model over the global default",
+      "since": "0.1.0",
+      "notes": "No named agent: mode > global.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {
+        "chat": {
+          "model": "mode-model"
+        }
+      },
+      "agents": {},
+      "run": {
+        "agent": null,
+        "mode": "chat",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": null
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "mode-model"
+        },
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "mode-model"
+          },
+          "child": null
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "mode-model"
+          },
+          "child": null
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "mode-model"
+          },
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0006",
+      "title": "a subagent runs on a cheaper model under a parent on another",
+      "since": "0.1.0",
+      "notes": "The declaration wins over every mode.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "model": "opus-like",
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "provider": "custom-cheap",
+                  "model": "cheap-model"
+                }
+              }
+            },
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "opus-like"
+        },
+        "child": {
+          "provider": "custom-cheap",
+          "model": "cheap-model"
+        }
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "custom-cheap",
+            "model": "cheap-model"
+          }
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "custom-cheap",
+            "model": "cheap-model"
+          }
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "custom-cheap",
+            "model": "cheap-model"
+          }
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0007",
+      "title": "a child with no declaration takes its own mode's model",
+      "since": "0.1.0",
+      "notes": "child mode > parent mode.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "model": "opus-like",
+              "subagents": {
+                "research": {
+                  "mode": "research"
+                }
+              }
+            },
+            "research": {
+              "model": "research-model"
+            }
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "opus-like"
+        },
+        "child": {
+          "provider": "anthropic",
+          "model": "research-model"
+        }
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "research-model"
+          }
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "research-model"
+          }
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "research-model"
+          }
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0008",
+      "title": "a child with no declaration and a bare mode takes the parent mode's model",
+      "since": "0.1.0",
+      "notes": "parent mode > agent default, within the same agent.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "model": "opus-like",
+              "subagents": {
+                "research": {
+                  "mode": "research"
+                }
+              }
+            },
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "opus-like"
+        },
+        "child": {
+          "provider": "anthropic",
+          "model": "opus-like"
+        }
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          }
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          }
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          }
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0009",
+      "title": "a child with nothing declared anywhere takes the agent default",
+      "since": "0.1.0",
+      "notes": "agent > global.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "subagents": {
+                "research": {
+                  "mode": "research"
+                }
+              }
+            },
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "agent-model"
+        },
+        "child": {
+          "provider": "anthropic",
+          "model": "agent-model"
+        }
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          }
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          }
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          }
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0010",
+      "title": "a parent's session override is NOT inherited by default",
+      "since": "0.1.0",
+      "notes": "The override belongs to the parent's session. Before G-321 the TypeScript and Python runners copied it onto the child.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "subagents": {
+                "research": {
+                  "mode": "research"
+                }
+              }
+            },
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": "custom-cheap",
+        "session_model": "session-model",
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "custom-cheap",
+          "model": "session-model"
+        },
+        "child": {
+          "provider": "anthropic",
+          "model": "agent-model"
+        }
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "custom-cheap",
+            "model": "session-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          }
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "custom-cheap",
+            "model": "session-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          }
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "custom-cheap",
+            "model": "session-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          }
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0011",
+      "title": "a subagent that asks for the parent's session override gets it, above its own declaration",
+      "since": "0.1.0",
+      "notes": "inherit_session_model puts the parent's override in the child's session slot. A field the parent did not override falls through.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "model": "cheap-model",
+                  "inherit_session_model": true
+                }
+              }
+            },
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": "session-model",
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "session-model"
+        },
+        "child": {
+          "provider": "anthropic",
+          "model": "session-model"
+        }
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "session-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "session-model"
+          }
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "session-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "session-model"
+          }
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "session-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "session-model"
+          }
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0012",
+      "title": "asking to inherit with no parent override falls through to the declaration",
+      "since": "0.1.0",
+      "notes": "Nothing to inherit.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "model": "cheap-model",
+                  "inherit_session_model": true
+                }
+              }
+            },
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "agent-model"
+        },
+        "child": {
+          "provider": "anthropic",
+          "model": "cheap-model"
+        }
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "cheap-model"
+          }
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "cheap-model"
+          }
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "agent-model"
+          },
+          "child": {
+            "provider": "anthropic",
+            "model": "cheap-model"
+          }
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0013",
+      "title": "a subagent on a declared agent runs on that agent's binding, not the parent mode's",
+      "since": "0.1.0",
+      "notes": "The parent mode's binding belongs to the parent agent; it does not cross an agent boundary.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "model": "opus-like",
+              "agents": [
+                "researcher"
+              ],
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "agent": "researcher"
+                }
+              }
+            }
+          }
+        },
+        "researcher": {
+          "provider": "custom-cheap",
+          "model": "researcher-model",
+          "modes": {
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": null,
+        "parent": {
+          "provider": "anthropic",
+          "model": "opus-like"
+        },
+        "child": {
+          "provider": "custom-cheap",
+          "model": "researcher-model"
+        }
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "custom-cheap",
+            "model": "researcher-model"
+          }
+        },
+        "ts": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "custom-cheap",
+            "model": "researcher-model"
+          }
+        },
+        "py": {
+          "refused": null,
+          "parent": {
+            "provider": "anthropic",
+            "model": "opus-like"
+          },
+          "child": {
+            "provider": "custom-cheap",
+            "model": "researcher-model"
+          }
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0014",
+      "title": "a subagent naming an agent the mode does not list is refused before any call",
+      "since": "0.1.0",
+      "notes": "Authority is declared in the parent mode, never inherited: an agent the mode does not list is refused, not reached.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "agent": "researcher"
+                }
+              }
+            }
+          }
+        },
+        "researcher": {
+          "model": "researcher-model",
+          "modes": {
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": "config",
+        "parent": null,
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "ts": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "py": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0015",
+      "title": "a padded agent id is refused, not trimmed",
+      "since": "0.1.0",
+      "notes": "A leading space on the agent name is refused, never trimmed: a padded near-miss is a configuration error, not another agent's authority.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "agents": [
+                "researcher"
+              ],
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "agent": " researcher"
+                }
+              }
+            }
+          }
+        },
+        "researcher": {
+          "model": "researcher-model",
+          "modes": {
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": "config",
+        "parent": null,
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "ts": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "py": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0016",
+      "title": "a mixed-case agent id is refused, not folded",
+      "since": "0.1.0",
+      "notes": "A mixed-case agent name is refused, never case-folded: folding would let a lookalike name select another agent's authority.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "agents": [
+                "researcher"
+              ],
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "agent": "Researcher"
+                }
+              }
+            }
+          }
+        },
+        "researcher": {
+          "model": "researcher-model",
+          "modes": {
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": "config",
+        "parent": null,
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "ts": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "py": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0017",
+      "title": "a mixed-case id in the mode's agents list is refused",
+      "since": "0.1.0",
+      "notes": "A malformed allow-list entry is refused: the list is held to the same identifier rule as the agent id itself.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "agents": [
+                "Researcher"
+              ],
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "agent": "researcher"
+                }
+              }
+            }
+          }
+        },
+        "researcher": {
+          "model": "researcher-model",
+          "modes": {
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": "config",
+        "parent": null,
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "ts": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "py": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0018",
+      "title": "a declared agent without the subagent's mode is refused",
+      "since": "0.1.0",
+      "notes": "The child's mode is looked up in the delegated agent, where it runs; a mode that exists only in the parent agent is refused.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "agents": [
+                "researcher"
+              ],
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "agent": "researcher"
+                }
+              }
+            }
+          }
+        },
+        "researcher": {
+          "model": "researcher-model",
+          "modes": {
+            "other": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": "config",
+        "parent": null,
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "ts": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "py": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0019",
+      "title": "a trailing space on the agent name, in both the list and the declaration, is refused",
+      "since": "0.1.0",
+      "notes": "A trailing space on the agent name is refused even when the list and the declaration agree on it: matching padding is not a declaration of the real agent.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "agents": [
+                "researcher "
+              ],
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "agent": "researcher "
+                }
+              }
+            }
+          }
+        },
+        "researcher": {
+          "model": "researcher-model",
+          "modes": {
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": "config",
+        "parent": null,
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "ts": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "py": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hab-0020",
+      "title": "a homoglyph agent name is refused",
+      "since": "0.1.0",
+      "notes": "A homoglyph agent name (Cyrillic ie for e) is refused: an id is ASCII by rule, and no language may resolve a lookalike to the agent it imitates.",
+      "global": {
+        "provider": "anthropic",
+        "model": "global-model"
+      },
+      "modes": {},
+      "agents": {
+        "planner": {
+          "model": "agent-model",
+          "modes": {
+            "plan": {
+              "agents": [
+                "researcher"
+              ],
+              "subagents": {
+                "research": {
+                  "mode": "research",
+                  "agent": "rеsearcher"
+                }
+              }
+            }
+          }
+        },
+        "researcher": {
+          "model": "researcher-model",
+          "modes": {
+            "research": {}
+          }
+        }
+      },
+      "run": {
+        "agent": "planner",
+        "mode": "plan",
+        "session_provider": null,
+        "session_model": null,
+        "delegate": "research"
+      },
+      "expected": {
+        "refused": "config",
+        "parent": null,
+        "child": null
+      },
+      "result": {
+        "php": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "ts": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        },
+        "py": {
+          "refused": "config",
+          "parent": null,
+          "child": null
+        }
+      },
+      "agrees": true
+    }
+  ]
+}

@@ -8,9 +8,10 @@ from typing import Any
 
 from prism_harness.errors import HarnessError
 from prism_harness.harness import PrismHarness
+from prism_harness.modes import AgentMode
 from prism_harness.runtime import AgentRuntime
 from prism_harness.session import Session
-from prism_harness.subagents import MAX_DEPTH, RunContext, Subagent
+from prism_harness.subagents import MAX_DEPTH, ChildBinding, RunContext, Subagent
 from prism_harness.tools import HarnessTool
 
 __all__ = ["SubagentResult", "SubagentRunner", "SubagentTool"]
@@ -112,7 +113,22 @@ class SubagentRunner:
                 stop,
             )
 
-        child_context = context.for_child(subagent, parent_run_id)
+        child_agent = subagent.agent if subagent.agent is not None else parent.agent
+        same_agent = child_agent == parent.agent
+        parent_mode = self._parent_mode(parent)
+        # The child's provider and model come from declarations, never from a
+        # write onto the child's session: that slot belongs to the runner's
+        # address, and a copied override there would outlive this call.
+        child_context = context.for_child(subagent, parent_run_id).with_binding(
+            ChildBinding(
+                session_provider=parent.provider() if subagent.inherit_session_model else None,
+                session_model=parent.model() if subagent.inherit_session_model else None,
+                declared_provider=subagent.provider,
+                declared_model=subagent.model,
+                parent_mode_provider=parent_mode.provider if same_agent and parent_mode else None,
+                parent_mode_model=parent_mode.model if same_agent and parent_mode else None,
+            )
+        )
 
         # Refused BEFORE the child's address is built. Two modes naming each
         # other as subagents form a cycle budgets would eventually stop -- but
@@ -128,20 +144,23 @@ class SubagentRunner:
                 f"subagent nesting reached the maximum depth of {MAX_DEPTH}",
             )
 
-        child = self._harness._pending(parent.participant, parent.agent, parent.actor).session(
+        # The agent was checked against the parent mode's `agents` when that mode
+        # resolved: a child only ever runs as an agent its parent declared.
+        child = self._harness._pending(parent.participant, child_agent, parent.actor).session(
             subagent.scope_under(parent.scope)
         )
 
         # The child's authority comes from ITS mode, not the parent's.
         child.using_mode(subagent.mode)
-        provider, model = parent.provider(), parent.model()
-        if parent.agent is None or provider is not None:
-            child.using_provider(provider or "unknown")
-        if parent.agent is None or model is not None:
-            child.using_model(model or "unknown")
 
         try:
             response = self._runtime.send(child, task, context=child_context)
+        except HarnessError as error:
+            # Its agent's ceiling is spent, or cannot be enforced: a gate on the
+            # tree, not the child's failure, and only that agent stops.
+            if error.code in ("agent_spend_ceiling_exceeded", "budget_unpriced"):
+                return _refused(subagent.name, run_id, parent_run_id, "exhausted", str(error))
+            return _refused(subagent.name, run_id, parent_run_id, "failed", str(error))
         except Exception as error:  # noqa: BLE001 - framed, not propagated
             # Tearing down the parent run would discard work it has already
             # done, and "that subagent failed" is something the parent can act
@@ -167,6 +186,21 @@ class SubagentRunner:
                 f"Partial answer: {response.text}"
             ),
         )
+
+    def _parent_mode(self, parent: Session) -> AgentMode | None:
+        """The parent's mode, for the binding its child falls back to.
+
+        Inside a run the parent's mode has already resolved. A runner driven
+        directly, for a parent whose mode is not configured, has no parent mode
+        to fall back to -- and that is all this tolerates: a MALFORMED mode
+        still raises.
+        """
+        try:
+            return self._runtime.mode_for(parent)
+        except HarnessError as error:
+            if error.code == "mode_not_configured":
+                return None
+            raise
 
 
 def _refused(

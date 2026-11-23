@@ -29,6 +29,10 @@ class ErrorCode(str, Enum):
     TOOL_NOT_AVAILABLE = "tool_not_available"
     #: A run was refused -- by budget, by depth, or by a cancelled ledger.
     RUN_NOT_PERMITTED = "run_not_permitted"
+    #: A named agent has spent its ``spend_ceiling`` in this run tree.
+    AGENT_SPEND_CEILING_EXCEEDED = "agent_spend_ceiling_exceeded"
+    #: A call under a cost cap reported no cost, so the cap cannot be enforced.
+    BUDGET_UNPRICED = "budget_unpriced"
     #: A failed model step is terminal and cannot authorize tool execution.
     MODEL_STEP_FAILED = "model_step_failed"
     #: A stored payload could not be mapped back into a value object.
@@ -176,6 +180,28 @@ class HarnessError(Exception):
     @classmethod
     def mode_malformed(cls, name: str, detail: str) -> HarnessError:
         return cls(ErrorCode.MODE_MALFORMED, f"Harness mode [{name}] is malformed: {detail}.")
+
+    @classmethod
+    def mode_declaration(cls, message: str) -> HarnessError:
+        """A mode declaration refused with the exact sentence the other languages use."""
+        return cls(ErrorCode.MODE_MALFORMED, message)
+
+    @classmethod
+    def agent_spend_ceiling_exceeded(cls, agent: str, spent: float, ceiling: float) -> HarnessError:
+        return cls(
+            ErrorCode.AGENT_SPEND_CEILING_EXCEEDED,
+            f"This run may not proceed: agent [{agent}] reached its spend ceiling "
+            f"({spent:.4f} of {ceiling:.4f} USD used in this run tree).",
+        )
+
+    @classmethod
+    def budget_unpriced(cls, agent: str, unmetered: int) -> HarnessError:
+        """Fail CLOSED: a ceiling the provider gives no numbers for is not a ceiling."""
+        return cls(
+            ErrorCode.BUDGET_UNPRICED,
+            f"This run may not proceed: agent [{agent}] has a spend ceiling, and {unmetered} "
+            "of its call(s) reported no cost, so its spend cannot be enforced.",
+        )
 
     @classmethod
     def policy_defined_but_disabled(cls) -> HarnessError:
