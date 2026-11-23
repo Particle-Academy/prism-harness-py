@@ -658,6 +658,11 @@ class AgentRuntime:
             text = response.text
             finish_reason = response.finish_reason
 
+            # A client can hand back arguments it could not parse. Such a call is
+            # recorded with none, asks nobody and runs nothing: the model is told.
+            unusable = {
+                call.id for call in response.tool_calls if not isinstance(call.arguments, Mapping)
+            }
             calls = [_call_input(call) for call in response.tool_calls]
             failed_finish = finish_reason in ("error", "unknown")
             # The host policy is read per call, never cached for the run, so a
@@ -665,7 +670,7 @@ class AgentRuntime:
             auto_allowed: list[ToolCallInput] = []
             gated: list[ToolCallInput] = []
             for call in [] if failed_finish else calls:
-                if not mode.needs_approval(call.name):
+                if call.id in unusable or not mode.needs_approval(call.name):
                     continue
                 declared = _offered(offered, call.name)
                 if declared is not None and self._tool_policy.allows(declared):
@@ -747,6 +752,14 @@ class AgentRuntime:
 
             for call in calls:
                 if call in gated:
+                    continue
+
+                if call.id in unusable:
+                    results.append(
+                        tool_result_entry(
+                            call, f"Not run: the arguments for {call.name} are not a JSON object."
+                        )
+                    )
                     continue
 
                 if call in auto_allowed:
@@ -1068,7 +1081,7 @@ def _call_input(call: LlmToolCall) -> ToolCallInput:
     return ToolCallInput(
         id=call.id,
         name=call.name,
-        arguments=call.arguments,
+        arguments=call.arguments if isinstance(call.arguments, Mapping) else {},
         result_id=call.result_id,
         reasoning_id=call.reasoning_id,
         reasoning_summary=call.reasoning_summary,
