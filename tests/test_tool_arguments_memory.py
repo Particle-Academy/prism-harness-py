@@ -23,6 +23,7 @@ from prism_harness import (
     PrismHarness,
     ToolRegistry,
 )
+from prism_harness.tool_arguments import usable_arguments
 
 
 @pytest.fixture(autouse=True)
@@ -96,10 +97,18 @@ def _turn(arguments: Any) -> tuple[str, int, int]:
     return finish, model_calls, tool_runs
 
 
-def test_completes_a_turn_in_a_bounded_multiple_of_reading_the_list() -> None:
+def test_checks_a_long_list_in_about_the_memory_of_reading_and_encoding_it() -> None:
     text = '{"a":[' + ",".join(["0"] * 100_000) + "]}"
-    reading, _ = _peak(lambda: json.loads(text))
-    turn, outcome = _peak(lambda: _turn(text))
+    # The check must decode and encode the value. How much encoding holds
+    # differs between Python versions, so the bound is measured on this one.
+    necessary, _ = _peak(lambda: json.dumps(json.loads(text), allow_nan=False))
+    checking, usable = _peak(lambda: usable_arguments(text))
 
-    assert outcome == ("stop", 2, 1)
-    assert turn / reading < 9
+    assert usable is not None
+    assert checking / necessary < 1.2
+
+
+def test_completes_a_turn_holding_a_long_list() -> None:
+    text = '{"a":[' + ",".join(["0"] * 100_000) + "]}"
+
+    assert _turn(text) == ("stop", 2, 1)
