@@ -109,6 +109,26 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return view
 
 
+def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
+    """Model steps the run paused at the transcript tail has already taken.
+
+    None when nothing at the tail is waiting on an approval. A run that pauses
+    for a person and is resumed is the SAME run, so its step limit continues
+    rather than starting again. Counted from the stored rows (one assistant row
+    per model step since the turn's user row), so the count survives a reload,
+    a different worker and a deploy, with no extra state.
+    """
+    if approval_tool_scope(rows) is None:
+        return None
+    steps = 0
+    for row in reversed(rows):
+        if row.get("type") == "user":
+            break
+        if row.get("type") == "assistant":
+            steps += 1
+    return steps
+
+
 def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], bool] | None:
     """Stored approval authority, separate from the provider replay view."""
     decisions: dict[str, bool] = {}
