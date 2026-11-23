@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.2
 
 ### Fixed
 
@@ -21,6 +21,17 @@
   call is resumed from stored rows. An empty string, `0`, `null`, `[]` and
   `{}` all mean no arguments, and a tool taking none still runs with `{}`.
   JSON text naming values is read as those values.
+
+No breaking changes.
+
+## 0.5.1
+
+### Fixed
+
+- Resuming a turn that paused for approval offers exactly the tools that turn
+  offered, intersected with the mode's current tools.
+
+No breaking changes.
 
 ## 0.5.0
 
