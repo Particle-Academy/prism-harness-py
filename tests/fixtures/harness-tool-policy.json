@@ -1,0 +1,2367 @@
+{
+  "suite": "harness-tool-policy",
+  "schema_version": 1,
+  "corpus_version": "0.1.0",
+  "generated_by": "Hand-written expectations (G-326), written before any language ran; args_digest computed from the RFC 8785 rule by the generator, not by a harness. Each language's runner drives its real runtime with a fake model client and asserts the outcome equals `expected`; `result` records those measured outcomes.",
+  "pins_note": "Which approval-gated calls a host ToolPolicy lets run without asking, and which policies are refused before any run. The fake model asks for `calls` in its first step, then answers. Every tool needs approval by mode. A tool with `server` is provided at resolve time (an MCP server); one without is a native, statically registered tool. Recorded: `refused` (the error code when the policy is refused at construction or at install), the tools that ran, the tools of the last response's pending approvals, and the decision events projected to type, server, tool, args_digest, decided_by and policy_revision. `then` replaces the policy and resumes with no decision.",
+  "cases": [
+    {
+      "id": "htp-0001",
+      "title": "a listed native tool runs without asking",
+      "since": "0.1.0",
+      "notes": "Baseline: the one thing the list is for.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {
+            "path": "/notes"
+          }
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [
+          "read"
+        ],
+        "asked": [],
+        "events": [
+          {
+            "type": "tool_auto_allowed",
+            "server": null,
+            "tool": "read",
+            "args_digest": "sha256:cf394869eb6df53b727ca6326733431dad5ee7b0ccbf10f5c48fae6d0ac03b87",
+            "decided_by": "policy",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [
+            "read"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:cf394869eb6df53b727ca6326733431dad5ee7b0ccbf10f5c48fae6d0ac03b87",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [
+            "read"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:cf394869eb6df53b727ca6326733431dad5ee7b0ccbf10f5c48fae6d0ac03b87",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [
+            "read"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:cf394869eb6df53b727ca6326733431dad5ee7b0ccbf10f5c48fae6d0ac03b87",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0002",
+      "title": "a trailing space on the called name never matches",
+      "since": "0.1.0",
+      "notes": "The tool is registered padded; the list names it clean.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read "
+        }
+      ],
+      "calls": [
+        {
+          "name": "read ",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "read "
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "read ",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read "
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read ",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read "
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read ",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read "
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read ",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0003",
+      "title": "a trailing no-break space never matches",
+      "since": "0.1.0",
+      "notes": "U+00A0, which PHP trim() leaves and JS trim() strips.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read\u00a0"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read\u00a0",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "read\u00a0"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "read\u00a0",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read\u00a0"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read\u00a0",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read\u00a0"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read\u00a0",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read\u00a0"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read\u00a0",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0004",
+      "title": "a trailing zero-width space never matches",
+      "since": "0.1.0",
+      "notes": "U+200B: invisible, and stripped by no language's trim().",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read\u200b"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read\u200b",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "read\u200b"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "read\u200b",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read\u200b"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read\u200b",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read\u200b"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read\u200b",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read\u200b"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read\u200b",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0005",
+      "title": "a leading BOM never matches",
+      "since": "0.1.0",
+      "notes": "U+FEFF, which Python strip() leaves.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "\ufeffread"
+        }
+      ],
+      "calls": [
+        {
+          "name": "\ufeffread",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "\ufeffread"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "\ufeffread",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "\ufeffread"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "\ufeffread",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "\ufeffread"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "\ufeffread",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "\ufeffread"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "\ufeffread",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0006",
+      "title": "a Cyrillic homoglyph never matches",
+      "since": "0.1.0",
+      "notes": "U+0435 for the e.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "r\u0435ad"
+        }
+      ],
+      "calls": [
+        {
+          "name": "r\u0435ad",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "r\u0435ad"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "r\u0435ad",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "r\u0435ad"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "r\u0435ad",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "r\u0435ad"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "r\u0435ad",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "r\u0435ad"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "r\u0435ad",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0007",
+      "title": "a fullwidth look-alike never matches",
+      "since": "0.1.0",
+      "notes": "U+FF52 U+FF45 U+FF41 U+FF44, which NFKC would fold to read.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "\uff52\uff45\uff41\uff44"
+        }
+      ],
+      "calls": [
+        {
+          "name": "\uff52\uff45\uff41\uff44",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "\uff52\uff45\uff41\uff44"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "\uff52\uff45\uff41\uff44",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "\uff52\uff45\uff41\uff44"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "\uff52\uff45\uff41\uff44",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "\uff52\uff45\uff41\uff44"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "\uff52\uff45\uff41\uff44",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "\uff52\uff45\uff41\uff44"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "\uff52\uff45\uff41\uff44",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0008",
+      "title": "a case variant never matches",
+      "since": "0.1.0",
+      "notes": "No case folding.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "Read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "Read",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "Read"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "Read",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "Read"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "Read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "Read"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "Read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "Read"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "Read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0009",
+      "title": "an unscoped entry never matches an MCP tool of the same name",
+      "since": "0.1.0",
+      "notes": "The MCP shadow: a server offers `search` and the host listed only a native `search`.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "search"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "search",
+          "server": "web"
+        }
+      ],
+      "calls": [
+        {
+          "name": "search",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "search"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": "web",
+            "tool": "search",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0010",
+      "title": "an entry for another server never matches",
+      "since": "0.1.0",
+      "notes": "Scoped to files; the tool comes from web.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "server": "files",
+            "tool": "search"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "search",
+          "server": "web"
+        }
+      ],
+      "calls": [
+        {
+          "name": "search",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "search"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": "web",
+            "tool": "search",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "search"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0011",
+      "title": "an entry scoped to the tool's own server matches",
+      "since": "0.1.0",
+      "notes": "The way to allow an MCP tool.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "server": "web",
+            "tool": "search"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "search",
+          "server": "web"
+        }
+      ],
+      "calls": [
+        {
+          "name": "search",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [
+          "search"
+        ],
+        "asked": [],
+        "events": [
+          {
+            "type": "tool_auto_allowed",
+            "server": "web",
+            "tool": "search",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "policy",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [
+            "search"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [
+            "search"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [
+            "search"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": "web",
+              "tool": "search",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0012",
+      "title": "a scoped entry never matches the native tool of the same name",
+      "since": "0.1.0",
+      "notes": "The reverse shadow.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "server": "files",
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "read"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "read",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0013",
+      "title": "a listed tool that declares destructive is refused at construction",
+      "since": "0.1.0",
+      "notes": "The host learns of it; nothing is silently dropped.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "wipe"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "wipe",
+          "tier": "destructive"
+        }
+      ],
+      "calls": [
+        {
+          "name": "wipe",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": "tool_policy_refused",
+        "ran": [],
+        "asked": [],
+        "events": []
+      },
+      "result": {
+        "php": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "ts": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "py": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0014",
+      "title": "a destructive MCP tool asks even when listed",
+      "since": "0.1.0",
+      "notes": "Its provider is only known per session, so construction cannot see the tier; the call still asks.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "server": "db",
+            "tool": "drop"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "drop",
+          "server": "db",
+          "tier": "destructive"
+        }
+      ],
+      "calls": [
+        {
+          "name": "drop",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "drop"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": "db",
+            "tool": "drop",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "drop"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "db",
+              "tool": "drop",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "drop"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "db",
+              "tool": "drop",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "drop"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": "db",
+              "tool": "drop",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0015",
+      "title": "honor false turns the list off",
+      "since": "0.1.0",
+      "notes": "For example, an untrusted workspace.",
+      "policy": {
+        "revision": "untrusted",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": false
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [
+          "read"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "read",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "untrusted"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "untrusted"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "untrusted"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [
+            "read"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "untrusted"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0016",
+      "title": "a padded entry is refused at construction",
+      "since": "0.1.0",
+      "notes": "Rather than normalised into a match.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read "
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": "tool_policy_refused",
+        "ran": [],
+        "asked": [],
+        "events": []
+      },
+      "result": {
+        "php": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "ts": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "py": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0017",
+      "title": "a homoglyph entry is refused at construction",
+      "since": "0.1.0",
+      "notes": "ASCII-only names.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "r\u0435ad"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": "tool_policy_refused",
+        "ran": [],
+        "asked": [],
+        "events": []
+      },
+      "result": {
+        "php": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "ts": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "py": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0018",
+      "title": "a wildcard entry is refused at construction",
+      "since": "0.1.0",
+      "notes": "No wildcards, patterns or prefixes.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "*"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": "tool_policy_refused",
+        "ran": [],
+        "asked": [],
+        "events": []
+      },
+      "result": {
+        "php": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "ts": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "py": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0019",
+      "title": "a confirmation tool is refused at construction",
+      "since": "0.1.0",
+      "notes": "Only a person may run it.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "terminal_confirm"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "terminal_confirm"
+        }
+      ],
+      "calls": [
+        {
+          "name": "terminal_confirm",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": "tool_policy_refused",
+        "ran": [],
+        "asked": [],
+        "events": []
+      },
+      "result": {
+        "php": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "ts": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "py": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0020",
+      "title": "an approval tool behind a dot is refused at construction",
+      "since": "0.1.0",
+      "notes": "Every separator splits a token.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "sheet.approve"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "sheet.approve"
+        }
+      ],
+      "calls": [
+        {
+          "name": "sheet.approve",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": "tool_policy_refused",
+        "ran": [],
+        "asked": [],
+        "events": []
+      },
+      "result": {
+        "php": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "ts": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "py": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0021",
+      "title": "a camelCase confirmation tool is refused at construction",
+      "since": "0.1.0",
+      "notes": "A camelCase boundary splits a token.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "confirmEdit"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "confirmEdit"
+        }
+      ],
+      "calls": [
+        {
+          "name": "confirmEdit",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": "tool_policy_refused",
+        "ran": [],
+        "asked": [],
+        "events": []
+      },
+      "result": {
+        "php": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "ts": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "py": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0022",
+      "title": "a padded confirmation tool is refused at construction",
+      "since": "0.1.0",
+      "notes": "G-36: the reservation normalises first.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "terminal_confirm "
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": "tool_policy_refused",
+        "ran": [],
+        "asked": [],
+        "events": []
+      },
+      "result": {
+        "php": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "ts": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "py": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0023",
+      "title": "a name merely containing a reserved verb is not reserved",
+      "since": "0.1.0",
+      "notes": "Whole tokens only: send_confirmation_email stays listable.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "send_confirmation_email"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "send_confirmation_email"
+        }
+      ],
+      "calls": [
+        {
+          "name": "send_confirmation_email",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [
+          "send_confirmation_email"
+        ],
+        "asked": [],
+        "events": [
+          {
+            "type": "tool_auto_allowed",
+            "server": null,
+            "tool": "send_confirmation_email",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "policy",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [
+            "send_confirmation_email"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "send_confirmation_email",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [
+            "send_confirmation_email"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "send_confirmation_email",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [
+            "send_confirmation_email"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "send_confirmation_email",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0024",
+      "title": "an unknown entry key is refused at construction",
+      "since": "0.1.0",
+      "notes": "A constraint this version does not enforce must not be silently ignored.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read",
+            "path": "/tmp"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {}
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": "tool_policy_refused",
+        "ran": [],
+        "asked": [],
+        "events": []
+      },
+      "result": {
+        "php": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "ts": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        },
+        "py": {
+          "refused": "tool_policy_refused",
+          "ran": [],
+          "asked": [],
+          "events": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0025",
+      "title": "a listed and an unlisted call in one step",
+      "since": "0.1.0",
+      "notes": "The unlisted one asks; the listed one runs. Asked is recorded before the listed call runs.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        },
+        {
+          "name": "write"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {
+            "a": 1
+          }
+        },
+        {
+          "name": "write",
+          "args": {
+            "a": 2
+          }
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [
+          "read"
+        ],
+        "asked": [
+          "write"
+        ],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "write",
+            "args_digest": "sha256:7e8059f495589fcd981232cc11d00b00da3802c01d688fa1cf1f6bed6e5bb33c",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          },
+          {
+            "type": "tool_auto_allowed",
+            "server": null,
+            "tool": "read",
+            "args_digest": "sha256:015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862",
+            "decided_by": "policy",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [
+            "read"
+          ],
+          "asked": [
+            "write"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "write",
+              "args_digest": "sha256:7e8059f495589fcd981232cc11d00b00da3802c01d688fa1cf1f6bed6e5bb33c",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            },
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [
+            "read"
+          ],
+          "asked": [
+            "write"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "write",
+              "args_digest": "sha256:7e8059f495589fcd981232cc11d00b00da3802c01d688fa1cf1f6bed6e5bb33c",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            },
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [
+            "read"
+          ],
+          "asked": [
+            "write"
+          ],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "write",
+              "args_digest": "sha256:7e8059f495589fcd981232cc11d00b00da3802c01d688fa1cf1f6bed6e5bb33c",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            },
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0026",
+      "title": "the digest is of RFC 8785 canonical arguments",
+      "since": "0.1.0",
+      "notes": "Keys in UTF-16 order, ECMAScript numbers. Never the arguments themselves.",
+      "policy": {
+        "revision": "r7",
+        "allow": [
+          {
+            "tool": "read"
+          }
+        ],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {
+            "z": "secret",
+            "\uff5a": "x",
+            "a": {
+              "\u00e9": 1.5,
+              "\ud83d\ude00": [
+                1e+21,
+                1e-7,
+                0.000001,
+                true,
+                null,
+                "line\nbreak"
+              ]
+            }
+          }
+        }
+      ],
+      "then": null,
+      "expected": {
+        "refused": null,
+        "ran": [
+          "read"
+        ],
+        "asked": [],
+        "events": [
+          {
+            "type": "tool_auto_allowed",
+            "server": null,
+            "tool": "read",
+            "args_digest": "sha256:1d264fbd767a2c6b532a1597e65f6dfd6a9184045d1ec7135cf6dd6c39fc6adc",
+            "decided_by": "policy",
+            "policy_revision": "r7"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [
+            "read"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:1d264fbd767a2c6b532a1597e65f6dfd6a9184045d1ec7135cf6dd6c39fc6adc",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [
+            "read"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:1d264fbd767a2c6b532a1597e65f6dfd6a9184045d1ec7135cf6dd6c39fc6adc",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [
+            "read"
+          ],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_auto_allowed",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:1d264fbd767a2c6b532a1597e65f6dfd6a9184045d1ec7135cf6dd6c39fc6adc",
+              "decided_by": "policy",
+              "policy_revision": "r7"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "htp-0027",
+      "title": "a pending call stays pending when a later policy would allow it",
+      "since": "0.1.0",
+      "notes": "Nothing listed; the call asks. The host then lists it and resumes with no decision: it is refused, not run.",
+      "policy": {
+        "revision": "r7",
+        "allow": [],
+        "honor": true
+      },
+      "tools": [
+        {
+          "name": "read"
+        }
+      ],
+      "calls": [
+        {
+          "name": "read",
+          "args": {}
+        }
+      ],
+      "then": {
+        "policy": {
+          "revision": "r8",
+          "allow": [
+            {
+              "tool": "read"
+            }
+          ],
+          "honor": true
+        }
+      },
+      "expected": {
+        "refused": null,
+        "ran": [],
+        "asked": [],
+        "events": [
+          {
+            "type": "tool_approval_asked",
+            "server": null,
+            "tool": "read",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r7"
+          },
+          {
+            "type": "tool_denied",
+            "server": null,
+            "tool": "read",
+            "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "decided_by": "person",
+            "policy_revision": "r8"
+          }
+        ]
+      },
+      "result": {
+        "php": {
+          "refused": null,
+          "ran": [],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            },
+            {
+              "type": "tool_denied",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r8"
+            }
+          ]
+        },
+        "ts": {
+          "refused": null,
+          "ran": [],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            },
+            {
+              "type": "tool_denied",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r8"
+            }
+          ]
+        },
+        "py": {
+          "refused": null,
+          "ran": [],
+          "asked": [],
+          "events": [
+            {
+              "type": "tool_approval_asked",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r7"
+            },
+            {
+              "type": "tool_denied",
+              "server": null,
+              "tool": "read",
+              "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "decided_by": "person",
+              "policy_revision": "r8"
+            }
+          ]
+        }
+      },
+      "agrees": true
+    }
+  ]
+}

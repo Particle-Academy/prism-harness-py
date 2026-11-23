@@ -181,6 +181,15 @@ class ToolRegistry:
     def _strict(self) -> bool:
         return self._agent is not None or self._refuse_duplicates
 
+    def declarations(self) -> list[object]:
+        """The statically registered tools, for what they declare about themselves.
+
+        A tool may carry ``server`` (the MCP server it comes from, set by the
+        code that connected the server) and ``tier`` (``read_only``, ``write``
+        or ``destructive``; advisory).
+        """
+        return list(self._tools.values())
+
     def names(self) -> list[str]:
         """Every name this registry can produce without a session."""
         return sorted({*self._tools, *self._factories})

@@ -16,6 +16,30 @@
 
 ### Added
 
+- `ToolPolicy`, a host-owned list of approval-gated tools that run without
+  asking a person (G-326). Built with `ToolPolicy.from_json({"revision": ...,
+  "allow": [{"server"?: ..., "tool": ...}], "honor": ...})`, the same JSON
+  shape as the PHP and TypeScript harnesses. Passed per launch as
+  `AgentRuntime(tool_policy=...)` and replaced live with
+  `runtime.set_tool_policy()`; the default `ToolPolicy.none()` changes nothing.
+  Matching is exact: a padded, look-alike or case-variant name never matches,
+  an entry without `server` never matches a tool that has one, and there are
+  no wildcards. Confirmation and approval tools, malformed entries, and tools
+  declaring `tier = "destructive"` are refused with `tool_policy_refused`.
+  `honor: false` turns the list off. A replacement applies from the next call;
+  a call already waiting keeps waiting, and a call the old policy allowed is
+  refused if the new one no longer does. The policy is never sent to the model
+  and has no tool surface.
+- A tool may carry optional `server` (the MCP server it comes from, set by the
+  code that connected it) and `tier` (`read_only`, `write`, `destructive`;
+  advisory). `ToolRegistry.declarations()` lists the static tools.
+- Events `ToolAutoAllowed`, `ToolApprovalAsked`, `ToolApproved` and
+  `ToolDenied` (`tool_auto_allowed` ... `tool_denied`) for every call to an
+  approval-gated tool, carrying `policy_revision`, `server`, `tool`,
+  `args_digest` (sha256 of the arguments' RFC 8785 canonical JSON; never the
+  arguments), `decided_by` (`policy` or `person`) and `harness_agent`. They are
+  emitted whether or not a policy is set.
+- `canonical_json()` and `args_digest()`.
 - Modes and subagent declarations take an optional `provider` and `model`. A run
   resolves each field as session override, then mode, then agent default, then
   global default.

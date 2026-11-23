@@ -14,6 +14,10 @@ __all__ = [
     "RunFailed",
     "RunFinished",
     "RunStarted",
+    "ToolApprovalAsked",
+    "ToolApproved",
+    "ToolAutoAllowed",
+    "ToolDenied",
 ]
 
 
@@ -67,7 +71,63 @@ class RunFailed:
     harness_agent: str | None = None
 
 
-HarnessEvent = RunStarted | RunFinished | RunFailed
+@dataclass(frozen=True)
+class _ToolDecision:
+    """One decision about a call to a tool that needs approval (G-326).
+
+    Carries the arguments' DIGEST, never the arguments or the result: the
+    sha256 of their RFC 8785 canonical JSON, identical in every language.
+    ``policy_revision`` is the host policy's revision when the decision was made.
+    """
+
+    run_id: str = ""
+    session_key: str = ""
+    policy_revision: str = ""
+    server: str | None = None
+    tool: str = ""
+    args_digest: str = ""
+    #: ``policy`` or ``person``.
+    decided_by: str = ""
+    harness_agent: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolAutoAllowed(_ToolDecision):
+    """The host policy let the call run without asking."""
+
+    type: str = field(default="tool_auto_allowed", init=False)
+
+
+@dataclass(frozen=True)
+class ToolApprovalAsked(_ToolDecision):
+    """The call is waiting on a person."""
+
+    type: str = field(default="tool_approval_asked", init=False)
+
+
+@dataclass(frozen=True)
+class ToolApproved(_ToolDecision):
+    """A person approved the call; it runs now."""
+
+    type: str = field(default="tool_approved", init=False)
+
+
+@dataclass(frozen=True)
+class ToolDenied(_ToolDecision):
+    """Not run: denied or unanswered (``person``), or revoked before it began (``policy``)."""
+
+    type: str = field(default="tool_denied", init=False)
+
+
+HarnessEvent = (
+    RunStarted
+    | RunFinished
+    | RunFailed
+    | ToolAutoAllowed
+    | ToolApprovalAsked
+    | ToolApproved
+    | ToolDenied
+)
 HarnessListener = Callable[[HarnessEvent], None]
 
 
@@ -124,6 +184,8 @@ class HarnessEvents:
     def to_dict(event: HarnessEvent) -> dict[str, Any]:
         """For a consumer that wants to persist or forward the event as data."""
         data = {"type": event.type, **asdict(event)}
+        if isinstance(event, _ToolDecision):
+            return data
         if data.get("harness_agent") is None:
             data.pop("harness_agent", None)
         return data
