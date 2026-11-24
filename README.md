@@ -394,6 +394,93 @@ raises a `HarnessError` coded `approval_not_pending` for an approval id the run
 never issued, or one already answered, and writes nothing, so a made-up id cannot
 cancel a real one.
 
+`runtime.decide(session, approval_id, approved, reason=None)` records the same
+decision and also lets an agent plan read it before the run resumes.
+
+## Agent plans
+
+An agent can propose a plan: a goal and an ordered list of steps. A person
+approves the plan, and your code works through it one step per turn. Plans are
+off unless you turn them on for the runtime and for the mode:
+
+```python
+from prism_harness import AgentRuntime, ModeRegistry, Plans
+
+modes = ModeRegistry(
+    {"modes": {"chat": {"tools": ["search"], "requires_approval": ["search"], "plans": True}}}
+)
+runtime = AgentRuntime(
+    client=client,
+    modes=modes,
+    tools=tools,
+    plans=Plans({"enabled": True}, index_store=harness.durable_store()),
+)
+```
+
+The mode's `plans` flag must be `True` or `False`; anything else is refused when
+the mode is resolved. With plans on, the model is offered four tools:
+`plan_draft`, `plan_complete_step`, `plan_pause_for_person` and
+`plan_propose_change`. None of them takes an approval id or names another step.
+
+**A person approves every plan before any step runs.** A draft stops the run
+like any approval. Answer it with `runtime.decide()` and resume with
+`runtime.send(session, "")`. Only your config can turn this off
+(`Plans({"enabled": True, "require_approval": False})`); the model cannot, and
+neither can a per-call option. A plan change and a `kind: approve` pause are
+always approved by a person. No `ToolPolicy` can name a plan tool, however it is
+spelled: such a policy is refused when it is built.
+
+Drive the plan from your code:
+
+```python
+handle = runtime.plan(session)  # raises PlansDisabled when plans are off
+outcome = handle.advance()  # at most one step: "ran", "waiting", "blocked", "done", "not_active"
+handle.current()  # PlanSnapshot or None; .to_dict() for your API
+handle.answer_step(step_id, "Paris", None, actor="user:7")
+handle.resume(actor="user:7")  # unblock; a failed step gets a retry step
+handle.cancel(actor="user:7")
+```
+
+Each `advance()` settles the previous step, then runs one turn with the user
+message "Continue the plan. Work on step N.". The step's instruction reaches the
+model only in the plan context, which is added to the system prompt of every
+turn in the session and never stored in the thread. A step is done only when the
+agent called `plan_complete_step` and the turn ended cleanly. A step whose turn
+ended without that call is tried again, and after `max_attempts` the plan is
+blocked. Only one `advance()` runs at a time per session; a second one raises a
+`HarnessError` coded `session_locked`. Who may answer, resume or cancel is your
+application's decision: authorize first, and pass the person as `actor`.
+
+Bounds (Fancy contract g282.3): at most 40 steps (20 by default), 160-character
+step titles, 200-character notes, and a plan whose first update would be over
+8 KB. A plan over a bound is refused when drafted, never cut short, and nothing
+is saved. Every refusal the model sees is a fixed sentence and a code, such as
+`[plan.bounds]`.
+
+`Plans` takes the same settings as the PHP package's `prism-harness.plans`
+config: `require_approval`, `max_steps`, `max_attempts`, `max_pauses_per_step`,
+`max_changes`, `max_advances`, `context: {max_chars, window}`,
+`events: {max_bytes}` and `reaper: {stale_after}`. A value out of range is
+refused when `Plans` is built.
+
+Every write emits a `PlanUpdated` event (`plan.updated`) carrying the plan id,
+revision, status, the approval holding it and step counts. It never carries a
+title, instruction, note, question or answer; fetch the plan with
+`current()` when the revision changes.
+
+**This Python port does not stream `plan_updated` steps.** It has no run step
+stream, so watch `PlanUpdated` events instead.
+
+If a queue or worker advances your plans, register a callback and call
+`reap()` on a schedule. It hands every stalled plan to your callback, and
+`diagnose(plans=runtime.plans)` fails until it has run recently. Pass
+`plans_queued=False` when every advance runs inline.
+
+```python
+runtime.plans.reap_using(lambda session_key, plan_id: queue.push(session_key))
+runtime.plans.reap()  # every few minutes
+```
+
 ## Task lists
 
 An agent given a goal keeps working across many requests. `session.tasks()` is

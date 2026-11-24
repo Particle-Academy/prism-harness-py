@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from prism_harness.modes import ModeRegistry
 from prism_harness.stores.manager import SessionStoreManager
 from prism_harness.tools import ToolAuthorizer, ToolRegistry
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from prism_harness.plans.service import Plans
 
 __all__ = ["DoctorFinding", "DoctorReport", "diagnose"]
 
@@ -48,6 +52,8 @@ def diagnose(
     tools: ToolRegistry | None = None,
     stores: SessionStoreManager | None = None,
     authorizer: ToolAuthorizer | None = None,
+    plans: Plans | None = None,
+    plans_queued: bool = True,
 ) -> DoctorReport:
     """Every check here corresponds to a failure this package already refuses at
     runtime. Those refusals are correct and they are also LATE: a mode nobody
@@ -58,6 +64,12 @@ def diagnose(
     run would have raised. A CLI is left to the consumer -- this returns the
     report as data, which is also what makes it testable and what lets a health
     endpoint serve it.
+
+    ``plans`` is the runtime's :class:`~prism_harness.plans.Plans`. With plans
+    on and ``plans_queued`` (the host advances plans from a queue or another
+    background worker), a missing or stale reaper heartbeat fails: one lost job
+    would otherwise stop a plan for ever with nothing to show for it. Pass
+    ``plans_queued=False`` when every advance runs inline.
     """
     findings: list[DoctorFinding] = []
 
@@ -78,7 +90,28 @@ def diagnose(
     if modes is not None:
         findings.extend(_check_modes(modes, tools))
 
+    if plans is not None and plans.enabled():
+        findings.append(_check_plan_reaper(plans, plans_queued))
+
     return DoctorReport(findings=findings)
+
+
+def _check_plan_reaper(plans: Plans, queued: bool) -> DoctorFinding:
+    """G-360: a plan driven by a queue needs a reaper (``Plans.reap()`` on a
+    schedule), or one lost job stops the plan for ever."""
+    if not queued:
+        return DoctorFinding(
+            check="plans", ok=True, detail="enabled; advanced inline, so no reaper is needed"
+        )
+    beat = plans.heartbeat()
+    if beat is None or plans.now() - beat["at"] > 3 * plans.limits().stale_after:
+        return DoctorFinding(
+            check="plans",
+            ok=False,
+            detail="enabled with a queue, and the plan reaper has not run recently. "
+            "Schedule Plans.reap().",
+        )
+    return DoctorFinding(check="plans", ok=True, detail="enabled; the plan reaper is running")
 
 
 def _check_stores(stores: SessionStoreManager) -> DoctorFinding:

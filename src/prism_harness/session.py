@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import secrets
+import time
 from collections.abc import Callable, Sequence
 from copy import copy, deepcopy
 from dataclasses import dataclass
@@ -10,6 +12,7 @@ from typing import Any, TypeVar
 
 from prism_harness.address import ParticipantRef, SessionAddress
 from prism_harness.address_index import IndexedSessionStore, StoreAddressIndex, store_lock_rank
+from prism_harness.errors import HarnessError
 from prism_harness.stores.base import SessionStore
 from prism_harness.tasks import DEFAULT_LEASE_SECONDS, StoreTaskSource
 from prism_harness.thread import Thread
@@ -213,6 +216,53 @@ class Session:
             else self._durable
         )
         return StoreTaskSource(store, f"{self.key()}:tasks", lease_seconds=lease_seconds)
+
+    def plan_store(self) -> SessionStore:
+        """Where this session's agent plan is stored (G-360): the durable store,
+        always. A half-finished plan that vanished on a deploy would read as
+        finished. Internal; reach a plan through ``runtime.plan(session)``."""
+        self._assert_writable()
+        return self._durable
+
+    def hold_plan_lock(self, ttl_seconds: float) -> Callable[[], None]:
+        """Hold the plan driver's lock, so one advance runs at a time per session.
+
+        A LEASE, not a callback lock, because an advance runs a whole model turn
+        between taking it and giving it back: a record in the lock store, with a
+        token and an expiry, written and removed under the store's own lock. A
+        second holder while it stands raises ``HarnessError`` with code
+        ``session_locked`` and does nothing. A holder that died releases it
+        when ``ttl_seconds`` runs out. Returns the release, which removes only
+        this holder's record and is safe to call twice.
+        """
+        self._assert_writable()
+        store = self._lock_store
+        key = f"{self.key()}:plan-advance"
+        token = secrets.token_hex(16)
+
+        def take() -> None:
+            held = store.get(key)
+            until = held.get("until") if isinstance(held, dict) else None
+            if isinstance(until, (int, float)) and until > time.time():
+                raise HarnessError.session_locked(key, 0)
+            store.put(key, {"token": token, "until": time.time() + ttl_seconds}, ttl_seconds)
+
+        store.with_lock(key, take, 10, 5)
+        released = [False]
+
+        def release() -> None:
+            if released[0]:
+                return
+            released[0] = True
+
+            def drop() -> None:
+                held = store.get(key)
+                if isinstance(held, dict) and held.get("token") == token:
+                    store.forget(key)
+
+            store.with_lock(key, drop, 10, 5)
+
+        return release
 
     def capability(self, name: str) -> dict[str, Any] | None:
         stored = self._durable.get(self._durable_key()) or {}

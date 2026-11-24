@@ -25,6 +25,16 @@ from prism_harness.events import (
 )
 from prism_harness.harness import AgentHarness, AgentHarnessConfig, PendingSession, PrismHarness
 from prism_harness.modes import AgentMode, ModeRegistry
+from prism_harness.plans import (
+    AdvanceOutcome,
+    PlanHandle,
+    PlanLimits,
+    PlanRefused,
+    Plans,
+    PlansDisabled,
+    PlanSnapshot,
+    PlanUpdated,
+)
 from prism_harness.registration import RegistrationCollision
 from prism_harness.runtime import (
     AgentResponse,
@@ -111,6 +121,7 @@ __all__ = [
     "SLOT_EPHEMERAL",
     "TOOL_TIERS",
     "AddressLimitExceeded",
+    "AdvanceOutcome",
     "AgentHarness",
     "AgentHarnessConfig",
     "AgentMode",
@@ -146,6 +157,13 @@ __all__ = [
     "ParticipantRef",
     "PendingApproval",
     "PendingSession",
+    "PlanHandle",
+    "PlanLimits",
+    "PlanRefused",
+    "PlanSnapshot",
+    "PlanUpdated",
+    "Plans",
+    "PlansDisabled",
     "PrismHarness",
     "RegistrationCollision",
     "RunBudget",
