@@ -27,6 +27,34 @@
 
 ### Fixed
 
+- Two decisions for the same approval can no longer both be recorded.
+  `record_approval()` and `AgentRuntime.decide()` now check that the approval
+  is pending and write the decision under the session lock, so a second answer
+  (a double click, two reviewers, a retry) waits and is refused with
+  `approval_not_pending`. A thread that already holds two decisions for one id
+  is read the same way everywhere that decides what runs: the first one
+  recorded counts, for the resumed call, for the plan, and for the plan tool's
+  own check. The thread view shown to a provider is unchanged.
+- Tool-call arguments nested as deep as the harness accepts (just under 500
+  levels) no longer make the approval path raise `RecursionError`. The args
+  digest is computed without recursion. A call whose arguments cannot be
+  digested is answered as not run, like a call whose arguments are not a JSON
+  object, so it can no longer stop every later `send()` of the session.
+- A plan tool the authorizer's offer policy withholds is now a tool the run
+  does not have. Before, a model calling `plan_draft` (or another plan tool)
+  that it was never offered still recorded a proposed plan and asked a person.
+- A named agent's `spend_ceiling` now holds across an approval pause: the
+  resume counts what the agent spent before the pause. A paused approval row
+  records it as `harness_agent_spend`; a malformed value is counted as an
+  unpriced call, so a ceiling refuses with `budget_unpriced`. Each new
+  `send()` and each `plan().advance()` without a shared `RunContext` is still
+  its own run tree; see "Spend ceilings per agent" in the README.
+- A subagent child resumed after an approval pause outside the subagent
+  runner keeps the provider and model its runner bound it to, recorded on the
+  paused row as `harness_binding`, instead of resolving them as a root run.
+- A resume reads stored calls with unusable arguments from the turn it
+  resumes only. Before, an older turn's unusable call refused a later approved
+  call that reused its id.
 - A decision for an approval the session is not waiting on is refused with
   `approval_not_pending` (G-354). Before, `record_approval()` wrote any id to
   the thread: a made-up id recorded while a call was pending did nothing for

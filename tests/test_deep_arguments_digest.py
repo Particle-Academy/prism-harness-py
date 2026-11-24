@@ -133,7 +133,10 @@ def test_the_digest_handles_every_accepted_depth(shape: str) -> None:
     digest = args_digest(value)
 
     assert digest.startswith("sha256:")
-    assert canonical_json(value).count("[" if shape == "list" else "{") == DEEPEST
+    # The list case is one object holding DEEPEST - 1 nested lists.
+    assert canonical_json(value).count("[" if shape == "list" else "{") == (
+        DEEPEST if shape == "object" else DEEPEST - 1
+    )
 
 
 def _list(depth: int) -> Any:

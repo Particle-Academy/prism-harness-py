@@ -254,6 +254,21 @@ other agent's spend; it is not a second account. Before each model call:
 A subagent refused this way comes back to its parent as a framed result, and the
 parent carries on. Ceilings are per run tree; there is no per-day window.
 
+What one run tree is:
+
+- A run that pauses for an approval and is resumed with `send(session, "")` is
+  the same run. The approval row it paused on records what its agent had spent
+  (`harness_agent_spend`), and the resume counts that against the ceiling, as
+  it counts the steps already taken. A subagent child resumed this way also
+  keeps the provider and model its runner bound it to (`harness_binding`).
+- Every other `send()` starts a new run tree, with nothing spent.
+- So does every `runtime.plan(session).advance()` that is not handed a
+  `RunContext`: each step of a plan gets the full ceiling. To hold a whole plan
+  to one ceiling, build one context and pass it to every advance:
+  `context = RunContext.root(plan_run_id, RunBudget(max_steps))`, then
+  `handle.advance(context)`. The ceiling is checked before each model call, so
+  the call that crosses it is paid for.
+
 Every event of a named agent's run carries `harness_agent`. A legacy run's events
 leave it out of `HarnessEvents.to_dict()`, so their shape is unchanged.
 

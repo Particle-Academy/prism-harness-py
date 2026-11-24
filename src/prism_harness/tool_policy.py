@@ -281,8 +281,11 @@ def _utf16(key: str) -> bytes:
     return key.encode("utf-16-be", "surrogatepass")
 
 
-def canonical_json(value: object) -> str:
-    """RFC 8785 (JCS): UTF-16 key order, no whitespace, ECMAScript numbers."""
+class _Text(str):
+    """Output already formatted, queued between the values still to format."""
+
+
+def _scalar(value: object) -> str | None:
     if value is None:
         return "null"
     if value is True:
@@ -296,19 +299,46 @@ def canonical_json(value: object) -> str:
         return _number(value)
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, (list, tuple)):
-        return "[" + ",".join(canonical_json(item) for item in value) + "]"
-    if isinstance(value, Mapping):
-        keys = sorted((str(key) for key in value), key=_utf16)
-        return (
-            "{"
-            + ",".join(
-                f"{json.dumps(key, ensure_ascii=False)}:{canonical_json(value[key])}"
-                for key in keys
-            )
-            + "}"
-        )
-    raise TypeError(f"Canonical JSON has no representation for {type(value).__name__}.")
+    return None
+
+
+def canonical_json(value: object) -> str:
+    """RFC 8785 (JCS): UTF-16 key order, no whitespace, ECMAScript numbers.
+
+    Walked with an explicit stack, never by recursion: tool arguments are
+    accepted up to ``_MAX_ARGUMENT_DEPTH`` levels deep, and a digest that ran
+    out of call stack on one of them would fail every decision about that call.
+    """
+    out: list[str] = []
+    pending: list[object] = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, _Text):
+            out.append(item)
+            continue
+        scalar = _scalar(item)
+        if scalar is not None:
+            out.append(scalar)
+        elif isinstance(item, (list, tuple)):
+            out.append("[")
+            pending.append(_Text("]"))
+            for index in range(len(item) - 1, -1, -1):
+                pending.append(item[index])
+                if index > 0:
+                    pending.append(_Text(","))
+        elif isinstance(item, Mapping):
+            out.append("{")
+            pending.append(_Text("}"))
+            keys = sorted((str(key) for key in item), key=_utf16)
+            for index in range(len(keys) - 1, -1, -1):
+                key = keys[index]
+                pending.append(item[key])
+                pending.append(_Text(json.dumps(key, ensure_ascii=False) + ":"))
+                if index > 0:
+                    pending.append(_Text(","))
+        else:
+            raise TypeError(f"Canonical JSON has no representation for {type(item).__name__}.")
+    return "".join(out)
 
 
 def args_digest(args: object) -> str:

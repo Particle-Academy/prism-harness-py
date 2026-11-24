@@ -31,7 +31,7 @@ from prism_harness import (
     ToolRegistry,
     record_approval,
 )
-from prism_harness.thread_rows import pending_approval_ids, thread_view, tool_result_row
+from prism_harness.thread_rows import pending_approval_ids, tool_result_row
 
 MODES = ModeRegistry(
     {
@@ -184,14 +184,8 @@ def test_a_deny_recorded_before_an_approve_stands(separate: bool) -> None:
     rig.agent.send(rig.session, "")
 
     assert rig.ran == []
-    view = thread_view([entry.message for entry in rig.session.thread().messages()])
-    folded = [
-        decision
-        for row in view
-        if row["type"] == "tool_result"
-        for decision in row["tool_approval_responses"]
-    ]
-    assert [decision["approved"] for decision in folded] == [False]
+    # The provider replay view still folds a later decision over an earlier one
+    # (the thread rows corpus pins that); it decides nothing.
     assert "no" in str(rig.requests[-1].messages)
 
 
