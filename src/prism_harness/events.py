@@ -55,7 +55,27 @@ class RunFailed:
     at: str = ""
 
 
-HarnessEvent = RunStarted | RunFinished | RunFailed
+@dataclass(frozen=True)
+class ToolApprovalExpired:
+    """Not run: the approval was stored by 0.5.2 or earlier without a marker, on
+    a call stored as no arguments, which cannot be told apart from a garbled
+    call. The model is told to call again.
+
+    Carries the arguments' DIGEST, never the arguments: ``args_digest`` is the
+    sha256 of the RFC 8785 canonical JSON of no arguments (``{}``), the same
+    value later versions emit for this event.
+    """
+
+    type: str = field(default="tool_approval_expired", init=False)
+    run_id: str = ""
+    session_key: str = ""
+    tool: str = ""
+    args_digest: str = ""
+    #: Always ``policy``: no person decided it; the stored row was ambiguous.
+    decided_by: str = "policy"
+
+
+HarnessEvent = RunStarted | RunFinished | RunFailed | ToolApprovalExpired
 HarnessListener = Callable[[HarnessEvent], None]
 
 

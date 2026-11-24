@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -13,13 +14,21 @@ from typing import Any, TypedDict
 from prism_harness.address import validate_agent
 from prism_harness.attachments import admit_attachments
 from prism_harness.errors import HarnessError
-from prism_harness.events import HarnessEvents, RunFailed, RunFinished, RunStarted
+from prism_harness.events import (
+    HarnessEvents,
+    RunFailed,
+    RunFinished,
+    RunStarted,
+    ToolApprovalExpired,
+)
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import (
+    ARGUMENTS_AS_SENT,
     ToolCallInput,
+    ambiguous_calls,
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
@@ -546,8 +555,12 @@ class AgentRuntime:
                     if call.id not in unusable and mode.needs_approval(call.name)
                 ]
             )
-            requests = [
-                {"approval_id": f"apr_{uuid.uuid4().hex}", "tool_call_id": call.id}
+            requests: list[dict[str, Any]] = [
+                {
+                    "approval_id": f"apr_{uuid.uuid4().hex}",
+                    "tool_call_id": call.id,
+                    "arguments_format": ARGUMENTS_AS_SENT,
+                }
                 for call in gated
             ]
 
@@ -694,7 +707,7 @@ class AgentRuntime:
             if work is None:
                 return list(offered)
 
-            calls, results, decisions, approval_ids, scope = work
+            calls, results, decisions, approval_ids, scope, ambiguous = work
             # Bind calls, decisions and scope from the same locked snapshot.
             # A concurrent narrower approval also bounds the continuation.
             if scope is not None and scope[1] and not legacy_diagnostic_emitted:
@@ -721,6 +734,22 @@ class AgentRuntime:
                             call, f"Not run: the arguments for {call.name} are not a JSON object."
                         )
                     )
+                elif decision is not None and decision["approved"] and call.id in ambiguous:
+                    # Stored by 0.5.2 or earlier with no marker. Not run, and
+                    # recorded without arguments; the model is told to call
+                    # again, and a new call is a new approval for the person.
+                    cleared = ToolCallInput(
+                        id=call.id, name=call.name, arguments={}, result_id=call.result_id
+                    )
+                    self._emit(
+                        ToolApprovalExpired(
+                            run_id=run_id,
+                            session_key=live.key(),
+                            tool=call.name,
+                            args_digest=_NO_ARGUMENTS_DIGEST,
+                        )
+                    )
+                    resolved.append(tool_result_entry(cleared, _approval_expired(call.name)))
                 elif decision is not None and decision["approved"]:
                     called.append(call.name)
                     resolved.append(self._run_approved(bounded, call))
@@ -754,6 +783,7 @@ class AgentRuntime:
             dict[str, dict[str, Any]],
             dict[str, str],
             tuple[list[str], bool] | None,
+            set[str],
         ]
         | None
     ):
@@ -791,8 +821,16 @@ class AgentRuntime:
             and (row["id"] in approval_ids or mode.needs_approval(row["name"]))
         ]
 
+        if not calls:
+            return None
+
         return (
-            (calls, results, decisions, approval_ids, approval_tool_scope(rows)) if calls else None
+            calls,
+            results,
+            decisions,
+            approval_ids,
+            approval_tool_scope(rows),
+            ambiguous_calls(assistant),
         )
 
     @classmethod
@@ -890,7 +928,7 @@ class AgentRuntime:
             stopped_because=stopped_because,
         )
 
-    def _emit(self, event: RunStarted | RunFinished | RunFailed) -> None:
+    def _emit(self, event: RunStarted | RunFinished | RunFailed | ToolApprovalExpired) -> None:
         if self._events is not None:
             self._events.emit(event)
 
@@ -921,6 +959,17 @@ def record_approval(
             )
         ],
         run["id"] if run else None,
+    )
+
+
+#: sha256 of the RFC 8785 canonical JSON of no arguments, ``{}``.
+_NO_ARGUMENTS_DIGEST = "sha256:" + hashlib.sha256(b"{}").hexdigest()
+
+
+def _approval_expired(tool: str) -> str:
+    return (
+        f"Not run: the approval for {tool} was recorded by an earlier version and has expired. "
+        "Call the tool again if it is still needed, and the person will be asked to approve it again."
     )
 
 

@@ -17,6 +17,7 @@ from prism_harness.events import (
     RunFailed,
     RunFinished,
     RunStarted,
+    ToolApprovalExpired,
 )
 from prism_harness.harness import AgentHarness, AgentHarnessConfig, PendingSession, PrismHarness
 from prism_harness.modes import AgentMode, ModeRegistry
@@ -154,6 +155,7 @@ __all__ = [
     "TaskState",
     "Thread",
     "ThreadMessage",
+    "ToolApprovalExpired",
     "ToolAuthorizer",
     "ToolCallInput",
     "ToolFactory",
