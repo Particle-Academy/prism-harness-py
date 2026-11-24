@@ -459,7 +459,11 @@ def test_writes_the_request_onto_the_assistant_row() -> None:
         m.message for m in session.thread().messages() if m.message["type"] == "assistant"
     )
     assert assistant["tool_approval_requests"] == [
-        {"approval_id": response.pending_approvals[0].id, "tool_call_id": "c1"}
+        {
+            "approval_id": response.pending_approvals[0].id,
+            "tool_call_id": "c1",
+            "arguments_format": 1,
+        }
     ]
 
 

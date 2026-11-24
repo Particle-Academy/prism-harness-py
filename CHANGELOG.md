@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed
+
+- Approval requests are now written with `arguments_format: 1`, which records
+  that the call's arguments were stored as the model sent them.
+- An approved call whose request has no `arguments_format` and whose stored
+  arguments are empty no longer runs on resume. 0.5.1 and earlier stored a
+  call whose arguments arrived as a bare number or boolean as no arguments, so
+  the two cannot be told apart. The call's result, recorded with no arguments,
+  says the approval expired and asks the model to call the tool again; a new
+  call needs a new approval. A `tool_approval_expired` event records it. Approvals pending
+  with no arguments when you upgrade expire once, including ones written by the
+  previous release.
+
 ### Fixed
 
 - A run's step limit (`max_steps`, and `max_steps_ceiling` for a named agent)

@@ -34,6 +34,7 @@ from prism_harness import (
     Participant,
     PrismHarness,
     Session,
+    ToolApprovalExpired,
     ToolRegistry,
     record_approval,
 )
@@ -97,7 +98,11 @@ class _Run:
                 {
                     "default": "chat",
                     "modes": {
-                        "chat": {"tools": ["lookup"], "max_steps": 4, "requires_approval": ["lookup"]}
+                        "chat": {
+                            "tools": ["lookup"],
+                            "max_steps": 4,
+                            "requires_approval": ["lookup"],
+                        }
                     },
                 }
             ),
@@ -168,9 +173,11 @@ def test_expires_the_row_the_released_version_wrote(form: str) -> None:
     assert "tool_approved" not in types
     expired = [event for event in run.seen if event.type == "tool_approval_expired"]
     assert len(expired) == 1
-    assert not hasattr(expired[0], "arguments")
-    assert expired[0].tool == "lookup"
-    assert expired[0].decided_by == "policy"
+    event = expired[0]
+    assert isinstance(event, ToolApprovalExpired)
+    assert not hasattr(event, "arguments")
+    assert event.tool == "lookup"
+    assert event.decided_by == "policy"
 
 
 def test_asks_the_person_again_when_the_model_calls_again() -> None:
@@ -215,11 +222,19 @@ def test_leaves_a_denied_one_denied() -> None:
 def test_runs_a_marked_approval_on_a_call_with_no_arguments() -> None:
     session = _session()
     first = _Run(
-        [LlmResponse(text="", finish_reason="tool_calls", tool_calls=[LlmToolCall("call-1", "lookup", {})])]
+        [
+            LlmResponse(
+                text="",
+                finish_reason="tool_calls",
+                tool_calls=[LlmToolCall("call-1", "lookup", {})],
+            )
+        ]
     )
     paused = first.agent.send(session, "Look it up.")
     assistant = next(
-        entry.message for entry in session.thread().messages() if entry.message.get("type") == "assistant"
+        entry.message
+        for entry in session.thread().messages()
+        if entry.message.get("type") == "assistant"
     )
     assert assistant["tool_approval_requests"][0].get("arguments_format") == 1
 

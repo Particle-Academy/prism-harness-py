@@ -21,6 +21,7 @@ from prism_harness.events import (
     RunFinished,
     RunStarted,
     ToolApprovalAsked,
+    ToolApprovalExpired,
     ToolApproved,
     ToolAutoAllowed,
     ToolDenied,
@@ -30,7 +31,9 @@ from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import (
+    ARGUMENTS_AS_SENT,
     ToolCallInput,
+    ambiguous_stored_calls,
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
@@ -271,7 +274,9 @@ class AgentRuntime:
 
     def _tool_decision(
         self,
-        kind: type[ToolAutoAllowed | ToolApprovalAsked | ToolApproved | ToolDenied],
+        kind: type[
+            ToolAutoAllowed | ToolApprovalAsked | ToolApproved | ToolDenied | ToolApprovalExpired
+        ],
         session: Session,
         run_id: str,
         call: ToolCallInput,
@@ -679,8 +684,12 @@ class AgentRuntime:
                     auto_allowed.append(call)
                 else:
                     gated.append(call)
-            requests = [
-                {"approval_id": f"apr_{uuid.uuid4().hex}", "tool_call_id": call.id}
+            requests: list[dict[str, Any]] = [
+                {
+                    "approval_id": f"apr_{uuid.uuid4().hex}",
+                    "tool_call_id": call.id,
+                    "arguments_format": ARGUMENTS_AS_SENT,
+                }
                 for call in gated
             ]
 
@@ -856,7 +865,9 @@ class AgentRuntime:
                 )
             bounded = [tool for tool in offered if scope is not None and tool.name in scope[0]]
             resolved: list[dict[str, Any]] = []
-            unusable = unusable_stored_calls([entry.message for entry in live.thread().messages()])
+            stored_rows = [entry.message for entry in live.thread().messages()]
+            unusable = unusable_stored_calls(stored_rows)
+            ambiguous = ambiguous_stored_calls(stored_rows)
 
             for row in calls:
                 call = ToolCallInput(
@@ -875,6 +886,17 @@ class AgentRuntime:
                             call, f"Not run: the arguments for {call.name} are not a JSON object."
                         )
                     )
+                elif decision is not None and decision["approved"] and call.id in ambiguous:
+                    # Stored by 0.5.1 or earlier with no marker. Not run, and
+                    # recorded without arguments; the model is told to call
+                    # again, and a new call is a new approval for the person.
+                    cleared = ToolCallInput(
+                        id=call.id, name=call.name, arguments={}, result_id=call.result_id
+                    )
+                    self._tool_decision(
+                        ToolApprovalExpired, live, run_id, cleared, declared, "policy"
+                    )
+                    resolved.append(tool_result_entry(cleared, _approval_expired(call.name)))
                 elif decision is not None and decision["approved"]:
                     self._tool_decision(ToolApproved, live, run_id, call, declared, "person")
                     called.append(call.name)
@@ -1051,6 +1073,13 @@ class AgentRuntime:
     def _emit(self, event: HarnessEvent) -> None:
         if self._events is not None:
             self._events.emit(event)
+
+
+def _approval_expired(tool: str) -> str:
+    return (
+        f"Not run: the approval for {tool} was recorded by an earlier version and has expired. "
+        "Call the tool again if it is still needed, and the person will be asked to approve it again."
+    )
 
 
 def _offered(offered: Sequence[HarnessTool], name: str) -> HarnessTool | None:

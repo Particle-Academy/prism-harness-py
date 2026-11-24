@@ -36,11 +36,24 @@ class ToolCallInput:
     reasoning_summary: Sequence[Any] | None = None
 
 
+#: The marker on an approval request whose call was stored exactly as the model
+#: sent it. 0.5.1 and earlier wrote none, and stored a call that a client handed
+#: over as no arguments, which earlier cores also did for a bare number or
+#: boolean on the wire, as ``{}``. Such an approval expires instead of running.
+ARGUMENTS_AS_SENT = 1
+
+
+def is_marked(request: Mapping[str, Any]) -> bool:
+    """Whether an approval request carries the marker, as an integer and nothing else."""
+    value = request.get("arguments_format")
+    return type(value) is int and value == ARGUMENTS_AS_SENT
+
+
 def assistant_row(
     content: str,
     tool_calls: Sequence[ToolCallInput],
     additional_content: Mapping[str, Any] | None = None,
-    approval_requests: Sequence[Mapping[str, str]] = (),
+    approval_requests: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     return {
         "type": "assistant",
@@ -201,6 +214,33 @@ def unusable_stored_calls(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     }
 
 
+def ambiguous_stored_calls(rows: Sequence[Mapping[str, Any]]) -> set[str]:
+    """The ids of stored calls whose approval expires rather than runs.
+
+    The request has no marker and the call was stored as no arguments, which is
+    also how 0.5.1 and earlier stored a call an earlier core had parsed from a
+    bare number or boolean. Read from the rows as written, like
+    ``unusable_stored_calls``.
+    """
+    unmarked = {
+        request["tool_call_id"]
+        for row in thread_view(rows)
+        if row.get("type") == "assistant"
+        for request in row.get("tool_approval_requests", [])
+        if not is_marked(request)
+    }
+    ambiguous: set[str] = set()
+    for row in rows:
+        if row.get("type") != "assistant":
+            continue
+        for call in _dicts(row.get("tool_calls")):
+            call_id = _text(call.get("id"))
+            usable = usable_arguments(call.get("arguments"))
+            if call_id in unmarked and usable is not None and len(usable) == 0:
+                ambiguous.add(call_id)
+    return ambiguous
+
+
 def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, Any] | None:
     kind = row.get("type")
 
@@ -225,6 +265,7 @@ def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, 
                 {
                     "approval_id": _text(request.get("approval_id")),
                     "tool_call_id": _text(request.get("tool_call_id")),
+                    **({"arguments_format": ARGUMENTS_AS_SENT} if is_marked(request) else {}),
                 }
                 for request in _dicts(row.get("tool_approval_requests"))
             ],
