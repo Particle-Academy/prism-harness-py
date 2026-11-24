@@ -81,7 +81,7 @@ def plans_op(
 
     kind = op["op"]
     if kind == "draft":
-        draft = machine.check_draft(op["args"], limits)
+        draft = machine.check_draft(op["args"], limits, op.get("authorized", True))
         if machine.is_live(state["plan"]):
             raise PlanRefused("plan.exists")
         state["plan"] = machine.propose(draft, op["digest"], ids, now, RUN, limits)
@@ -117,7 +117,7 @@ def plans_op(
         return {"ok": True}
     if kind == "pause":
         state["plan"], code = machine.pause(
-            needs(), op["args"], op["digest"], ids, limits, now, RUN
+            needs(), op["args"], op["digest"], ids, limits, now, RUN, op.get("authorized", True)
         )
         return {"ok": True} if code is None else {"refused": code}
     if kind == "answer":
@@ -138,7 +138,9 @@ def plans_op(
             else entry
             for entry in args["steps"]
         ]
-        state["plan"] = machine.propose_change(current, args, op["digest"], ids, limits, now, RUN)
+        state["plan"] = machine.propose_change(
+            current, args, op["digest"], ids, limits, now, RUN, op.get("authorized", True)
+        )
         return {"ok": True}
     if kind == "apply_change":
         state["plan"] = machine.apply_change(needs(), op["digest"], now, RUN)
@@ -224,7 +226,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 37
+        assert len(CASES) == 38
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:

@@ -35,6 +35,7 @@ from prism_harness import (
     Participant,
     PrismHarness,
     Session,
+    ToolAuthorizer,
     ToolPolicy,
     ToolRegistry,
     diagnose,
@@ -90,6 +91,7 @@ class Rig:
         plans: dict[str, Any] | None = None,
         mode: dict[str, Any] | None = None,
         policy: ToolPolicy | None = None,
+        authorizer: ToolAuthorizer | None = None,
     ) -> None:
         self.queue: list[LlmResponse] = []
         self.requests: list[LlmRequest] = []
@@ -118,6 +120,7 @@ class Rig:
             events=events,
             config={"provider": "openai", "model": "gpt-4o"},
             tool_policy=policy,
+            authorizer=authorizer,
             plans=Plans(
                 {"enabled": True, **(plans or {})}, index_store=self.harness.durable_store()
             ),
@@ -936,3 +939,91 @@ def test_plan_config_is_refused_rather_than_clamped() -> None:
         Plans({"enabled": "yes"})
     with pytest.raises(TypeError):
         Plans({"enabled": True, "require_approval": "false"})
+
+
+# -- a host call policy that forbids a plan tool (G-360 follow-up) ---------
+#
+# The host's call policy is asked BEFORE a draft, a change or an approval
+# pause is recorded. A forbidden draft writes no plan and leaves the live-plan
+# slot free; a forbidden change or pause changes nothing.
+
+
+def authorized(forbidden: set[str]) -> Rig:
+    return Rig(
+        authorizer=ToolAuthorizer(
+            enabled=True,
+            offer=lambda *_: True,
+            call=lambda _session, tool, _args: tool.name not in forbidden,
+        )
+    )
+
+
+def quietly(run: Any) -> None:
+    try:
+        run()
+    except HarnessError:
+        pass
+
+
+def test_a_plan_runs_with_the_authorizer_on_and_nothing_forbidden() -> None:
+    rig = authorized(set())
+    rig.calls(("plan_draft", draft()))
+    rig.text("spare")
+    pending = rig.send("Plan the trip").pending_approvals
+    assert len(pending) == 1
+    assert rig.plan()["status"] == "proposed"
+
+
+def test_a_forbidden_draft_records_nothing_and_keeps_the_slot_free() -> None:
+    forbidden = {"plan_draft"}
+    rig = authorized(forbidden)
+    rig.calls(("plan_draft", draft()))
+    rig.text("Refused.")
+    quietly(lambda: rig.send("Plan the trip"))
+    assert rig.runtime.plan(rig.session).current() is None
+
+    forbidden.clear()
+    rig.queue.clear()
+    rig.calls(("plan_draft", draft()))
+    assert len(rig.send("Plan the trip").pending_approvals) == 1
+    assert rig.plan()["status"] == "proposed"
+
+
+def test_a_forbidden_change_records_nothing() -> None:
+    forbidden: set[str] = set()
+    rig = authorized(forbidden)
+    rig.active()
+    plan = rig.plan()
+    forbidden.add("plan_propose_change")
+    rig.calls(
+        (
+            "plan_propose_change",
+            {
+                "reason": "better",
+                "base_revision": plan["revision"],
+                "steps": [
+                    {"id": plan["steps"][0]["id"]},
+                    {"title": "New", "instruction": "Do it.", "owner": "agent"},
+                ],
+            },
+        )
+    )
+    rig.text("Refused.")
+    quietly(lambda: rig.send("Change it"))
+    after = rig.plan()
+    assert after["pendingChange"] is None
+    assert after["status"] == "active"
+    assert after["counters"]["changes"] == 0
+
+
+def test_a_forbidden_approval_pause_inserts_no_person_step() -> None:
+    forbidden: set[str] = set()
+    rig = authorized(forbidden)
+    rig.active()
+    forbidden.add("plan_pause_for_person")
+    rig.calls(("plan_pause_for_person", {"kind": "approve", "question": "May I book it?"}))
+    rig.text("Refused.")
+    quietly(lambda: rig.runtime.plan(rig.session).advance())
+    plan = rig.plan()
+    assert [step["owner"] for step in plan["steps"]] == ["agent", "agent"]
+    assert plan["steps"][0]["pauses"] == 0
