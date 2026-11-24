@@ -250,3 +250,53 @@ def test_runs_an_unmarked_approval_on_a_call_with_named_arguments() -> None:
     run, _response, _stored = _resume(_stored_row({"city": "Paris"}, {}), "apr-1")
 
     assert run.received == [{"city": "Paris"}]
+
+
+def test_runs_a_marked_approval_on_a_call_id_an_older_unmarked_request_used() -> None:
+    # Some providers number calls per response, so ids repeat across turns.
+    # Only the turn being resumed decides whether an approval is ambiguous.
+    session = _session()
+    session.thread().record(
+        [
+            *_stored_row({}, {}),
+            {
+                "type": "tool_result",
+                "tool_results": [
+                    {
+                        "tool_call_id": "call-1",
+                        "tool_name": "lookup",
+                        "args": {},
+                        "result": "done before",
+                        "tool_call_result_id": None,
+                        "artifacts": [],
+                    }
+                ],
+                "tool_approval_responses": [
+                    {"approval_id": "apr-1", "approved": False, "reason": None}
+                ],
+            },
+            {
+                "type": "assistant",
+                "content": "ok",
+                "tool_calls": [],
+                "additional_content": {},
+                "tool_approval_requests": [],
+            },
+        ]
+    )
+    first = _Run(
+        [
+            LlmResponse(
+                text="", finish_reason="tool_calls", tool_calls=[LlmToolCall("call-1", "lookup", {})]
+            )
+        ]
+    )
+    paused = first.agent.send(session, "Again.")
+    assert len(paused.pending_approvals) == 1
+
+    second = _Run([])
+    record_approval(session, paused.pending_approvals[0].id, True)
+    second.agent.send(session, "")
+
+    assert second.received == [{}]
+    assert "tool_approval_expired" not in [event.type for event in second.seen]
