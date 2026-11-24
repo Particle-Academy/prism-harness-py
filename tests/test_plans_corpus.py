@@ -58,7 +58,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         return f"{prefix}_{counter[0]:026d}"
 
     ids = PlanIds(mint)
-    state: dict[str, Any] = {"plan": None}
+    state: dict[str, Any] = {"plan": None, "marked": None}
     results: list[dict[str, Any]] = []
     for op in case["ops"]:
         now = op.get("now", case.get("now", 1767225600))
@@ -151,6 +151,11 @@ def plans_op(
     if kind == "cancel":
         state["plan"] = machine.cancel(needs(), now)
         return {"ok": True}
+    if kind == "mark":
+        state["marked"] = view.steps(needs())
+        return {"ok": True}
+    if kind == "update_since_mark":
+        return {"update": view.update(needs(), state["marked"])}
     if kind == "stalled":
         return {"stalled": machine.stalled(needs(), now, op["stale_after"])}
     if kind == "policy":
@@ -226,7 +231,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 38
+        assert len(CASES) == 39
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:

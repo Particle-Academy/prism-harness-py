@@ -109,14 +109,13 @@ def counts(plan: Mapping[str, Any]) -> dict[str, int]:
 
 def update(plan: Mapping[str, Any], previous: Sequence[Mapping[str, Any]] | None) -> dict[str, Any]:
     """The fields of a ``plan_updated`` run step. The full list goes out on a
-    snapshot; otherwise only the steps that differ from ``previous``. A step that
-    disappeared forces a snapshot, because a patch cannot remove one."""
+    snapshot; otherwise only the steps that differ from ``previous``. Any change
+    to the list of step ids forces a snapshot, because a patch can neither
+    remove a step nor say where a new one goes."""
     current = steps(plan)
-    snapshot = previous is None
-    if previous is not None:
-        ids = [step["id"] for step in current]
-        if any(old["id"] not in ids for old in previous):
-            snapshot = True
+    snapshot = previous is None or [old["id"] for old in previous] != [
+        step["id"] for step in current
+    ]
     sent = current
     if not snapshot and previous is not None:
         before = {old["id"]: old for old in previous}
