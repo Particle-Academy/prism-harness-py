@@ -1,0 +1,69 @@
+{
+  "written_by": "prism-ai-harness 0.5.1 with prism-ai-core 0.10.0",
+  "mistral_wire_number": {
+    "approval_id": "apr_71c7025cba5c488ba25dcbc23aac651c",
+    "rows": [
+      {
+        "type": "user",
+        "content": "Look it up."
+      },
+      {
+        "type": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call-1",
+            "name": "lookup",
+            "arguments": {},
+            "result_id": null,
+            "reasoning_id": null,
+            "reasoning_summary": null
+          }
+        ],
+        "additional_content": {},
+        "tool_approval_requests": [
+          {
+            "approval_id": "apr_71c7025cba5c488ba25dcbc23aac651c",
+            "tool_call_id": "call-1"
+          }
+        ],
+        "harness_tool_names": [
+          "lookup"
+        ]
+      }
+    ]
+  },
+  "anthropic_wire_false": {
+    "approval_id": "apr_b0e4d89634bc48bfbe031ba00515f72a",
+    "rows": [
+      {
+        "type": "user",
+        "content": "Look it up."
+      },
+      {
+        "type": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call-1",
+            "name": "lookup",
+            "arguments": {},
+            "result_id": null,
+            "reasoning_id": null,
+            "reasoning_summary": null
+          }
+        ],
+        "additional_content": {},
+        "tool_approval_requests": [
+          {
+            "approval_id": "apr_b0e4d89634bc48bfbe031ba00515f72a",
+            "tool_call_id": "call-1"
+          }
+        ],
+        "harness_tool_names": [
+          "lookup"
+        ]
+      }
+    ]
+  }
+}
