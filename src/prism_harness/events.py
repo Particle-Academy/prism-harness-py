@@ -119,6 +119,16 @@ class ToolDenied(_ToolDecision):
     type: str = field(default="tool_denied", init=False)
 
 
+@dataclass(frozen=True)
+class ToolApprovalExpired(_ToolDecision):
+    """Not run: the approval was stored by 0.5.1 or earlier without a marker, on
+    a call stored as no arguments, which cannot be told apart from a garbled
+    call. The model is told to call again. ``args_digest`` is of no arguments.
+    """
+
+    type: str = field(default="tool_approval_expired", init=False)
+
+
 HarnessEvent = (
     RunStarted
     | RunFinished
@@ -127,6 +137,7 @@ HarnessEvent = (
     | ToolApprovalAsked
     | ToolApproved
     | ToolDenied
+    | ToolApprovalExpired
 )
 HarnessListener = Callable[[HarnessEvent], None]
 

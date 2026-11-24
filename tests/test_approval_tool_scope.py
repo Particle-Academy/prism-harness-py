@@ -126,7 +126,7 @@ def exercise(
                 "",
                 [ToolCallInput("safe-call", "scope_safe", {})],
                 {},
-                [{"approval_id": "approval-1", "tool_call_id": "safe-call"}],
+                [{"approval_id": "approval-1", "tool_call_id": "safe-call", "arguments_format": 1}],
             )
             if "scope" in seed:
                 row["harness_tool_names"] = seed["scope"]
@@ -170,7 +170,13 @@ def exercise(
                             "",
                             [ToolCallInput("new-call", "scope_ceiling", {})],
                             {},
-                            [{"approval_id": "new-approval", "tool_call_id": "new-call"}],
+                            [
+                                {
+                                    "approval_id": "new-approval",
+                                    "tool_call_id": "new-call",
+                                    "arguments_format": 1,
+                                }
+                            ],
                         )
                         row["harness_tool_names"] = ["scope_safe"]
                         fresh.thread().record(

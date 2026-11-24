@@ -36,11 +36,24 @@ class ToolCallInput:
     reasoning_summary: Sequence[Any] | None = None
 
 
+#: The marker on an approval request whose call was stored exactly as the model
+#: sent it. 0.5.1 and earlier wrote none, and stored a call that a client handed
+#: over as no arguments, which earlier cores also did for a bare number or
+#: boolean on the wire, as ``{}``. Such an approval expires instead of running.
+ARGUMENTS_AS_SENT = 1
+
+
+def is_marked(request: Mapping[str, Any]) -> bool:
+    """Whether an approval request carries the marker, as an integer and nothing else."""
+    value = request.get("arguments_format")
+    return type(value) is int and value == ARGUMENTS_AS_SENT
+
+
 def assistant_row(
     content: str,
     tool_calls: Sequence[ToolCallInput],
     additional_content: Mapping[str, Any] | None = None,
-    approval_requests: Sequence[Mapping[str, str]] = (),
+    approval_requests: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     return {
         "type": "assistant",
@@ -201,6 +214,32 @@ def unusable_stored_calls(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     }
 
 
+def ambiguous_calls(assistant: Mapping[str, Any]) -> set[str]:
+    """The ids of the calls in one assistant turn whose approval expires rather than runs.
+
+    A request for the call has no marker, and the call is stored as no
+    arguments, which is also how 0.5.1 and earlier stored a call an earlier
+    core had parsed from a bare number or boolean.
+
+    Read from the one turn being resumed, never the whole thread: providers that
+    number calls per response reuse ids, and an older turn's request must not
+    decide a newer one. Pass the turn as the thread view gives it; a call whose
+    stored arguments cannot be used is refused before this is asked.
+    """
+    unmarked = {
+        _text(request.get("tool_call_id"))
+        for request in _dicts(assistant.get("tool_approval_requests"))
+        if not is_marked(request)
+    }
+    return {
+        _text(call.get("id"))
+        for call in _dicts(assistant.get("tool_calls"))
+        if _text(call.get("id")) in unmarked
+        and isinstance(call.get("arguments"), Mapping)
+        and len(call["arguments"]) == 0
+    }
+
+
 def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, Any] | None:
     kind = row.get("type")
 
@@ -225,6 +264,7 @@ def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, 
                 {
                     "approval_id": _text(request.get("approval_id")),
                     "tool_call_id": _text(request.get("tool_call_id")),
+                    **({"arguments_format": ARGUMENTS_AS_SENT} if is_marked(request) else {}),
                 }
                 for request in _dicts(row.get("tool_approval_requests"))
             ],
