@@ -37,6 +37,7 @@ from prism_harness.thread_rows import (
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
+    pending_approval_ids,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -1109,7 +1110,15 @@ def record_approval(
     pending, record them all first.
 
     ``approval_id`` is :attr:`PendingApproval.id`, not the tool call id.
+
+    It must name an approval the session is waiting on (G-354). An id the run
+    never issued, or one already answered, raises ``approval_not_pending``
+    before anything is written.
     """
+    rows = [entry.message for entry in session.thread().messages()]
+    if approval_id not in pending_approval_ids(rows):
+        raise HarnessError.approval_not_pending(approval_id)
+
     run = session.run()
 
     session.thread().record(

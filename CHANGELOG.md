@@ -17,6 +17,13 @@
 
 ### Fixed
 
+- A decision for an approval the session is not waiting on is refused with
+  `approval_not_pending` (G-354). Before, `record_approval()` wrote any id to
+  the thread: a made-up id recorded while a call was pending did nothing for
+  that call, which the resume then closed as "No approval response provided",
+  and one recorded while nothing was pending invited a model turn with no new
+  user message. An id the run never issued, or one already answered, is now
+  refused before anything is written.
 - A run's step limit (`max_steps`, and `max_steps_ceiling` for a named agent)
   now covers the whole run, including every pause for an approval and every
   resume after one. A resume (`send(session, "")`) continues the paused run's step count

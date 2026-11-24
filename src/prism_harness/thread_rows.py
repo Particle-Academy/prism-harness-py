@@ -144,6 +144,35 @@ def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
     return steps
 
 
+def pending_approval_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The approval ids the run paused at the transcript tail is still waiting
+    on: issued by the last assistant step and not yet answered (G-354).
+
+    Read from the stored rows, newest first. A user turn, or an assistant step
+    that asked nothing, ends the scope: nothing before it is pending. An id
+    answered once is no longer pending.
+    """
+    answered: set[str] = set()
+    for row in reversed(rows):
+        kind = row.get("type")
+        if kind == "tool_result":
+            for response in _dicts(row.get("tool_approval_responses")):
+                if isinstance(response.get("approval_id"), str):
+                    answered.add(response["approval_id"])
+            continue
+        if kind == "user":
+            return []
+        if kind != "assistant":
+            continue
+        pending: list[str] = []
+        for request in _dicts(row.get("tool_approval_requests")):
+            approval_id = request.get("approval_id")
+            if isinstance(approval_id, str) and approval_id and approval_id not in answered:
+                pending.append(approval_id)
+        return list(dict.fromkeys(pending))
+    return []
+
+
 def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], bool] | None:
     """Stored approval authority, separate from the provider replay view."""
     decisions: dict[str, bool] = {}

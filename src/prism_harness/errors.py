@@ -51,6 +51,8 @@ class ErrorCode(str, Enum):
     TOOL_POLICY_REFUSED = "tool_policy_refused"
     #: A skill file was asked for that would resolve outside its own skill.
     SKILL_PATH_REFUSED = "skill_path_refused"
+    #: A decision named an approval the session is not waiting on (G-354).
+    APPROVAL_NOT_PENDING = "approval_not_pending"
     #: A task was added under an id the source already holds.
     DUPLICATE_TASK_ID = "duplicate_task_id"
     #: A worker id or a task id was the empty string.
@@ -411,6 +413,21 @@ class HarnessError(Exception):
             ErrorCode.ATTACHMENT_WITHOUT_PROMPT,
             "Attachments need a prompt to travel with. An empty prompt resumes a paused run and "
             "sends no user message, so these attachments would be dropped without a word.",
+        )
+
+    @classmethod
+    def approval_not_pending(cls, approval_id: str) -> HarnessError:
+        """A decision for an approval that is not pending (G-354).
+
+        Accepted, a made-up id was written to the thread, and the resume closed
+        the real call as unanswered, cancelling the person's decision; with
+        nothing pending, it invited a model turn with no new user message. The
+        same code in the PHP reference and the TypeScript port.
+        """
+        return cls(
+            ErrorCode.APPROVAL_NOT_PENDING,
+            f"No pending approval has the id [{approval_id}]. "
+            "It was never issued, or it has already been answered.",
         )
 
     @classmethod

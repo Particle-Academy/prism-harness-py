@@ -389,6 +389,11 @@ pending call with no decision is refused with "No approval response provided".
 A call that has a result never runs again. Who may approve is your application's
 decision: authorize before calling `record_approval()`.
 
+A decision must answer an approval the session is waiting on. `record_approval()`
+raises a `HarnessError` coded `approval_not_pending` for an approval id the run
+never issued, or one already answered, and writes nothing, so a made-up id cannot
+cancel a real one.
+
 ## Task lists
 
 An agent given a goal keeps working across many requests. `session.tasks()` is

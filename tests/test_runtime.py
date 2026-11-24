@@ -140,7 +140,10 @@ def test_failed_model_step_never_dispatches_tools_or_continues_on_resume(
         any(row["type"] == "tool_result" and "Not run" in json.dumps(row) for row in rows)
         == with_tools
     )
-    record_approval(session, "failed-call", True)
+    # The failed step issued no approval, so this answers nothing (G-354).
+    with pytest.raises(HarnessError) as refused:
+        record_approval(session, "failed-call", True)
+    assert refused.value.code == "approval_not_pending"
     runtime.send(session, "")
     assert state["models"] == 2
     assert state["tools"] == 0
