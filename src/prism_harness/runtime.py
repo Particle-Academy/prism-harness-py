@@ -1001,7 +1001,7 @@ class AgentRuntime:
                         )
                     )
                 elif decision is not None and decision["approved"] and call.id in ambiguous:
-                    # Stored by 0.5.1 or earlier with no marker. Not run, and
+                    # Stored by 0.5.2 or earlier with no marker. Not run, and
                     # recorded without arguments; the model is told to call
                     # again, and a new call is a new approval for the person.
                     cleared = ToolCallInput(

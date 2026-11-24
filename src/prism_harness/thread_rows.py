@@ -37,7 +37,7 @@ class ToolCallInput:
 
 
 #: The marker on an approval request whose call was stored exactly as the model
-#: sent it. 0.5.1 and earlier wrote none, and stored a call that a client handed
+#: sent it. 0.5.2 and earlier wrote none, and stored a call that a client handed
 #: over as no arguments, which earlier cores also did for a bare number or
 #: boolean on the wire, as ``{}``. Such an approval expires instead of running.
 ARGUMENTS_AS_SENT = 1
@@ -247,7 +247,7 @@ def ambiguous_calls(assistant: Mapping[str, Any]) -> set[str]:
     """The ids of the calls in one assistant turn whose approval expires rather than runs.
 
     A request for the call has no marker, and the call is stored as no
-    arguments, which is also how 0.5.1 and earlier stored a call an earlier
+    arguments, which is also how 0.5.2 and earlier stored a call an earlier
     core had parsed from a bare number or boolean.
 
     Read from the one turn being resumed, never the whole thread: providers that

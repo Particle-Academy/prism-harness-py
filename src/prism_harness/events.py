@@ -145,7 +145,7 @@ class ToolDenied(_ToolDecision):
 
 @dataclass(frozen=True)
 class ToolApprovalExpired(_ToolDecision):
-    """Not run: the approval was stored by 0.5.1 or earlier without a marker, on
+    """Not run: the approval was stored by 0.5.2 or earlier without a marker, on
     a call stored as no arguments, which cannot be told apart from a garbled
     call. The model is told to call again. ``args_digest`` is of no arguments.
     """
