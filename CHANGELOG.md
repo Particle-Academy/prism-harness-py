@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Agent plans (G-360). An agent proposes a plan, a person approves it, and
+  `runtime.plan(session).advance()` works through it one step per turn. Off
+  unless both `AgentRuntime(plans=Plans({"enabled": True}))` and the mode's
+  `plans` flag are on. See "Agent plans" in the README. This port does not
+  stream `plan_updated` steps; it emits a `PlanUpdated` event instead.
+- `AgentRuntime.decide()` records an approval decision and lets a plan read it.
+- No `ToolPolicy` may name a plan tool, in any spelling.
+
 ### Changed
 
 - Approval requests are now written with `arguments_format: 1`, which records

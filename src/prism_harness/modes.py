@@ -38,6 +38,8 @@ class AgentMode:
     model: str | None = None
     #: Named agents this mode's subagents may run as. Declared, never inherited.
     agents: list[str] = field(default_factory=list)
+    #: Whether runs in this mode may keep an agent plan (G-360). Off unless set.
+    plans: bool = False
 
     def needs_approval(self, tool: str) -> bool:
         """Whether a named tool needs a human before it runs IN THIS MODE.
@@ -168,6 +170,16 @@ class ModeRegistry:
                 "a lowercase agent id of 1-64 ASCII bytes."
             )
 
+        # G-360: a mode opts in to agent plans. Anything but true or false is
+        # refused, so a string "false" cannot quietly turn plans on.
+        plans = mode.get("plans", False)
+        if plans is None:
+            plans = False
+        if not isinstance(plans, bool):
+            raise HarnessError.mode_declaration(
+                f"Harness mode [{wanted}] declares a malformed plans flag: expected true or false."
+            )
+
         return AgentMode(
             name=wanted,
             system_prompt=prompt,
@@ -180,6 +192,7 @@ class ModeRegistry:
             provider=provider if isinstance(provider, str) else None,
             model=model if isinstance(model, str) else None,
             agents=agents,
+            plans=plans,
         )
 
     def _subagents_for(

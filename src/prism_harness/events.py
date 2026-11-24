@@ -11,6 +11,7 @@ __all__ = [
     "HarnessEvent",
     "HarnessEvents",
     "HarnessListener",
+    "PlanUpdated",
     "RunFailed",
     "RunFinished",
     "RunStarted",
@@ -68,6 +69,29 @@ class RunFailed:
     #: The named agent this run spends as (G-321), or None in the legacy
     #: namespace -- where :meth:`HarnessEvents.to_dict` omits it, so a legacy
     #: event keeps its shape. Unrelated to agent-integrations' presence id.
+    harness_agent: str | None = None
+
+
+@dataclass(frozen=True)
+class PlanUpdated:
+    """A plan was written (G-360): drafted, decided, settled, answered, resumed,
+    cancelled or swept, inside a run or outside one.
+
+    COUNTS AND IDS ONLY, and a fixed size. A client that sees a new revision
+    fetches the plan from the host (``runtime.plan(session).current()``). No
+    title, instruction, note, question or answer travels here. ``run_id`` is the
+    run that made the write, or '' for a host call made outside a run.
+    """
+
+    type: str = field(default="plan.updated", init=False)
+    run_id: str = ""
+    session_key: str = ""
+    plan_id: str = ""
+    revision: int = 0
+    status: str = ""
+    holding_approval_id: str | None = None
+    #: ``{total, todo, running, held, waiting, done, failed, skipped}``.
+    counts: dict[str, int] = field(default_factory=dict)
     harness_agent: str | None = None
 
 
@@ -138,6 +162,7 @@ HarnessEvent = (
     | ToolApproved
     | ToolDenied
     | ToolApprovalExpired
+    | PlanUpdated
 )
 HarnessListener = Callable[[HarnessEvent], None]
 

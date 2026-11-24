@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from prism_harness.address import validate_agent
 from prism_harness.attachments import admit_attachments
@@ -27,6 +27,7 @@ from prism_harness.events import (
     ToolDenied,
 )
 from prism_harness.modes import AgentMode, ModeRegistry
+from prism_harness.plans.service import Plans
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
@@ -46,6 +47,10 @@ from prism_harness.thread_rows import (
 from prism_harness.tool_arguments import usable_arguments
 from prism_harness.tool_policy import ToolPolicy, args_digest, tool_declaration
 from prism_harness.tools import HarnessTool, ToolAuthorizer, ToolRegistry
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from prism_harness.plans.handle import PlanHandle
+    from prism_harness.plans.tools import PlanTool
 
 __all__ = [
     "AgentResponse",
@@ -222,6 +227,7 @@ class AgentRuntime:
         narrow_requested_tools: bool | None = None,
         allow_legacy_tool_list_widening: bool = False,
         tool_policy: ToolPolicy | None = None,
+        plans: Plans | Mapping[str, Any] | None = None,
     ) -> None:
         if narrow_requested_tools is not None and not isinstance(narrow_requested_tools, bool):
             raise TypeError("narrow_requested_tools must be a boolean")
@@ -249,6 +255,43 @@ class AgentRuntime:
             validate_agent(agent)
             _validate_runtime_config(options)
         self._tool_policy = self._admit_policy(tool_policy or ToolPolicy.none())
+        # Agent plans (G-360): off unless the host turns them on here AND the
+        # session's mode sets ``plans``.
+        self._plans = plans if isinstance(plans, Plans) else Plans(plans)
+        self._plans._attach(modes, events)
+
+    @property
+    def plans(self) -> Plans:
+        """The agent plan settings and store (G-360)."""
+        return self._plans
+
+    def plan(self, session: Session) -> PlanHandle:
+        """This session's agent plan (G-360).
+
+        Off unless the host turned plans on (``plans={"enabled": True}``) AND
+        the session's mode sets ``plans``; otherwise raises
+        :class:`~prism_harness.plans.PlansDisabled`.
+        """
+        return self._plans.handle(session, self)
+
+    def decide(
+        self, session: Session, approval_id: str, approved: bool, reason: str | None = None
+    ) -> None:
+        """Record a person's decision, as :func:`record_approval` does, and let a
+        plan held on it read the decision before the run resumes (G-360).
+
+        Nothing runs until the next ``send()``. Who may decide is the
+        application's decision: authorize before calling.
+        """
+        record_approval(session, approval_id, approved, reason)
+        self._plans.decided(session)
+
+    def lock_ttl(self, session: Session) -> int:
+        """How long a held session lock lasts for this session's agent."""
+        ttl = self._settings(session).get("lock_ttl", _RESOLUTION_LOCK_SECONDS)
+        return (
+            ttl if isinstance(ttl, int) and not isinstance(ttl, bool) else _RESOLUTION_LOCK_SECONDS
+        )
 
     @property
     def tool_policy(self) -> ToolPolicy:
@@ -531,6 +574,15 @@ class AgentRuntime:
         )
 
         try:
+            # The plan context (G-360), computed once per run and never stored:
+            # a system prompt contribution, not a message. A turn with a new
+            # user message reads the plan as if nothing were pending.
+            plan_context = self._plans.context(session, prompt)
+            system_prompt = (
+                mode.system_prompt
+                if plan_context == ""
+                else "\n\n".join(part for part in (mode.system_prompt, plan_context) if part)
+            )
             if session.agent is None and not self._narrow_requested_tools:
                 resolved = self._tools.resolve(
                     list(tool_names) if tool_names else mode.tools, session
@@ -560,6 +612,7 @@ class AgentRuntime:
                     for tool in offered
                     if tool.name in names and ("*" in mode.tools or tool.name in mode.tools)
                 ]
+            offered, plan_gates = self._with_plan_tools(session, mode, offered, scope)
             called: list[str] = []
 
             # Decisions recorded since the run stopped are acted on FIRST, before
@@ -586,7 +639,19 @@ class AgentRuntime:
                 )
                 thread.record([turn], run_id)
 
-            return self._loop(session, mode, run, run_id, provider, model, offered, called, schema)
+            return self._loop(
+                session,
+                mode,
+                run,
+                run_id,
+                provider,
+                model,
+                offered,
+                called,
+                schema,
+                system_prompt,
+                plan_gates,
+            )
         except Exception as error:
             # THE MODEL'S OWN WORDS DO NOT BELONG IN A RUN ROW OR AN EVENT. A
             # schema violation names the values that missed, so its message
@@ -611,7 +676,40 @@ class AgentRuntime:
                     harness_agent=session.agent,
                 )
             )
+            self._plans.after_turn(session)
             raise
+
+    def _with_plan_tools(
+        self,
+        session: Session,
+        mode: AgentMode,
+        offered: list[HarnessTool],
+        scope: tuple[list[str], bool] | None,
+    ) -> tuple[list[HarnessTool], dict[str, PlanTool]]:
+        """The run's tools with the plan tools added, and the plan tools by name.
+
+        ADDED AFTER the mode's list and its approval gate (G-360). A plan tool
+        gates itself -- a draft, a change and an approval pause are approvals
+        bound to their own arguments -- so neither the mode's
+        ``requires_approval`` nor the host tool policy ever decides one. They
+        still pass the authorizer, and a resumed run still offers only what its
+        stored approval scope names.
+        """
+        tools = self._plans.tools(session, mode.name)
+        if scope is not None:
+            tools = [tool for tool in tools if tool.name in scope[0]]
+        if not tools:
+            return offered, {}
+        names = {tool.name for tool in tools}
+        by_name: dict[str, HarnessTool] = {tool.name: tool for tool in tools}
+        added = (
+            self._authorizer.allowed(session, by_name)
+            if self._authorizer is not None
+            else list(by_name.values())
+        )
+        return [tool for tool in offered if tool.name not in names] + added, {
+            tool.name: tool for tool in tools
+        }
 
     def _loop(
         self,
@@ -624,8 +722,11 @@ class AgentRuntime:
         offered: list[HarnessTool],
         called: list[str],
         schema: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
+        plan_gates: Mapping[str, PlanTool] | None = None,
     ) -> AgentResponse:
         thread = session.thread()
+        gates = plan_gates or {}
         text = ""
         finish_reason = "stop"
 
@@ -647,7 +748,7 @@ class AgentRuntime:
                 raise refused
 
             request = LlmRequest(
-                system_prompt=mode.system_prompt,
+                system_prompt=mode.system_prompt if system_prompt is None else system_prompt,
                 messages=thread_view([entry.message for entry in thread.messages()]),
                 tools=offered,
                 provider=provider,
@@ -678,7 +779,15 @@ class AgentRuntime:
             auto_allowed: list[ToolCallInput] = []
             gated: list[ToolCallInput] = []
             for call in [] if failed_finish else calls:
-                if call.id in unusable or not mode.needs_approval(call.name):
+                if call.id in unusable:
+                    continue
+                gate = gates.get(call.name)
+                if gate is not None:
+                    # A plan tool decides for itself, with these arguments (G-360).
+                    if gate.requires_approval(dict(call.arguments)):
+                        gated.append(call)
+                    continue
+                if not mode.needs_approval(call.name):
                     continue
                 declared = _offered(offered, call.name)
                 if declared is not None and self._tool_policy.allows(declared):
@@ -799,6 +908,7 @@ class AgentRuntime:
                 # FAILS CLOSED. The gated calls have not run, and the requests are
                 # in the thread, so a different process can resume after a person
                 # answers.
+                self._plans.after_turn(session)
                 return AgentResponse(
                     run_id=run_id,
                     text=text,
@@ -1056,6 +1166,8 @@ class AgentRuntime:
         stopped_because: str | None,
     ) -> AgentResponse:
         session.complete_run(run_id, finish_reason, called)
+        # G-360: when the run is over, the plan reads the thread it left.
+        self._plans.after_turn(session)
         self._emit(
             RunFinished(
                 run_id=run_id,

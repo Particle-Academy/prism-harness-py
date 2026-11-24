@@ -19,6 +19,7 @@ from typing import Any, Literal, Protocol
 from .errors import HarnessError
 
 __all__ = [
+    "RESERVED_TOOLS",
     "TOOL_TIERS",
     "ToolDeclaration",
     "ToolPolicy",
@@ -77,6 +78,14 @@ _SEPARATORS = re.compile(r"[_.:-]+")
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _RESERVED_VERBS = frozenset({"confirm", "reject", "accept", "approve", "deny"})
 
+#: The agent plan tools (G-360): a plan is a person's agreement, never auto-allowed.
+RESERVED_TOOLS: tuple[str, ...] = (
+    "plan_draft",
+    "plan_propose_change",
+    "plan_pause_for_person",
+    "plan_complete_step",
+)
+
 
 def normalise_tool_name(name: str) -> str:
     """A name with the invisible edges removed."""
@@ -89,7 +98,15 @@ def is_well_formed_tool_name(name: str) -> bool:
 
 
 def is_person_only_tool(name: str) -> bool:
-    """A confirmation or approval tool: any token is a reserved verb."""
+    """A confirmation or approval tool: any token is a reserved verb, or the name
+    is a plan tool (G-360).
+
+    The plan tools are named here because the verb tokeniser does not catch
+    them: a plan_draft or a plan change that a policy let run without asking
+    would be a plan no person approved.
+    """
+    if normalise_tool_name(name).lower() in RESERVED_TOOLS:
+        return True
     return any(
         token.lower() in _RESERVED_VERBS
         for segment in _SEPARATORS.split(normalise_tool_name(name))
