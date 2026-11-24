@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.5.3
+
+Security-only release on the 0.5 line. Nothing else from main is included.
+
+### Changed
+
+- Approval requests are now written with `arguments_format: 1`, which records
+  that the call's arguments were stored as the model sent them.
+- An approved call whose request has no `arguments_format` and whose stored
+  arguments are empty no longer runs on resume. 0.5.2 and earlier stored a
+  call that the client handed over as no arguments as `{}`, and
+  prism-ai-core 0.10.0 and earlier handed over some garbled calls that way (a
+  Mistral argument that was not a string, an Anthropic input of `false` or
+  `0`), so the two cannot be told apart. The call's result, recorded with no
+  arguments, says the approval expired and asks the model to call the tool
+  again; a new call needs a new approval. A `ToolApprovalExpired` event
+  (`run_id`, `session_key`, `tool`, `args_digest` of no arguments,
+  `decided_by="policy"`; never the arguments) records it. Only the turn being
+  resumed decides this, so a call id reused across turns does not expire a
+  marked approval.
+
+### Upgrading
+
+- **One-time expiry.** Approvals that are pending when you upgrade, on a call
+  stored with no arguments, expire once instead of running, including ones
+  written by 0.5.2, which wrote no marker either. The model is told to call
+  the tool again, and the person is asked again. Approvals on calls with
+  named arguments are not affected. Resuming a thread written by another
+  language's harness is not supported for this check.
+- If your code writes approval request rows itself, write
+  `arguments_format: 1` only for calls stored exactly as the model sent them.
+
 ## 0.5.2
 
 ### Fixed
