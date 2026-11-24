@@ -45,7 +45,7 @@ class PlanTool:
         description: str,
         parameters: dict[str, Any],
         handle: Callable[[Args], str],
-        requires_approval: Callable[[Args], bool] | None = None,
+        requires_approval: Callable[[Args, bool], bool] | None = None,
     ) -> None:
         self._name = name
         self.description = description
@@ -60,8 +60,14 @@ class PlanTool:
     def handle(self, args: dict[str, Any]) -> str:
         return self._handle(args)
 
-    def requires_approval(self, args: dict[str, Any]) -> bool:
-        return self._requires_approval(args) if self._requires_approval is not None else False
+    def requires_approval(self, args: dict[str, Any], authorized: bool = True) -> bool:
+        """``authorized`` is the host call policy's verdict on this call, asked
+        by the runtime first, so a call the host forbids records nothing."""
+        return (
+            self._requires_approval(args, authorized)
+            if self._requires_approval is not None
+            else False
+        )
 
 
 def step_schema(with_id: bool) -> dict[str, Any]:
@@ -131,12 +137,12 @@ class _PlanTools:
     # -- plan_draft --------------------------------------------------------
 
     def _draft(self) -> PlanTool:
-        def requires_approval(arguments: Args) -> bool:
+        def requires_approval(arguments: Args, authorized: bool) -> bool:
             if not self._plans.limits().require_approval:
                 return False
             digest = args_digest(arguments)
             try:
-                plan = self._proposal(arguments, digest)
+                plan = self._proposal(arguments, digest, authorized)
                 self._plans.write(self._session, plan, self._revision())
             except PlanRefused as refused:
                 self._refusals[machine.DRAFT + digest] = refused.code
@@ -195,9 +201,9 @@ class _PlanTools:
             requires_approval,
         )
 
-    def _proposal(self, arguments: Args, digest: str) -> dict[str, Any]:
+    def _proposal(self, arguments: Args, digest: str, authorized: bool = True) -> dict[str, Any]:
         limits = self._plans.limits()
-        draft = machine.check_draft(arguments, limits)
+        draft = machine.check_draft(arguments, limits, authorized)
         if machine.is_live(self._plans.load(self._session)):
             raise PlanRefused("plan.exists")
         return machine.propose(
@@ -256,11 +262,11 @@ class _PlanTools:
     # -- plan_pause_for_person --------------------------------------------
 
     def _pause(self) -> PlanTool:
-        def requires_approval(arguments: Args) -> bool:
+        def requires_approval(arguments: Args, authorized: bool) -> bool:
             if arguments.get("kind") != "approve":
                 return False
             digest = args_digest(arguments)
-            code = self._apply_pause(arguments, digest)
+            code = self._apply_pause(arguments, digest, authorized)
             if code is not None:
                 self._refusals[machine.PAUSE + digest] = code
                 return False
@@ -308,7 +314,9 @@ class _PlanTools:
             requires_approval,
         )
 
-    def _apply_pause(self, arguments: Args, digest: str | None) -> str | None:
+    def _apply_pause(
+        self, arguments: Args, digest: str | None, authorized: bool = True
+    ) -> str | None:
         code: list[str | None] = [None]
 
         def change(current: dict[str, Any]) -> dict[str, Any]:
@@ -320,6 +328,7 @@ class _PlanTools:
                 self._plans.limits(),
                 self._plans.now(),
                 self._plans.run_id(self._session),
+                authorized,
             )
             return following
 
@@ -332,7 +341,7 @@ class _PlanTools:
     # -- plan_propose_change ----------------------------------------------
 
     def _change(self) -> PlanTool:
-        def requires_approval(arguments: Args) -> bool:
+        def requires_approval(arguments: Args, authorized: bool) -> bool:
             digest = args_digest(arguments)
             try:
                 plan = self._plans.mutate(
@@ -345,6 +354,7 @@ class _PlanTools:
                         self._plans.limits(),
                         self._plans.now(),
                         self._plans.run_id(self._session),
+                        authorized,
                     ),
                 )
                 if plan is None:

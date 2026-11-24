@@ -133,8 +133,12 @@ def _extra_keys(value: object, allowed: Sequence[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def check_draft(args: object, limits: PlanLimits) -> dict[str, Any]:
+def check_draft(args: object, limits: PlanLimits, authorized: bool = True) -> dict[str, Any]:
     """Check a draft at the tool boundary. Refused, never truncated."""
+    if not authorized:
+        # The host's call policy refused this call: nothing is checked,
+        # recorded or proposed, and the live-plan slot stays free.
+        raise PlanRefused("plan.not_authorized")
     if (
         not _is_array(args)
         or not _has(args, "goal")
@@ -536,10 +540,15 @@ def pause(
     limits: PlanLimits,
     now: int,
     run_id: str | None,
+    authorized: bool = True,
 ) -> tuple[Plan, str | None]:
     """plan_pause_for_person: insert a person's step before the agent's running
     step. A second pause on one step blocks the plan, and the blocked plan is
     returned with the refusal code so it can be written."""
+    if not authorized:
+        # The host's call policy refused this call: nothing is checked,
+        # recorded or proposed, and the live-plan slot stays free.
+        raise PlanRefused("plan.not_authorized")
     kind = _get(args, "kind")
     if (
         not _is_array(args)
@@ -646,6 +655,7 @@ def propose_change(
     limits: PlanLimits,
     now: int,
     run_id: str | None,
+    authorized: bool = True,
 ) -> Plan:
     """plan_propose_change: a new list for the steps that can still be replaced.
 
@@ -654,6 +664,10 @@ def propose_change(
     stale revision, an unknown id and a step that cannot be replaced get the
     same refusal.
     """
+    if not authorized:
+        # The host's call policy refused this call: nothing is checked,
+        # recorded or proposed, and the live-plan slot stays free.
+        raise PlanRefused("plan.not_authorized")
     given = _get(args, "steps")
     if (
         not _is_array(args)

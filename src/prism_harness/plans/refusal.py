@@ -35,6 +35,7 @@ MESSAGES: dict[str, str] = {
     "plan.no_actor": "Refused: a person must be named as the actor.",
     "plan.not_resumable": "Refused: this plan cannot be resumed.",
     "plan.not_live": "Refused: this plan is already finished.",
+    "plan.not_authorized": "Refused: the host application does not allow this call. Nothing was saved.",
     "plan.conflict": "Refused: the plan changed while this update was being written.",
 }
 

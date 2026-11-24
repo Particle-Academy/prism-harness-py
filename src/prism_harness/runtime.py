@@ -783,8 +783,13 @@ class AgentRuntime:
                     continue
                 gate = gates.get(call.name)
                 if gate is not None:
-                    # A plan tool decides for itself, with these arguments (G-360).
-                    if gate.requires_approval(dict(call.arguments)):
+                    # A plan tool decides for itself, with these arguments
+                    # (G-360). The host's call policy first: a call it forbids
+                    # records nothing, asks no one, and is refused when it runs.
+                    authorized = self._authorizer is None or self._authorizer.allows_call(
+                        session, gate, dict(call.arguments)
+                    )
+                    if gate.requires_approval(dict(call.arguments), authorized):
                         gated.append(call)
                     continue
                 if not mode.needs_approval(call.name):
