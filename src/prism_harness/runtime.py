@@ -33,7 +33,7 @@ from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     ToolCallInput,
-    ambiguous_stored_calls,
+    ambiguous_calls,
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
@@ -856,7 +856,7 @@ class AgentRuntime:
             if work is None:
                 return list(offered)
 
-            calls, results, decisions, approval_ids, scope = work
+            calls, results, decisions, approval_ids, scope, ambiguous = work
             # Bind calls, decisions and scope from the same locked snapshot.
             # A concurrent narrower approval also bounds the continuation.
             if scope is not None and scope[1] and not legacy_diagnostic_emitted:
@@ -865,9 +865,7 @@ class AgentRuntime:
                 )
             bounded = [tool for tool in offered if scope is not None and tool.name in scope[0]]
             resolved: list[dict[str, Any]] = []
-            stored_rows = [entry.message for entry in live.thread().messages()]
-            unusable = unusable_stored_calls(stored_rows)
-            ambiguous = ambiguous_stored_calls(stored_rows)
+            unusable = unusable_stored_calls([entry.message for entry in live.thread().messages()])
 
             for row in calls:
                 call = ToolCallInput(
@@ -933,6 +931,7 @@ class AgentRuntime:
             dict[str, dict[str, Any]],
             dict[str, str],
             tuple[list[str], bool] | None,
+            set[str],
         ]
         | None
     ):
@@ -970,8 +969,16 @@ class AgentRuntime:
             and (row["id"] in approval_ids or mode.needs_approval(row["name"]))
         ]
 
+        if not calls:
+            return None
+
         return (
-            (calls, results, decisions, approval_ids, approval_tool_scope(rows)) if calls else None
+            calls,
+            results,
+            decisions,
+            approval_ids,
+            approval_tool_scope(rows),
+            ambiguous_calls(assistant),
         )
 
     @classmethod

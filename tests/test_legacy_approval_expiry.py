@@ -287,7 +287,9 @@ def test_runs_a_marked_approval_on_a_call_id_an_older_unmarked_request_used() ->
     first = _Run(
         [
             LlmResponse(
-                text="", finish_reason="tool_calls", tool_calls=[LlmToolCall("call-1", "lookup", {})]
+                text="",
+                finish_reason="tool_calls",
+                tool_calls=[LlmToolCall("call-1", "lookup", {})],
             )
         ]
     )
