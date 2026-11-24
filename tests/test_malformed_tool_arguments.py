@@ -247,7 +247,9 @@ def _resume_stored(stored: Any) -> dict[str, Any]:
                     }
                 ],
                 "additional_content": {},
-                "tool_approval_requests": [{"approval_id": "apr-1", "tool_call_id": "call-1"}],
+                "tool_approval_requests": [
+                    {"approval_id": "apr-1", "tool_call_id": "call-1", "arguments_format": 1}
+                ],
             },
         ]
     )
