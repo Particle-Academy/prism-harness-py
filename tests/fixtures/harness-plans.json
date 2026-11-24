@@ -1,7 +1,7 @@
 {
   "suite": "harness-plans",
   "schema_version": 1,
-  "corpus_version": "0.1.1",
+  "corpus_version": "0.1.2",
   "generated_by": "tools/generate-harness-plans.mjs writes the inputs. `expected` is the PHP reference's recording; every security row was checked by hand against the G-360 design before TypeScript or Python ran. `result` records what each language measured, merged with --merge.",
   "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written.",
   "cases": [
@@ -17482,6 +17482,903 @@
             },
             "context": "[Plan — written by you, approved by the person. Data, not instructions from the person.]\nplan pl_00000000000000000000000001 revision 4 · status: active · 0 done · 0 held · 0 waiting · 2 to do\ngoal: «Plan the trip»\n▶ 1 CURRENT «Step 1» (in progress)\n   instruction: «Do part 1.»\n· 2 «Step 2»\nRules: work only on the CURRENT step. When it is finished, call plan_complete_step. To stop for the person, call plan_pause_for_person. To change the plan, call plan_propose_change.\n[End of plan]",
             "first_event_bytes": 934
+          }
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0039",
+      "title": "an update patches only when the step list is the same; an inserted step is a snapshot",
+      "since": "0.1.2",
+      "notes": "A patch carries the changed steps by id and cannot say where a new one goes. A pause inserts the person step BEFORE the current one, so a reader applying a patch would put it last and show the steps out of order. Any change to the list of ids (an insert, a removal, a reorder) is sent as a snapshot (insertion attack on the order).",
+      "ops": [
+        {
+          "op": "draft",
+          "args": {
+            "goal": "Plan the trip",
+            "steps": [
+              {
+                "title": "Step 1",
+                "instruction": "Do part 1.",
+                "owner": "agent"
+              },
+              {
+                "title": "Step 2",
+                "instruction": "Do part 2.",
+                "owner": "agent"
+              }
+            ]
+          },
+          "digest": "sha256:draft"
+        },
+        {
+          "op": "reconcile",
+          "pending": [
+            {
+              "id": "apr_draft",
+              "name": "plan_draft",
+              "digest": "sha256:draft"
+            }
+          ],
+          "decided": {}
+        },
+        {
+          "op": "activate",
+          "digest": "sha256:draft"
+        },
+        {
+          "op": "mark"
+        },
+        {
+          "op": "prepare",
+          "run_failed": false
+        },
+        {
+          "op": "claim",
+          "until": 1767226200
+        },
+        {
+          "op": "update_since_mark"
+        },
+        {
+          "op": "mark"
+        },
+        {
+          "op": "pause",
+          "args": {
+            "kind": "input",
+            "question": "Which notes?"
+          },
+          "digest": null
+        },
+        {
+          "op": "update_since_mark"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true
+          },
+          {
+            "ok": true
+          },
+          {
+            "ok": true
+          },
+          {
+            "ok": true
+          },
+          {
+            "outcome": [
+              "run",
+              "ps_00000000000000000000000002"
+            ]
+          },
+          {
+            "ok": true
+          },
+          {
+            "update": {
+              "planId": "pl_00000000000000000000000001",
+              "planRunId": "run_case",
+              "changedByRunId": null,
+              "revision": 4,
+              "planStatus": "active",
+              "holdingApprovalId": null,
+              "snapshot": false,
+              "steps": [
+                {
+                  "id": "ps_00000000000000000000000002",
+                  "title": "Step 1",
+                  "status": "running",
+                  "owner": "agent",
+                  "state": "running"
+                }
+              ]
+            }
+          },
+          {
+            "ok": true
+          },
+          {
+            "ok": true
+          },
+          {
+            "update": {
+              "planId": "pl_00000000000000000000000001",
+              "planRunId": "run_case",
+              "changedByRunId": "run_case",
+              "revision": 5,
+              "planStatus": "active",
+              "holdingApprovalId": null,
+              "snapshot": true,
+              "steps": [
+                {
+                  "id": "ps_00000000000000000000000004",
+                  "title": "Which notes?",
+                  "status": "waiting",
+                  "owner": "human",
+                  "state": "waiting_input",
+                  "waitingOn": {
+                    "kind": "question",
+                    "id": "ps_00000000000000000000000004"
+                  }
+                },
+                {
+                  "id": "ps_00000000000000000000000002",
+                  "title": "Step 1",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                },
+                {
+                  "id": "ps_00000000000000000000000003",
+                  "title": "Step 2",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                }
+              ]
+            }
+          }
+        ],
+        "final": {
+          "status": "active",
+          "revision": 5,
+          "holdingApprovalId": null,
+          "blockedReason": null,
+          "counters": {
+            "advances": 1,
+            "changes": 0,
+            "settledByTool": 0,
+            "settledWithoutTool": 0
+          },
+          "pendingChange": null,
+          "steps": [
+            {
+              "id": "ps_00000000000000000000000004",
+              "position": 1,
+              "title": "Which notes?",
+              "owner": "human",
+              "interaction": "input",
+              "state": "waiting_input",
+              "attempts": 0,
+              "pauses": 0,
+              "approvalIds": [],
+              "approvedIds": [],
+              "supersededApprovalIds": [],
+              "completedBy": null,
+              "failure": null,
+              "retryOf": null,
+              "summary": null,
+              "answer": null
+            },
+            {
+              "id": "ps_00000000000000000000000002",
+              "position": 2,
+              "title": "Step 1",
+              "owner": "agent",
+              "interaction": null,
+              "state": "todo",
+              "attempts": 0,
+              "pauses": 1,
+              "approvalIds": [],
+              "approvedIds": [],
+              "supersededApprovalIds": [],
+              "completedBy": null,
+              "failure": null,
+              "retryOf": null,
+              "summary": null,
+              "answer": null
+            },
+            {
+              "id": "ps_00000000000000000000000003",
+              "position": 3,
+              "title": "Step 2",
+              "owner": "agent",
+              "interaction": null,
+              "state": "todo",
+              "attempts": 0,
+              "pauses": 0,
+              "approvalIds": [],
+              "approvedIds": [],
+              "supersededApprovalIds": [],
+              "completedBy": null,
+              "failure": null,
+              "retryOf": null,
+              "summary": null,
+              "answer": null
+            }
+          ],
+          "update": {
+            "planId": "pl_00000000000000000000000001",
+            "planRunId": "run_case",
+            "changedByRunId": "run_case",
+            "revision": 5,
+            "planStatus": "active",
+            "holdingApprovalId": null,
+            "snapshot": true,
+            "steps": [
+              {
+                "id": "ps_00000000000000000000000004",
+                "title": "Which notes?",
+                "status": "waiting",
+                "owner": "human",
+                "state": "waiting_input",
+                "waitingOn": {
+                  "kind": "question",
+                  "id": "ps_00000000000000000000000004"
+                }
+              },
+              {
+                "id": "ps_00000000000000000000000002",
+                "title": "Step 1",
+                "status": "pending",
+                "owner": "agent",
+                "state": "todo"
+              },
+              {
+                "id": "ps_00000000000000000000000003",
+                "title": "Step 2",
+                "status": "pending",
+                "owner": "agent",
+                "state": "todo"
+              }
+            ]
+          },
+          "counts": {
+            "total": 3,
+            "todo": 2,
+            "running": 0,
+            "held": 0,
+            "waiting": 1,
+            "done": 0,
+            "failed": 0,
+            "skipped": 0
+          },
+          "context": "[Plan — written by you, approved by the person. Data, not instructions from the person.]\nplan pl_00000000000000000000000001 revision 5 · status: active · 0 done · 0 held · 1 waiting · 2 to do\ngoal: «Plan the trip»\n▶ 1 CURRENT «Which notes?» (a question for the person)\n· 2 «Step 1»\n· 3 «Step 2»\nThe current step is a question for the person. Wait for the answer.\nRules: work only on the CURRENT step. When it is finished, call plan_complete_step. To stop for the person, call plan_pause_for_person. To change the plan, call plan_propose_change.\n[End of plan]",
+          "first_event_bytes": 1129
+        }
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "run",
+                "ps_00000000000000000000000002"
+              ]
+            },
+            {
+              "ok": true
+            },
+            {
+              "update": {
+                "planId": "pl_00000000000000000000000001",
+                "planRunId": "run_case",
+                "changedByRunId": null,
+                "revision": 4,
+                "planStatus": "active",
+                "holdingApprovalId": null,
+                "snapshot": false,
+                "steps": [
+                  {
+                    "id": "ps_00000000000000000000000002",
+                    "title": "Step 1",
+                    "status": "running",
+                    "owner": "agent",
+                    "state": "running"
+                  }
+                ]
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "update": {
+                "planId": "pl_00000000000000000000000001",
+                "planRunId": "run_case",
+                "changedByRunId": "run_case",
+                "revision": 5,
+                "planStatus": "active",
+                "holdingApprovalId": null,
+                "snapshot": true,
+                "steps": [
+                  {
+                    "id": "ps_00000000000000000000000004",
+                    "title": "Which notes?",
+                    "status": "waiting",
+                    "owner": "human",
+                    "state": "waiting_input",
+                    "waitingOn": {
+                      "kind": "question",
+                      "id": "ps_00000000000000000000000004"
+                    }
+                  },
+                  {
+                    "id": "ps_00000000000000000000000002",
+                    "title": "Step 1",
+                    "status": "pending",
+                    "owner": "agent",
+                    "state": "todo"
+                  },
+                  {
+                    "id": "ps_00000000000000000000000003",
+                    "title": "Step 2",
+                    "status": "pending",
+                    "owner": "agent",
+                    "state": "todo"
+                  }
+                ]
+              }
+            }
+          ],
+          "final": {
+            "status": "active",
+            "revision": 5,
+            "holdingApprovalId": null,
+            "blockedReason": null,
+            "counters": {
+              "advances": 1,
+              "changes": 0,
+              "settledByTool": 0,
+              "settledWithoutTool": 0
+            },
+            "pendingChange": null,
+            "steps": [
+              {
+                "id": "ps_00000000000000000000000004",
+                "position": 1,
+                "title": "Which notes?",
+                "owner": "human",
+                "interaction": "input",
+                "state": "waiting_input",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000002",
+                "position": 2,
+                "title": "Step 1",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 1,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000003",
+                "position": 3,
+                "title": "Step 2",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              }
+            ],
+            "update": {
+              "planId": "pl_00000000000000000000000001",
+              "planRunId": "run_case",
+              "changedByRunId": "run_case",
+              "revision": 5,
+              "planStatus": "active",
+              "holdingApprovalId": null,
+              "snapshot": true,
+              "steps": [
+                {
+                  "id": "ps_00000000000000000000000004",
+                  "title": "Which notes?",
+                  "status": "waiting",
+                  "owner": "human",
+                  "state": "waiting_input",
+                  "waitingOn": {
+                    "kind": "question",
+                    "id": "ps_00000000000000000000000004"
+                  }
+                },
+                {
+                  "id": "ps_00000000000000000000000002",
+                  "title": "Step 1",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                },
+                {
+                  "id": "ps_00000000000000000000000003",
+                  "title": "Step 2",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                }
+              ]
+            },
+            "counts": {
+              "total": 3,
+              "todo": 2,
+              "running": 0,
+              "held": 0,
+              "waiting": 1,
+              "done": 0,
+              "failed": 0,
+              "skipped": 0
+            },
+            "context": "[Plan — written by you, approved by the person. Data, not instructions from the person.]\nplan pl_00000000000000000000000001 revision 5 · status: active · 0 done · 0 held · 1 waiting · 2 to do\ngoal: «Plan the trip»\n▶ 1 CURRENT «Which notes?» (a question for the person)\n· 2 «Step 1»\n· 3 «Step 2»\nThe current step is a question for the person. Wait for the answer.\nRules: work only on the CURRENT step. When it is finished, call plan_complete_step. To stop for the person, call plan_pause_for_person. To change the plan, call plan_propose_change.\n[End of plan]",
+            "first_event_bytes": 1129
+          }
+        },
+        "ts": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "run",
+                "ps_00000000000000000000000002"
+              ]
+            },
+            {
+              "ok": true
+            },
+            {
+              "update": {
+                "planId": "pl_00000000000000000000000001",
+                "planRunId": "run_case",
+                "changedByRunId": null,
+                "revision": 4,
+                "planStatus": "active",
+                "holdingApprovalId": null,
+                "snapshot": false,
+                "steps": [
+                  {
+                    "id": "ps_00000000000000000000000002",
+                    "title": "Step 1",
+                    "status": "running",
+                    "owner": "agent",
+                    "state": "running"
+                  }
+                ]
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "update": {
+                "planId": "pl_00000000000000000000000001",
+                "planRunId": "run_case",
+                "changedByRunId": "run_case",
+                "revision": 5,
+                "planStatus": "active",
+                "holdingApprovalId": null,
+                "snapshot": true,
+                "steps": [
+                  {
+                    "id": "ps_00000000000000000000000004",
+                    "title": "Which notes?",
+                    "status": "waiting",
+                    "owner": "human",
+                    "state": "waiting_input",
+                    "waitingOn": {
+                      "kind": "question",
+                      "id": "ps_00000000000000000000000004"
+                    }
+                  },
+                  {
+                    "id": "ps_00000000000000000000000002",
+                    "title": "Step 1",
+                    "status": "pending",
+                    "owner": "agent",
+                    "state": "todo"
+                  },
+                  {
+                    "id": "ps_00000000000000000000000003",
+                    "title": "Step 2",
+                    "status": "pending",
+                    "owner": "agent",
+                    "state": "todo"
+                  }
+                ]
+              }
+            }
+          ],
+          "final": {
+            "status": "active",
+            "revision": 5,
+            "holdingApprovalId": null,
+            "blockedReason": null,
+            "counters": {
+              "advances": 1,
+              "changes": 0,
+              "settledByTool": 0,
+              "settledWithoutTool": 0
+            },
+            "pendingChange": null,
+            "steps": [
+              {
+                "id": "ps_00000000000000000000000004",
+                "position": 1,
+                "title": "Which notes?",
+                "owner": "human",
+                "interaction": "input",
+                "state": "waiting_input",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000002",
+                "position": 2,
+                "title": "Step 1",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 1,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000003",
+                "position": 3,
+                "title": "Step 2",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              }
+            ],
+            "update": {
+              "planId": "pl_00000000000000000000000001",
+              "planRunId": "run_case",
+              "changedByRunId": "run_case",
+              "revision": 5,
+              "planStatus": "active",
+              "holdingApprovalId": null,
+              "snapshot": true,
+              "steps": [
+                {
+                  "id": "ps_00000000000000000000000004",
+                  "title": "Which notes?",
+                  "status": "waiting",
+                  "owner": "human",
+                  "state": "waiting_input",
+                  "waitingOn": {
+                    "kind": "question",
+                    "id": "ps_00000000000000000000000004"
+                  }
+                },
+                {
+                  "id": "ps_00000000000000000000000002",
+                  "title": "Step 1",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                },
+                {
+                  "id": "ps_00000000000000000000000003",
+                  "title": "Step 2",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                }
+              ]
+            },
+            "counts": {
+              "total": 3,
+              "todo": 2,
+              "running": 0,
+              "held": 0,
+              "waiting": 1,
+              "done": 0,
+              "failed": 0,
+              "skipped": 0
+            },
+            "context": "[Plan — written by you, approved by the person. Data, not instructions from the person.]\nplan pl_00000000000000000000000001 revision 5 · status: active · 0 done · 0 held · 1 waiting · 2 to do\ngoal: «Plan the trip»\n▶ 1 CURRENT «Which notes?» (a question for the person)\n· 2 «Step 1»\n· 3 «Step 2»\nThe current step is a question for the person. Wait for the answer.\nRules: work only on the CURRENT step. When it is finished, call plan_complete_step. To stop for the person, call plan_pause_for_person. To change the plan, call plan_propose_change.\n[End of plan]",
+            "first_event_bytes": 1129
+          }
+        },
+        "py": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "run",
+                "ps_00000000000000000000000002"
+              ]
+            },
+            {
+              "ok": true
+            },
+            {
+              "update": {
+                "planId": "pl_00000000000000000000000001",
+                "planRunId": "run_case",
+                "changedByRunId": null,
+                "revision": 4,
+                "planStatus": "active",
+                "holdingApprovalId": null,
+                "snapshot": false,
+                "steps": [
+                  {
+                    "id": "ps_00000000000000000000000002",
+                    "title": "Step 1",
+                    "status": "running",
+                    "owner": "agent",
+                    "state": "running"
+                  }
+                ]
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "update": {
+                "planId": "pl_00000000000000000000000001",
+                "planRunId": "run_case",
+                "changedByRunId": "run_case",
+                "revision": 5,
+                "planStatus": "active",
+                "holdingApprovalId": null,
+                "snapshot": true,
+                "steps": [
+                  {
+                    "id": "ps_00000000000000000000000004",
+                    "title": "Which notes?",
+                    "status": "waiting",
+                    "owner": "human",
+                    "state": "waiting_input",
+                    "waitingOn": {
+                      "kind": "question",
+                      "id": "ps_00000000000000000000000004"
+                    }
+                  },
+                  {
+                    "id": "ps_00000000000000000000000002",
+                    "title": "Step 1",
+                    "status": "pending",
+                    "owner": "agent",
+                    "state": "todo"
+                  },
+                  {
+                    "id": "ps_00000000000000000000000003",
+                    "title": "Step 2",
+                    "status": "pending",
+                    "owner": "agent",
+                    "state": "todo"
+                  }
+                ]
+              }
+            }
+          ],
+          "final": {
+            "status": "active",
+            "revision": 5,
+            "holdingApprovalId": null,
+            "blockedReason": null,
+            "counters": {
+              "advances": 1,
+              "changes": 0,
+              "settledByTool": 0,
+              "settledWithoutTool": 0
+            },
+            "pendingChange": null,
+            "steps": [
+              {
+                "id": "ps_00000000000000000000000004",
+                "position": 1,
+                "title": "Which notes?",
+                "owner": "human",
+                "interaction": "input",
+                "state": "waiting_input",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000002",
+                "position": 2,
+                "title": "Step 1",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 1,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000003",
+                "position": 3,
+                "title": "Step 2",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              }
+            ],
+            "update": {
+              "planId": "pl_00000000000000000000000001",
+              "planRunId": "run_case",
+              "changedByRunId": "run_case",
+              "revision": 5,
+              "planStatus": "active",
+              "holdingApprovalId": null,
+              "snapshot": true,
+              "steps": [
+                {
+                  "id": "ps_00000000000000000000000004",
+                  "title": "Which notes?",
+                  "status": "waiting",
+                  "owner": "human",
+                  "state": "waiting_input",
+                  "waitingOn": {
+                    "kind": "question",
+                    "id": "ps_00000000000000000000000004"
+                  }
+                },
+                {
+                  "id": "ps_00000000000000000000000002",
+                  "title": "Step 1",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                },
+                {
+                  "id": "ps_00000000000000000000000003",
+                  "title": "Step 2",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                }
+              ]
+            },
+            "counts": {
+              "total": 3,
+              "todo": 2,
+              "running": 0,
+              "held": 0,
+              "waiting": 1,
+              "done": 0,
+              "failed": 0,
+              "skipped": 0
+            },
+            "context": "[Plan — written by you, approved by the person. Data, not instructions from the person.]\nplan pl_00000000000000000000000001 revision 5 · status: active · 0 done · 0 held · 1 waiting · 2 to do\ngoal: «Plan the trip»\n▶ 1 CURRENT «Which notes?» (a question for the person)\n· 2 «Step 1»\n· 3 «Step 2»\nThe current step is a question for the person. Wait for the answer.\nRules: work only on the CURRENT step. When it is finished, call plan_complete_step. To stop for the person, call plan_pause_for_person. To change the plan, call plan_propose_change.\n[End of plan]",
+            "first_event_bytes": 1129
           }
         }
       },
