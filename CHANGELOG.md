@@ -19,7 +19,6 @@
   `run_cancelled`. See "Cancelling a run" in the README.
 - `Session.begin_run()` records `parent_run_id`, `root_run_id` and a bounded
   `run_history` (20 ids) in the run state.
-
 - `binding_route()`: the one rule for which provider/model binding a turn
   runs on and whether it is saved with the session, now asked by the runtime
   and pinned by the harness-plans corpus (hpl-0056..hpl-0058) in all three

@@ -435,7 +435,8 @@ stopping a run in a queue worker.
 from prism_harness import CancelOutcome
 
 # In the web request, after YOUR authorization check:
-outcome = runtime.cancel(session, run_id)  # CancelOutcome.OK, NOT_RUNNING, NO_TURN, UNSUPPORTED or REFUSED
+# CancelOutcome.OK, NOT_RUNNING, NO_TURN, UNSUPPORTED or REFUSED
+outcome = runtime.cancel(session, run_id)
 ```
 
 `runtime.cancel(session, run_id)` is `session.cancel(run_id, events)` with the
