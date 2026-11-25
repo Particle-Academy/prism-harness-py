@@ -426,6 +426,70 @@ cancel a real one.
 `runtime.decide(session, approval_id, approved, reason=None)` records the same
 decision and also lets an agent plan read it before the run resumes.
 
+## Cancelling a run
+
+A run executing in one process can be stopped from another: a web request
+stopping a run in a queue worker.
+
+```python
+from prism_harness import CancelOutcome
+
+# In the web request, after YOUR authorization check:
+# CancelOutcome.OK, NOT_RUNNING, NO_TURN, UNSUPPORTED or REFUSED
+outcome = runtime.cancel(session, run_id)
+```
+
+`runtime.cancel(session, run_id)` is `session.cancel(run_id, events)` with the
+runtime's own events. Both are synchronous, like the rest of this package (see
+"Synchronous, deliberately"). `CancelOutcome` is a `str` enum whose values are
+the wire strings every port returns: `ok`, `not-running`, `no-turn`,
+`unsupported`, `refused`.
+
+- **The flag is durable.** `cancel()` writes it to the session's durable store,
+  so the process running the run reads it at its next check. Nothing in memory
+  is shared.
+- **Where it is checked.** Before every model step and before every tool call,
+  including several calls in one step. A tool call that is already running is
+  **not interrupted**: it finishes, its result is recorded, and the next tool is
+  recorded as `Not run: the run was cancelled.` with no further model step. The
+  run then ends `cancelled`, and `send()` and `send_structured()` raise
+  `HarnessError` with code `run_cancelled`. A cancel that lands during the run's
+  last model call still ends the run `cancelled`, with `ended_as` recording what
+  it would otherwise have ended as; the answer that call produced is kept in the
+  thread.
+- **Events.** `run.cancel_requested` (`RunCancelRequested`) is emitted the moment
+  the flag is written, by the process that wrote it, with `state` `running` or
+  `parked`. `run.cancelled` (`RunCancelled`) is emitted when the run stops,
+  instead of `run.finished` or `run.failed`. Both carry `run_id`, `session_key`,
+  `parent_run_id`, `root_run_id` and `harness_agent`.
+- **A run parked on an approval** is cancelled at once. Its approvals read
+  `session.approval_status(approval_id) == "cancelled"`, never `pending`, and
+  `record_approval()` and `runtime.decide()` raise `approval_not_pending` for
+  them. A cancelled run never resumes: an empty-prompt `send()` that would
+  continue it raises `run_cancelled` before a run begins.
+  `approval_status()` returns `pending`, `approved`, `denied`, `cancelled`,
+  `superseded` (never decided, and a later turn ended it) or `unknown`.
+- **The whole tree stops.** Cancelling a run stops the run tree it belongs to:
+  its subagents' child runs end `cancelled` too, and the parent takes no further
+  step. A plan whose step turn was cancelled is blocked with `run_cancelled`;
+  `resume()` continues it with a new run.
+- **The outcome.** `ok`: the flag is set. `not-running`: one of this session's
+  runs that has already ended, including an earlier run among the last 20;
+  nothing changed, and cancelling a run that has stopped is `not-running`.
+  Cancelling a running run twice is `ok` both times, with one
+  `run.cancel_requested`. `no-turn`: the session has no run. `unsupported`: the
+  stores cannot hold a cancel another process can see, because the lock
+  store's lock scope does not cover the sharing scope of both slots (an
+  in-memory ephemeral store over a file durable store, for example). `refused`:
+  the id is not one of this session's runs, whether malformed, made up or
+  another session's. Run ids are matched exactly, as issued: a lowercase UUID4,
+  with nothing trimmed or folded.
+
+**Who may cancel is your decision.** The session is scoped to a participant, so
+nobody can cancel another participant's run through it, but whether this user
+may stop THIS run is a question only your application can answer. Authorize
+before calling, as for `record_approval()`.
+
 ## Agent plans
 
 An agent can propose a plan: a goal and an ordered list of steps. A person

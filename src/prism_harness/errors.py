@@ -29,6 +29,9 @@ class ErrorCode(str, Enum):
     TOOL_NOT_AVAILABLE = "tool_not_available"
     #: A run was refused -- by budget, by depth, or by a cancelled ledger.
     RUN_NOT_PERMITTED = "run_not_permitted"
+    #: A person cancelled this run, or the run tree it belongs to (G-285). Its
+    #: own code: a stop someone asked for is not a spent budget.
+    RUN_CANCELLED = "run_cancelled"
     #: A subagent child session has no saved provider and model binding, so it
     #: may not run outside the subagent runner. The same code in prism-harness.
     CHILD_BINDING_MISSING = "child_binding_missing"
@@ -163,6 +166,15 @@ class HarnessError(Exception):
     @classmethod
     def run_not_permitted(cls, reason: str) -> HarnessError:
         return cls(ErrorCode.RUN_NOT_PERMITTED, reason)
+
+    @classmethod
+    def run_cancelled(cls) -> HarnessError:
+        """A person cancelled this run, or the run tree it belongs to (G-285).
+        The same code in the PHP reference and the TypeScript port."""
+        return cls(
+            ErrorCode.RUN_CANCELLED,
+            "This run may not proceed (run_cancelled): it was cancelled.",
+        )
 
     @classmethod
     def child_binding_missing(cls) -> HarnessError:
@@ -444,6 +456,15 @@ class HarnessError(Exception):
             ErrorCode.APPROVAL_NOT_PENDING,
             f"No pending approval has the id [{approval_id}]. "
             "It was never issued, or it has already been answered.",
+        )
+
+    @classmethod
+    def approval_cancelled(cls, approval_id: str) -> HarnessError:
+        """The approval belongs to a run a person cancelled (G-285): it is
+        settled, and the run never resumes. Code ``approval_not_pending``."""
+        return cls(
+            ErrorCode.APPROVAL_NOT_PENDING,
+            f"The approval [{approval_id}] is settled: the run that asked for it was cancelled.",
         )
 
     @classmethod

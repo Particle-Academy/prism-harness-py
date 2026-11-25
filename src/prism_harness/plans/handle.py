@@ -150,8 +150,14 @@ class PlanHandle:
             try:
                 response = self._runtime.send(self._session, _prompt(step), context=context)
             except HarnessError as error:
+                # A turn a person cancelled (G-285) stops the plan: prepare
+                # settles the step back to todo and blocks the plan with
+                # run_cancelled, so the next advance does not start the run
+                # again.
                 stopped = (
-                    self._stopped_on_budget()
+                    self._prepare()[0]
+                    if error.code == "run_cancelled"
+                    else self._stopped_on_budget()
                     if error.code in ("run_not_permitted", budget.EXHAUSTED)
                     else None
                 )
@@ -239,6 +245,8 @@ class PlanHandle:
             return AdvanceOutcome("not_active", None), None
         run = self._session.run()
         run_failed = isinstance(run, dict) and run.get("status") == "failed"
+        # A run a person cancelled, in this process or another (G-285).
+        run_cancelled = isinstance(run, dict) and run.get("status") == "cancelled"
         now = self._plans.now()
         spent = (
             self._plans.budget_exhaustion(self._session, plan["id"], self._lock_ttl())
@@ -246,7 +254,7 @@ class PlanHandle:
             else None
         )
         following, (kind, value) = machine.prepare(
-            plan, run_failed, self._plans.limits(), now, None, spent is not None
+            plan, run_failed, self._plans.limits(), now, None, spent is not None, run_cancelled
         )
         if following != plan:
             self._plans.write(self._session, following, plan["revision"])

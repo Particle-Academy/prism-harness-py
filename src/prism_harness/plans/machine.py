@@ -428,6 +428,10 @@ def _reconcile_agent_step(
 # ---------------------------------------------------------------------------
 
 
+#: The reason a plan blocks when a person cancelled its step's run (G-285).
+RUN_CANCELLED = "run_cancelled"
+
+
 def prepare(
     plan: Plan,
     run_failed: bool,
@@ -435,6 +439,7 @@ def prepare(
     now: int,
     run_id: str | None,
     budget_exhausted: bool = False,
+    run_cancelled: bool = False,
 ) -> tuple[Plan, list[str | None]]:
     """Settle the previous head from persisted state, check the limits, and
     choose what happens next. Returns the plan and an outcome: ``[run, stepId]``,
@@ -443,7 +448,19 @@ def prepare(
     if plan["status"] != "active":
         return plan, ["not_active", plan["status"]]
     original = plan
-    plan = _settle(deepcopy(plan), run_failed, limits)
+    # G-285: the head step's own turn was cancelled by a person. The step goes
+    # back to todo and the plan stops, once: the next advance does not quietly
+    # start a new run the person just asked to stop. resume() continues it.
+    head = head_index(plan)
+    cancelled_turn = (
+        run_cancelled
+        and head is not None
+        and plan["steps"][head]["owner"] == "agent"
+        and plan["steps"][head]["state"] == "running"
+    )
+    plan = _settle(deepcopy(plan), run_failed or run_cancelled, limits)
+    if cancelled_turn and plan["status"] == "active":
+        plan = _block(plan, RUN_CANCELLED)
 
     head = head_index(plan)
     outcome: list[str | None]

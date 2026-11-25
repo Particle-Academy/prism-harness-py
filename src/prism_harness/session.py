@@ -2,24 +2,65 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 import time
 from collections.abc import Callable, Sequence
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, TypeVar
 
 from prism_harness.address import ParticipantRef, SessionAddress
-from prism_harness.address_index import IndexedSessionStore, StoreAddressIndex, store_lock_rank
+from prism_harness.address_index import (
+    IndexedSessionStore,
+    IndexLockScopeUnsupported,
+    StoreAddressIndex,
+    store_lock_rank,
+)
 from prism_harness.errors import HarnessError
+from prism_harness.events import HarnessEvents, RunCancelled, RunCancelRequested
 from prism_harness.stores.base import SessionStore
 from prism_harness.tasks import DEFAULT_LEASE_SECONDS, StoreTaskSource
-from prism_harness.thread import Thread
+from prism_harness.thread import Thread, ThreadMessage
+from prism_harness.thread_rows import pending_approval_ids
 
-__all__ = ["Participant", "Session"]
+__all__ = ["CancelOutcome", "Participant", "Session"]
 
 R = TypeVar("R")
+
+#: How many run ids a session remembers, so cancel() can tell one of its own
+#: earlier runs (``not-running``) from an id it never issued (``refused``). The
+#: same bound as the PHP reference.
+RUN_HISTORY = 20
+
+#: The run id this port issues: a lowercase UUID4, matched in full. Nothing is
+#: trimmed or folded first, so a padded, upper-cased or newline-terminated
+#: copy of a real id is refused like any other made-up one.
+_RUN_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+
+_SCOPE_RANKS = {"process": 0, "host": 1, "distributed": 2}
+
+
+class CancelOutcome(str, Enum):
+    """What :meth:`Session.cancel` did (G-285). The values are the wire strings
+    every port returns."""
+
+    #: The cancel flag is set: the run stops at its next step or tool, or, if
+    #: it was parked on an approval, is settled now.
+    OK = "ok"
+    #: The run belongs to this session and has already ended (finished,
+    #: failed or cancelled). Nothing changed.
+    NOT_RUNNING = "not-running"
+    #: This session has no run at all. Nothing changed.
+    NO_TURN = "no-turn"
+    #: This session's stores cannot hold a cancel another process can see.
+    #: Nothing changed.
+    UNSUPPORTED = "unsupported"
+    #: The run id is not one of this session's runs: malformed, forged, or
+    #: another session's. Nothing changed.
+    REFUSED = "refused"
 
 
 @dataclass(frozen=True)
@@ -342,10 +383,45 @@ class Session:
     # -- runs ---------------------------------------------------------------
 
     def run(self) -> dict[str, Any] | None:
-        run = self.state().get("run")
-        return run if isinstance(run, dict) and isinstance(run.get("id"), str) else None
+        """This session's latest run, or None when it has none.
 
-    def begin_run(self, run_id: str, mode: str, provider: str, model: str) -> Session:
+        A run parked on an approval when a person cancelled it reads ``status``
+        ``cancelled`` (G-285): the cancel is durable even though no process was
+        running the parked run to write it.
+        """
+        run = self.state().get("run")
+        if not isinstance(run, dict) or not isinstance(run.get("id"), str):
+            return None
+        if run.get("status") != "cancelled":
+            flag = self._cancel_flag(run["id"])
+            if flag is not None and flag.get("parked") is True:
+                return {**run, "status": "cancelled"}
+        return run
+
+    def begin_run(
+        self,
+        run_id: str,
+        mode: str,
+        provider: str,
+        model: str,
+        parent_run_id: str | None = None,
+        root_run_id: str | None = None,
+    ) -> Session:
+        """Record a run starting.
+
+        ``parent_run_id`` and ``root_run_id`` are the run's tags, kept so a
+        cancel from another process carries them on its event (G-285). The
+        run id also joins a bounded history, so cancel() can answer
+        ``not-running`` for one of this session's earlier runs.
+        """
+        stored = self.state().get("run_history")
+        history = (
+            [entry for entry in stored if isinstance(entry, str)]
+            if isinstance(stored, list)
+            else []
+        )
+        history = list(dict.fromkeys([*history, run_id]))[-RUN_HISTORY:]
+        self._write("run_history", history)
         return self._write(
             "run",
             {
@@ -355,8 +431,171 @@ class Session:
                 "provider": provider,
                 "model": model,
                 "started_at": datetime.now(timezone.utc).isoformat(),
+                "parent_run_id": parent_run_id,
+                "root_run_id": root_run_id if root_run_id is not None else run_id,
             },
         )
+
+    # -- cancel (G-285) -----------------------------------------------------
+
+    def cancel(self, run_id: str, events: HarnessEvents | None = None) -> CancelOutcome:
+        """Ask this session's run to stop (G-285), from any process.
+
+        The flag is DURABLE: written to the session's durable store, so the
+        process running the run sees it at its next check even when the caller
+        is a different process. The run checks it before every model step and
+        before every tool call. A tool call already executing is NOT
+        interrupted: it finishes, its result is recorded, and the next step or
+        tool is refused. The run then ends ``cancelled`` and never resumes.
+        Cancelling a run stops the whole run tree it belongs to.
+
+        A run parked on an approval is cancelled at once: its approvals read as
+        settled-cancelled (:meth:`approval_status`) and deciding one is refused.
+
+        ``events`` receives ``run.cancel_requested`` (and, for a parked run,
+        ``run.cancelled``) once the flag is written; ``AgentRuntime.cancel``
+        passes the runtime's own.
+
+        WHO MAY CANCEL IS THE APPLICATION'S DECISION, as with approvals: the
+        session is scoped to a participant, but "this user may stop THIS run"
+        is a question only the host can answer. Authorize before calling.
+        """
+        self._assert_writable()
+        if not self._cancel_supported():
+            return CancelOutcome.UNSUPPORTED
+        if not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None:
+            return CancelOutcome.REFUSED
+
+        announced: list[RunCancelRequested | RunCancelled] = []
+
+        def decide() -> CancelOutcome:
+            # Read fresh: the run is written by whichever process executes it.
+            self._cached_state = None
+            state = self.state()
+            run = state.get("run")
+            if not isinstance(run, dict) or not isinstance(run.get("id"), str):
+                return CancelOutcome.NO_TURN
+            if run["id"] != run_id:
+                history = state.get("run_history")
+                return (
+                    CancelOutcome.NOT_RUNNING
+                    if isinstance(history, list) and run_id in history
+                    else CancelOutcome.REFUSED
+                )
+            if run.get("status") != "running":
+                return CancelOutcome.NOT_RUNNING
+            flag = self._cancel_flag(run_id)
+            if flag is not None:
+                # Twice is harmless: a running run stops once, and only the
+                # first cancel announces it. A parked run is already settled.
+                return CancelOutcome.NOT_RUNNING if flag.get("parked") is True else CancelOutcome.OK
+            parked = self._parked_on(run_id)
+            self._record_cancel(run_id, parked)
+            at = datetime.now(timezone.utc).isoformat()
+            parent, root = _tag(run, "parent_run_id"), _tag(run, "root_run_id")
+            announced.append(
+                RunCancelRequested(
+                    run_id=run_id,
+                    session_key=self.key(),
+                    parent_run_id=parent,
+                    root_run_id=root,
+                    state="parked" if parked else "running",
+                    at=at,
+                    harness_agent=self.agent,
+                )
+            )
+            if parked:
+                # Parked on a person: no process is running it, so it is
+                # settled here, and its approvals now read as cancelled.
+                announced.append(
+                    RunCancelled(
+                        run_id=run_id,
+                        session_key=self.key(),
+                        parent_run_id=parent,
+                        root_run_id=root,
+                        at=at,
+                        harness_agent=self.agent,
+                    )
+                )
+            return CancelOutcome.OK
+
+        outcome = self._under_cancel_lock(decide)
+        if events is not None:
+            for event in announced:
+                events.emit(event)
+        return outcome
+
+    def approval_status(self, approval_id: str) -> str:
+        """Where an approval stands (G-285): ``pending``, ``approved``,
+        ``denied``, ``cancelled`` (its run was cancelled before anyone
+        decided), ``superseded`` (never decided, and a later turn ended it) or
+        ``unknown`` (this thread never issued it). An approval in a cancelled
+        run never reads ``pending``."""
+        entries = self.thread().messages()
+        issued = _issuing_entry(entries, approval_id)
+        if issued is None:
+            return "unknown"
+        index, run_id = issued
+        decision = _first_decision(entries[index + 1 :], approval_id)
+        if decision is not None:
+            return "approved" if decision else "denied"
+        if run_id is not None and self.cancel_requested_for(run_id):
+            return "cancelled"
+        rows = [entry.message for entry in entries]
+        return "pending" if approval_id in pending_approval_ids(rows) else "superseded"
+
+    def approval_run_cancelled(self, approval_id: str) -> bool:
+        """Whether the run that asked for this approval was cancelled (G-285).
+        Internal: a decision on such an approval is refused."""
+        issued = _issuing_entry(self.thread().messages(), approval_id)
+        return issued is not None and issued[1] is not None and self.cancel_requested_for(issued[1])
+
+    def cancel_requested_for(self, run_id: str) -> bool:
+        """Whether a person cancelled this run (G-285), read from the durable
+        store. Internal: read by the runtime's cancel checks."""
+        return self._cancel_flag(run_id) is not None
+
+    def resumes_cancelled_run(self, prompt: str) -> bool:
+        """Whether an empty-prompt turn would continue a run parked on
+        approvals that a person cancelled (G-285). Such a turn is refused: a
+        cancelled run never resumes. Internal."""
+        if prompt != "":
+            return False
+        paused = _paused_entry(self.thread().messages())
+        return (
+            paused is not None
+            and paused.run_id is not None
+            and self.cancel_requested_for(paused.run_id)
+        )
+
+    def cancel_run(self, run_id: str) -> bool:
+        """End a run as cancelled (G-285). Returns whether the end is this
+        process's to announce: False when the cancel already settled it as a
+        parked run, and announced it. Internal."""
+        return self.end_run(run_id, "cancelled", {"failure": "cancelled"})[1]
+
+    def end_run(self, run_id: str, status: str, extra: dict[str, Any]) -> tuple[str, bool]:
+        """The run's terminal write, under the cancel lock (G-285). Internal.
+
+        A cancel that set the flag before this point ends the run
+        ``cancelled``, recording what it would otherwise have ended as in
+        ``ended_as``, even when its last step had already finished: a cancel
+        that returned ``ok`` is never followed by a run that reads
+        ``completed``. Returns the status written and whether this process
+        announces ``run.cancelled`` for it.
+        """
+
+        def write() -> tuple[str, bool]:
+            self._cached_state = None
+            flag = self._cancel_flag(run_id)
+            final, details = status, extra
+            if flag is not None and status != "cancelled":
+                final, details = "cancelled", {"failure": "cancelled", "ended_as": status}
+            self._finish_run(run_id, final, details)
+            parked = flag is not None and flag.get("parked") is True
+            return final, final == "cancelled" and not parked
+
+        return self._under_cancel_lock(write)
 
     def complete_run(
         self, run_id: str, finish_reason: str, tool_calls: Sequence[str] = ()
@@ -370,12 +609,14 @@ class Session:
         recording them a second time here, ungated, would quietly undo that
         decision for everyone who installed both.
         """
-        return self._finish_run(
+        self.end_run(
             run_id, "completed", {"finish_reason": finish_reason, "tool_calls": list(tool_calls)}
         )
+        return self
 
     def fail_run(self, run_id: str, failure: str) -> Session:
-        return self._finish_run(run_id, "failed", {"failure": failure})
+        self.end_run(run_id, "failed", {"failure": failure})
+        return self
 
     def lock(
         self,
@@ -434,6 +675,59 @@ class Session:
         self._cached_state = state
         return self
 
+    def _cancel_key(self) -> str:
+        return f"{self.key()}:cancel"
+
+    def _cancel_flag(self, run_id: str) -> dict[str, Any] | None:
+        record = self._durable.get(self._cancel_key()) or {}
+        runs = record.get("runs")
+        flag = runs.get(run_id) if isinstance(runs, dict) else None
+        return flag if isinstance(flag, dict) else None
+
+    def _record_cancel(self, run_id: str, parked: bool) -> None:
+        record = self._durable.get(self._cancel_key()) or {}
+        stored = record.get("runs")
+        runs = dict(stored) if isinstance(stored, dict) else {}
+        runs.pop(run_id, None)
+        runs[run_id] = {"at": datetime.now(timezone.utc).isoformat(), "parked": parked}
+        # Bounded: the newest flags are the ones a run or an approval can still ask about.
+        kept = dict(list(runs.items())[-RUN_HISTORY:])
+        self._durable.put(self._cancel_key(), {"runs": kept})
+
+    def _parked_on(self, run_id: str) -> bool:
+        """Whether the thread's tail is waiting on approvals this run asked for."""
+        paused = _paused_entry(self.thread().messages())
+        return paused is not None and paused.run_id == run_id
+
+    def _cancel_supported(self) -> bool:
+        """Whether the cancel lock is seen by every process these stores are
+        shared with: the lock store's lock scope covers the sharing scope of
+        both the ephemeral store (the run) and the durable store (the flag).
+        A process-local lock over a host-shared store cannot serialise a
+        cancel with a run in another process, so it is ``unsupported``."""
+        try:
+            lock = store_lock_rank(self._lock_store)
+        except IndexLockScopeUnsupported:
+            return False
+        for store in (self._ephemeral, self._durable):
+            sharing = getattr(store, "sharing_scope", None)
+            scope = sharing() if callable(sharing) else None
+            if not isinstance(scope, str) or scope not in _SCOPE_RANKS:
+                return False
+            if _SCOPE_RANKS[scope] > lock:
+                return False
+        return True
+
+    def _under_cancel_lock(self, work: Callable[[], R]) -> R:
+        """Run a cancel decision, or a run's end, under this session's cancel
+        lock, so a cancel racing a run's last step cannot both return ``ok``
+        and leave the run ``completed``: whichever takes the lock second sees
+        the other. Its own key, never the session lock; the order is always
+        session lock, then cancel lock."""
+        if not self._cancel_supported():
+            return work()
+        return self._lock_store.with_lock(f"{self.key()}:cancel-lock", work, 10, 10)
+
     def _write_capabilities(self, mutate: Callable[[dict[str, Any]], dict[str, Any]]) -> Session:
         self._assert_writable()
         stored = self._durable.get(self._durable_key()) or {}
@@ -461,6 +755,61 @@ class Session:
                 **extra,
             },
         )
+
+
+def _tag(run: dict[str, Any], key: str) -> str | None:
+    value = run.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _issuing_entry(
+    entries: Sequence[ThreadMessage], approval_id: str
+) -> tuple[int, str | None] | None:
+    """The position of the stored row that asked for an approval id, newest
+    first, and the run that recorded it; None when no row issued it."""
+    for index in range(len(entries) - 1, -1, -1):
+        message = entries[index].message
+        if message.get("type") != "assistant":
+            continue
+        requests = message.get("tool_approval_requests")
+        if isinstance(requests, list) and any(
+            isinstance(request, dict) and request.get("approval_id") == approval_id
+            for request in requests
+        ):
+            return index, entries[index].run_id
+    return None
+
+
+def _first_decision(entries: Sequence[ThreadMessage], approval_id: str) -> bool | None:
+    """The first decision recorded for an approval id, or None."""
+    for entry in entries:
+        message = entry.message
+        kind = message.get("type")
+        responses: object
+        if kind == "tool_result":
+            responses = message.get("tool_approval_responses")
+        elif kind == "tool_approval_response":
+            responses = [message]
+        else:
+            continue
+        for response in responses if isinstance(responses, list) else []:
+            if isinstance(response, dict) and response.get("approval_id") == approval_id:
+                return response.get("approved") is True
+    return None
+
+
+def _paused_entry(entries: Sequence[ThreadMessage]) -> ThreadMessage | None:
+    """The stored entry whose approvals the transcript tail is waiting on, as
+    :func:`~prism_harness.thread_rows.paused_approval_row` reads it."""
+    for entry in reversed(entries):
+        kind = entry.message.get("type")
+        if kind == "user":
+            return None
+        if kind != "assistant":
+            continue
+        requests = entry.message.get("tool_approval_requests")
+        return entry if isinstance(requests, list) and requests else None
+    return None
 
 
 def _stored_pair(value: object, first: str, second: str) -> dict[str, str] | None:
