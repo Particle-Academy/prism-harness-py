@@ -70,6 +70,7 @@ from prism_harness.subagents import (
     RunContext,
     RunLedger,
     Subagent,
+    binding_route,
     subagent_from_config,
 )
 from prism_harness.tasks import (
@@ -213,6 +214,7 @@ __all__ = [
     "admit_attachments",
     "args_digest",
     "assistant_row",
+    "binding_route",
     "canonical_json",
     "canonical_task_json",
     "diagnose",

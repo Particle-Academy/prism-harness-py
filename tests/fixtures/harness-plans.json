@@ -1,9 +1,9 @@
 {
   "suite": "harness-plans",
   "schema_version": 1,
-  "corpus_version": "0.1.5",
+  "corpus_version": "0.1.6",
   "generated_by": "tools/generate-harness-plans.mjs writes the inputs. `expected` is the PHP reference's recording; every security row was checked by hand against the G-360 design before TypeScript or Python ran. `result` records what each language measured, merged with --merge.",
-  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. A setting that is invalid records {invalid: true}.",
+  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. binding_route runs the pure ChildBinding.route; whether a binding is saved starts false and carries from op to op, set when a route saves. A setting or context kind that is invalid records {invalid: true}.",
   "cases": [
     {
       "id": "hpl-0001",
@@ -23762,6 +23762,597 @@
               "route": {
                 "tree": "none",
                 "plan": "refused"
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0056",
+      "title": "a binding a host context brings to a session that was never a child is used for that turn and never saved",
+      "since": "0.1.6",
+      "notes": "Which binding a turn runs on (binding_route, whether a binding is saved carried from op to op as on a session). A host context with a binding on a session that was never a child runs that turn on it, and nothing is saved, so the next turn with no context runs as a root on the default binding; a host context with none is a root too (a host binding outliving the turn it was given for).",
+      "ops": [
+        {
+          "op": "binding_route",
+          "context": "host",
+          "supplied_binding": true,
+          "linked": false
+        },
+        {
+          "op": "binding_route",
+          "context": "none",
+          "supplied_binding": false,
+          "linked": false
+        },
+        {
+          "op": "binding_route",
+          "context": "metadata",
+          "supplied_binding": false,
+          "linked": false
+        },
+        {
+          "op": "binding_route",
+          "context": "host",
+          "supplied_binding": false,
+          "linked": false
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "route": {
+              "binding": "host",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "root",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "root",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "root",
+              "save": false
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "route": {
+                "binding": "host",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "route": {
+                "binding": "host",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "route": {
+                "binding": "host",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0057",
+      "title": "a linked child with no saved binding is refused before any request, whatever context it is handed",
+      "since": "0.1.6",
+      "notes": "A session the runner started as a child (linked: its thread is linked beneath a parent, or it has saved run tree references) whose binding is gone is refused with child_binding_missing, under no context, a metadata-only one, and a host context with or without a binding of its own; only the runner's own context, which starts the child again, binds it, and that binding is saved (a host binding standing in for a lost one; a child run on a provider nobody chose).",
+      "ops": [
+        {
+          "op": "binding_route",
+          "context": "none",
+          "supplied_binding": false,
+          "linked": true
+        },
+        {
+          "op": "binding_route",
+          "context": "metadata",
+          "supplied_binding": false,
+          "linked": true
+        },
+        {
+          "op": "binding_route",
+          "context": "host",
+          "supplied_binding": false,
+          "linked": true
+        },
+        {
+          "op": "binding_route",
+          "context": "host",
+          "supplied_binding": true,
+          "linked": true
+        },
+        {
+          "op": "binding_route",
+          "context": "runner",
+          "supplied_binding": false,
+          "linked": true
+        },
+        {
+          "op": "binding_route",
+          "context": "runner",
+          "supplied_binding": true,
+          "linked": true
+        },
+        {
+          "op": "binding_route",
+          "context": "none",
+          "supplied_binding": false,
+          "linked": true
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "route": {
+              "binding": "refused",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "refused",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "refused",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "refused",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "refused",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "runner",
+              "save": true
+            }
+          },
+          {
+            "route": {
+              "binding": "saved",
+              "save": false
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "runner",
+                "save": true
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "runner",
+                "save": true
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "refused",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "runner",
+                "save": true
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0058",
+      "title": "only the runner's own context saves a binding, and a saved binding wins over any other",
+      "since": "0.1.6",
+      "notes": "The runner's context with a binding saves it; every later turn the runner did not start runs on the saved binding, including a host context carrying another; a runner context with no binding of its own does not replace one; an unknown context kind is invalid (a host binding replacing the saved one and the run tree with it).",
+      "ops": [
+        {
+          "op": "binding_route",
+          "context": "runner",
+          "supplied_binding": true,
+          "linked": false
+        },
+        {
+          "op": "binding_route",
+          "context": "host",
+          "supplied_binding": true,
+          "linked": false
+        },
+        {
+          "op": "binding_route",
+          "context": "none",
+          "supplied_binding": false,
+          "linked": false
+        },
+        {
+          "op": "binding_route",
+          "context": "metadata",
+          "supplied_binding": true,
+          "linked": false
+        },
+        {
+          "op": "binding_route",
+          "context": "runner",
+          "supplied_binding": false,
+          "linked": false
+        },
+        {
+          "op": "binding_route",
+          "context": "root",
+          "supplied_binding": true,
+          "linked": false
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "route": {
+              "binding": "runner",
+              "save": true
+            }
+          },
+          {
+            "route": {
+              "binding": "saved",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "saved",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "saved",
+              "save": false
+            }
+          },
+          {
+            "route": {
+              "binding": "saved",
+              "save": false
+            }
+          },
+          {
+            "invalid": true
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "route": {
+                "binding": "runner",
+                "save": true
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "route": {
+                "binding": "runner",
+                "save": true
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "route": {
+                "binding": "runner",
+                "save": true
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "route": {
+                "binding": "saved",
+                "save": false
               }
             },
             {
