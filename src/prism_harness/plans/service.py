@@ -27,6 +27,7 @@ from prism_harness.plans.ids import PlanIds
 from prism_harness.plans.limits import PlanLimits
 from prism_harness.plans.refusal import PlanRefused, PlansDisabled
 from prism_harness.plans.thread_facts import approval_decisions, pending_approval_calls
+from prism_harness.run_trees import saved_refs
 from prism_harness.stores.base import SessionStore
 from prism_harness.thread_rows import paused_approval_row
 
@@ -382,33 +383,25 @@ class Plans:
         refuse_unfunded_decision(session, approval_id, self.now(), hold_ttl)
 
     def _ledger_for(
-        self, session: Session, prompt: str, context: RunContext | None
+        self, session: Session, prompt: str, context: RunContext | None, kind: str = "none"
     ) -> dict[str, Any] | None:
-        """The shared ledger a turn spends from: its own plan's when the turn is
-        the plan's own; else, for a subagent child resumed outside the runner,
-        the ledger saved on its paused row."""
+        """The shared ledger a turn spends from, as :func:`budget.route`
+        decides: its own plan's when the turn is the plan's own; else, for a
+        turn on a subagent child the runner did not start (an answer, a new
+        message, or a host context, which the ledger narrows), the ledger it was
+        saved with. ``refused`` marks the plan's own turn handed a run tree of
+        its own. ``kind`` is the context's kind, from the runtime's run trees."""
         if not self._enabled:
             return None
-        if self.enabled_for(session):
-            plan = self.load(session)
-            if plan is not None and self._own_turn(session, plan, prompt):
-                if self.budget_for(session, plan["id"])["mode"] != "shared":
-                    return None
-                return {"session": session.key(), "plan": plan["id"]}
-        if context is not None or prompt != "":
-            return None
-        return _child_ledger(session)
-
-    def _own_turn(self, session: Session, plan: Plan, prompt: str) -> bool:
-        """Whether a turn is one of the plan's own: the turn advance() runs for
-        the step it claimed, or a turn with no new message that continues an
-        approval the step asked for."""
+        plan = self.load(session) if self.enabled_for(session) else None
         step = _active_agent_step(plan)
-        if step is None:
-            return False
-        if session.key() in self._advancing:
-            return True
-        return prompt == "" and bool(set(step["approvalIds"]) & set(_paused_ids(_rows(session))))
+        advancing = step is not None and session.key() in self._advancing
+        step_approval = step is not None and bool(
+            set(step["approvalIds"]) & set(_paused_ids(_rows(session)))
+        )
+        return _routed_ledger(
+            session, plan, kind, prompt, advancing, step_approval, self.budget_for
+        )
 
     def plan_turn(
         self,
@@ -418,25 +411,31 @@ class Plans:
         context: RunContext | None,
         hold_ttl: int,
         prompt: str = "",
+        kind: str | None = None,
     ) -> RunContext:
         """The run a turn executes under, when the turn is one of the plan's own
         and its budget is shared: the per-turn budget, narrowed to what the
         plan's ledger holds for it. Any other run is returned unchanged.
 
         The plan's own turns are the one advance() runs for the step it
-        claimed, the resume of an approval that step asked for, and a subagent
-        child those turns started, resumed outside the runner. Any other turn
+        claimed, the resume of an approval that step asked for, and any turn on
+        a subagent child those turns started that the runner did not start (an
+        answer, a new message, or a host context, which is narrowed to what the
+        plan has left). Any other turn
         on the session (a person chatting while a step waits on them, or while
         a claim whose worker died is still live) spends nothing from the plan's
         budget and is never refused for it.
 
-        A run handed a run tree of its own cannot also spend from the plan's
-        ledger, so it is refused rather than let around it. Called by the
-        runtime once a run's own budget is known."""
-        target = self._ledger_for(session, prompt, context)
+        The plan's own turn handed a run tree of its own cannot also spend
+        from the plan's ledger, so it is refused rather than let around it.
+        Called by the runtime once a run's own budget is known, with the kind
+        of context the turn was handed (``none`` or ``host`` by default)."""
+        if kind is None:
+            kind = "none" if context is None else "host"
+        target = self._ledger_for(session, prompt, context, kind)
         if target is None:
             return run
-        if context is not None:
+        if target["refused"]:
             raise PlanRefused("plan.budget_context")
 
         ledger = run.ledger
@@ -650,19 +649,37 @@ def _shared_record(store: SessionStore, session_key: str, plan_id: str) -> dict[
 
 
 def _child_ledger(session: Session) -> dict[str, str] | None:
-    """The plan ledger a subagent child's paused row carries, while it is still
-    that plan's shared ledger."""
-    row = paused_approval_row(_rows(session))
-    saved = row.get("harness_plan_ledger") if row is not None else None
-    if not (
-        isinstance(saved, dict)
-        and isinstance(saved.get("session"), str)
-        and isinstance(saved.get("plan"), str)
-    ):
+    """The plan ledger a subagent child was saved with, while it is still that
+    plan's shared ledger."""
+    _, saved = saved_refs(session)
+    if saved is None:
         return None
     if _shared_record(session.plan_store(), saved["session"], saved["plan"]) is None:
         return None
     return {"session": saved["session"], "plan": saved["plan"]}
+
+
+def _routed_ledger(
+    session: Session,
+    plan: Plan | None,
+    kind: str,
+    prompt: str,
+    advancing: bool,
+    step_approval: bool,
+    budget_for: Callable[[Session, str], dict[str, Any]],
+) -> dict[str, Any] | None:
+    tree, plan_ledger = saved_refs(session)
+    route = budget.route(
+        kind, prompt, advancing, step_approval, tree is not None, plan_ledger is not None
+    )["plan"]
+    if route in ("own", "refused") and plan is not None:
+        if budget_for(session, plan["id"])["mode"] != "shared":
+            return None
+        return {"session": session.key(), "plan": plan["id"], "refused": route == "refused"}
+    if route != "child":
+        return None
+    child = _child_ledger(session)
+    return None if child is None else {**child, "refused": False}
 
 
 def refuse_unfunded_decision(session: Session, approval_id: str, now: int, hold_ttl: int) -> None:
@@ -675,14 +692,16 @@ def refuse_unfunded_decision(session: Session, approval_id: str, now: int, hold_
     for, or the paused row of a subagent child started by a plan turn.
     """
     store = session.plan_store()
-    target: dict[str, str] | None = None
     payload = store.get(_key(session.key()))
     plan = payload.get("plan") if isinstance(payload, dict) else None
     step = _active_agent_step(plan if isinstance(plan, dict) else None)
+    # A decision takes no context and resumes as a turn with no new message.
     if isinstance(plan, dict) and step is not None and approval_id in step["approvalIds"]:
-        target = {"session": session.key(), "plan": plan["id"]}
+        target: dict[str, Any] | None = {"session": session.key(), "plan": plan["id"]}
     else:
-        target = _child_ledger(session)
+        tree, plan_ledger = saved_refs(session)
+        route = budget.route("none", "", False, False, tree is not None, plan_ledger is not None)
+        target = _child_ledger(session) if route["plan"] == "child" else None
     if target is None:
         return
     record = _shared_record(store, target["session"], target["plan"])

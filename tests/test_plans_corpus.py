@@ -115,6 +115,17 @@ def plans_budget_op(op: dict[str, Any], state: dict[str, Any], now: int) -> dict
             return {"ok": True}
         if kind == "budget_exhaustion":
             return {"exhaustion": budget.exhaustion(state["ledger"])}
+        if kind == "budget_route":
+            return {
+                "route": budget.route(
+                    op["context"],
+                    op["prompt"],
+                    op["advancing"],
+                    op["step_approval"],
+                    op["saved_tree"],
+                    op["saved_plan_ledger"],
+                )
+            }
     except PlanBudgetInvalid:
         return {"invalid": True}
     raise AssertionError(f"Unknown op {kind}")
@@ -305,7 +316,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 52
+        assert len(CASES) == 55
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:

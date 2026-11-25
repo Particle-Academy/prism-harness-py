@@ -1,7 +1,7 @@
 {
   "suite": "harness-plans",
   "schema_version": 1,
-  "corpus_version": "0.1.4",
+  "corpus_version": "0.1.5",
   "generated_by": "tools/generate-harness-plans.mjs writes the inputs. `expected` is the PHP reference's recording; every security row was checked by hand against the G-360 design before TypeScript or Python ran. `result` records what each language measured, merged with --merge.",
   "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. A setting that is invalid records {invalid: true}.",
   "cases": [
@@ -23019,6 +23019,485 @@
         }
       },
       "agrees": true
+    },
+    {
+      "id": "hpl-0053",
+      "title": "a turn on a subagent child continues its run tree and plan budget whatever its prompt",
+      "since": "0.1.5",
+      "notes": "Which budgets a turn on a child session the runner did not start spends from (budget_route). An answer to its approval and a new message instead of one both continue the saved run tree and charge the saved plan budget; a metadata-only context changes nothing; only a session saved with no tree opens a fresh one (a new message escaping the tree and plan budgets).",
+      "ops": [
+        {
+          "op": "budget_route",
+          "context": "none",
+          "prompt": "",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": true,
+          "saved_plan_ledger": true
+        },
+        {
+          "op": "budget_route",
+          "context": "none",
+          "prompt": "New question",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": true,
+          "saved_plan_ledger": true
+        },
+        {
+          "op": "budget_route",
+          "context": "metadata",
+          "prompt": "New question",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": true,
+          "saved_plan_ledger": true
+        },
+        {
+          "op": "budget_route",
+          "context": "none",
+          "prompt": "New question",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": true,
+          "saved_plan_ledger": false
+        },
+        {
+          "op": "budget_route",
+          "context": "none",
+          "prompt": "New question",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": false,
+          "saved_plan_ledger": false
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "route": {
+              "tree": "continue",
+              "plan": "child"
+            }
+          },
+          {
+            "route": {
+              "tree": "continue",
+              "plan": "child"
+            }
+          },
+          {
+            "route": {
+              "tree": "continue",
+              "plan": "child"
+            }
+          },
+          {
+            "route": {
+              "tree": "continue",
+              "plan": "none"
+            }
+          },
+          {
+            "route": {
+              "tree": "open",
+              "plan": "none"
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "none"
+              }
+            },
+            {
+              "route": {
+                "tree": "open",
+                "plan": "none"
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": false
+    },
+    {
+      "id": "hpl-0054",
+      "title": "a run context the host hands a child session is narrowed to its run tree and plan budget, never a fresh root",
+      "since": "0.1.5",
+      "notes": "A host-built context on a child saved with a run tree and a plan budget continues both, whatever its prompt, and the ledger then grants it only what is left, however large the host budget; the runner's own context already spends from the tree and is not charged twice (a host context widening a resumed child; double charge).",
+      "ops": [
+        {
+          "op": "budget_route",
+          "context": "host",
+          "prompt": "",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": true,
+          "saved_plan_ledger": true
+        },
+        {
+          "op": "budget_route",
+          "context": "host",
+          "prompt": "New question",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": true,
+          "saved_plan_ledger": true
+        },
+        {
+          "op": "budget_route",
+          "context": "host",
+          "prompt": "",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": false,
+          "saved_plan_ledger": false
+        },
+        {
+          "op": "budget_route",
+          "context": "runner",
+          "prompt": "",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": true,
+          "saved_plan_ledger": true
+        },
+        {
+          "op": "budget_open",
+          "config": {
+            "mode": "shared",
+            "max_steps": 5
+          }
+        },
+        {
+          "op": "budget_reserve",
+          "hold": "run_root",
+          "steps": 5,
+          "cost_micros": null
+        },
+        {
+          "op": "budget_settle",
+          "hold": "run_root",
+          "steps": 4,
+          "cost_micros": 0
+        },
+        {
+          "op": "budget_reserve",
+          "hold": "run_host",
+          "steps": 100,
+          "cost_micros": null
+        },
+        {
+          "op": "budget_settle",
+          "hold": "run_host",
+          "steps": 1,
+          "cost_micros": 0
+        },
+        {
+          "op": "budget_reserve",
+          "hold": "run_host_again",
+          "steps": 100,
+          "cost_micros": null
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "route": {
+              "tree": "continue",
+              "plan": "child"
+            }
+          },
+          {
+            "route": {
+              "tree": "continue",
+              "plan": "child"
+            }
+          },
+          {
+            "route": {
+              "tree": "none",
+              "plan": "none"
+            }
+          },
+          {
+            "route": {
+              "tree": "none",
+              "plan": "none"
+            }
+          },
+          {
+            "ok": true
+          },
+          {
+            "grant": {
+              "steps": 5,
+              "cost_micros": null
+            }
+          },
+          {
+            "ok": true
+          },
+          {
+            "grant": {
+              "steps": 1,
+              "cost_micros": null
+            }
+          },
+          {
+            "ok": true
+          },
+          {
+            "refused": "plan_budget_exhausted",
+            "limit": "steps"
+          }
+        ],
+        "final": null,
+        "budget": {
+          "mode": "shared",
+          "max_steps": 5,
+          "max_cost_micros": null,
+          "steps": 5,
+          "cost_micros": 0,
+          "unmetered": 0,
+          "holds": [],
+          "exhaustion": "steps"
+        }
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "none"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "none"
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 5,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 1,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "refused": "plan_budget_exhausted",
+              "limit": "steps"
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 5,
+            "max_cost_micros": null,
+            "steps": 5,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": "steps"
+          }
+        }
+      },
+      "agrees": false
+    },
+    {
+      "id": "hpl-0055",
+      "title": "only the plan's own turns spend from its budget, and a run tree handed to one is refused",
+      "since": "0.1.5",
+      "notes": "The turn advance() runs and the empty-prompt resume of the held step's own approval are the plan's; a new message while the step is held is not. The plan's own turn handed a host or runner context is refused with plan.budget_context rather than let around the plan budget; an unknown context kind is invalid (a chat turn charged to a plan; a context around a plan budget).",
+      "ops": [
+        {
+          "op": "budget_route",
+          "context": "none",
+          "prompt": "",
+          "advancing": true,
+          "step_approval": false,
+          "saved_tree": false,
+          "saved_plan_ledger": false
+        },
+        {
+          "op": "budget_route",
+          "context": "none",
+          "prompt": "",
+          "advancing": false,
+          "step_approval": true,
+          "saved_tree": false,
+          "saved_plan_ledger": false
+        },
+        {
+          "op": "budget_route",
+          "context": "none",
+          "prompt": "Unrelated",
+          "advancing": false,
+          "step_approval": true,
+          "saved_tree": false,
+          "saved_plan_ledger": false
+        },
+        {
+          "op": "budget_route",
+          "context": "host",
+          "prompt": "",
+          "advancing": true,
+          "step_approval": false,
+          "saved_tree": false,
+          "saved_plan_ledger": false
+        },
+        {
+          "op": "budget_route",
+          "context": "runner",
+          "prompt": "",
+          "advancing": false,
+          "step_approval": true,
+          "saved_tree": false,
+          "saved_plan_ledger": false
+        },
+        {
+          "op": "budget_route",
+          "context": "root",
+          "prompt": "",
+          "advancing": false,
+          "step_approval": false,
+          "saved_tree": false,
+          "saved_plan_ledger": false
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "route": {
+              "tree": "open",
+              "plan": "own"
+            }
+          },
+          {
+            "route": {
+              "tree": "open",
+              "plan": "own"
+            }
+          },
+          {
+            "route": {
+              "tree": "open",
+              "plan": "none"
+            }
+          },
+          {
+            "route": {
+              "tree": "none",
+              "plan": "refused"
+            }
+          },
+          {
+            "route": {
+              "tree": "none",
+              "plan": "refused"
+            }
+          },
+          {
+            "invalid": true
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "route": {
+                "tree": "open",
+                "plan": "own"
+              }
+            },
+            {
+              "route": {
+                "tree": "open",
+                "plan": "own"
+              }
+            },
+            {
+              "route": {
+                "tree": "open",
+                "plan": "none"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "refused"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "refused"
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": false
     }
   ]
 }

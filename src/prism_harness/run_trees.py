@@ -13,8 +13,12 @@ runs, settles what it spent when it ends, and is refused once the tree's
 allowance is spent. A hold whose run never settled is charged in full once the
 session lock's TTL has passed, so a crash can only over-charge the tree.
 
-The tree a child belongs to travels on its paused approval row
-(``harness_tree``), beside ``harness_binding``.
+The tree a child belongs to is saved in the child session's durable half when
+the runner starts it (:meth:`Session.child_refs`), so EVERY turn on the child
+the runner did not start reads it: an answer to its approval, a new message
+instead of one, or a run context the host built, which is narrowed to what the
+tree has left. It also travels on the paused approval row (``harness_tree``),
+read for a child paused before the durable record existed.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ from prism_harness.thread_rows import paused_approval_row
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from prism_harness.session import Session
 
-__all__ = ["RunTrees", "refuse_spent_tree", "saved_tree"]
+__all__ = ["RunTrees", "refuse_spent_tree", "saved_refs", "saved_tree"]
 
 _log = logging.getLogger("prism_harness.run_trees")
 
@@ -49,16 +53,40 @@ class RunTrees:
         #: The tree each runner-started child run belongs to, until it ends.
         self._children: dict[str, Tree] = {}
 
+    def context_kind(self, context: RunContext | None) -> str:
+        """What kind of run context a turn was handed, for
+        :func:`~prism_harness.plans.budget.route`: ``runner`` when it is a
+        context of a run this runtime is running (its ledger is that run's),
+        ``host`` for any other context."""
+        if context is None:
+            return "none"
+        entry = self._runs.get(context.root_run_id)
+        return "runner" if entry is not None and entry["ledger"] is context.ledger else "host"
+
     def root_run(
-        self, session: Session, run_id: str, run: RunContext, tree: Tree | None, hold_ttl: int
+        self,
+        session: Session,
+        run_id: str,
+        run: RunContext,
+        context: RunContext | None,
+        tree: Tree | None,
+        hold_ttl: int,
     ) -> RunContext:
-        """A root run is starting. A child resumed outside the runner continues
-        the tree its paused row names (``tree``): it holds what that tree has
-        left, and its run is narrowed to the hold. Any other root run opens a
-        tree of its own, kept in memory until it starts a child.
+        """A run is starting. A turn on a child session the runner did not
+        start (an answer to its approval, a new message, or a run context the
+        host built) continues the tree it was saved with (``tree``): it holds
+        what that tree has left, and its run is narrowed to the hold, so a host
+        context can only lower what the tree allows. Any other root run opens a
+        tree of its own, kept in memory until it starts a child. A run on the
+        runner's own context already spends from its tree and is left alone.
 
         :raises HarnessError: ``run_not_permitted`` when that tree is spent.
         """
+        kind = budget.route(self.context_kind(context), "", False, False, tree is not None, False)
+        if kind["tree"] == "none":
+            return run
+        if kind["tree"] == "open":
+            tree = None
         ledger = run.ledger
         entry: dict[str, Any] = {
             "session": session.key(),
@@ -200,6 +228,28 @@ def saved_tree(row: Mapping[str, Any] | None) -> Tree | None:
     return None
 
 
+def saved_refs(session: Session) -> tuple[Tree | None, dict[str, str] | None]:
+    """The run tree and shared plan budget a child session was saved with: its
+    durable record, or, for a child paused before that record existed, its
+    paused row."""
+    refs = session.child_refs()
+    if refs is not None:
+        return refs["tree"], refs["plan_ledger"]
+    row = paused_approval_row([entry.message for entry in session.thread().messages()])
+    return saved_tree(row), _saved_plan_ledger(row)
+
+
+def _saved_plan_ledger(row: Mapping[str, Any] | None) -> dict[str, str] | None:
+    saved = row.get("harness_plan_ledger") if row is not None else None
+    if (
+        isinstance(saved, Mapping)
+        and isinstance(saved.get("session"), str)
+        and isinstance(saved.get("plan"), str)
+    ):
+        return {"session": saved["session"], "plan": saved["plan"]}
+    return None
+
+
 def refuse_spent_tree(session: Session, now: int, hold_ttl: int) -> None:
     """Refuse, before anything is recorded, a decision on a child session whose
     run tree has nothing left: recorded, it would be consumed by a resume the
@@ -207,9 +257,9 @@ def refuse_spent_tree(session: Session, now: int, hold_ttl: int) -> None:
 
     :raises HarnessError: ``run_not_permitted``.
     """
-    rows = [entry.message for entry in session.thread().messages()]
-    tree = saved_tree(paused_approval_row(rows))
-    if tree is None:
+    tree, _ = saved_refs(session)
+    # A decision takes no context: it resumes as a turn with none.
+    if tree is None or budget.route("none", "", False, False, True, False)["tree"] != "continue":
         return
     state = session.plan_store().get(_key(tree))
     if not isinstance(state, dict) or state.get("planId") != tree["run"]:

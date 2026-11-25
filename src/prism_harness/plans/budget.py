@@ -33,6 +33,7 @@ from typing import Any
 from prism_harness.plans.refusal import PlanRefused
 
 __all__ = [
+    "CONTEXT_KINDS",
     "EXHAUSTED",
     "MODES",
     "PlanBudgetInvalid",
@@ -43,6 +44,7 @@ __all__ = [
     "narrow",
     "open_ledger",
     "reserve",
+    "route",
     "settings",
     "settle",
 ]
@@ -243,3 +245,55 @@ def expire(state: State, now: int, hold_ttl: int) -> State:
                 "cost_micros": state["cost_micros"] + hold["cost_micros"],
             }
     return state
+
+
+#: The kinds of run context a turn can be handed, for :func:`route`.
+CONTEXT_KINDS = ("none", "metadata", "runner", "host")
+
+
+def route(
+    context: str,
+    prompt: str,
+    advancing: bool,
+    step_approval: bool,
+    saved_tree: bool,
+    saved_plan_ledger: bool,
+) -> dict[str, str]:
+    """Which budgets a turn spends from. Pure, so every language answers it the
+    same way (prism-parity harness-plans).
+
+    ``context`` is the run context the turn was handed: ``none``, ``metadata``
+    (the same as none), ``runner`` (a context of a run this runtime is running,
+    such as the subagent runner's child) or ``host`` (any other context the host
+    built). ``advancing`` is true for the turn advance() runs for a claimed
+    agent step, and ``step_approval`` when the approval the turn would resume is
+    one that step asked for. ``saved_tree`` and ``saved_plan_ledger`` say
+    whether the session is a subagent child saved with a run tree and a shared
+    plan budget.
+
+    ``tree`` is ``open`` (a root run that opens a tree of its own), ``continue``
+    (hold what the saved tree has left; a host context is narrowed to it) or
+    ``none`` (the runner's own context already spends from it). ``plan`` is
+    ``own`` (the plan's own turn spends from its budget), ``child`` (the saved
+    plan budget; a host context is narrowed to it), ``refused``
+    (``plan.budget_context``: the plan's own turn handed a run tree of its own)
+    or ``none``.
+
+    The prompt matters only to whether a turn is the plan's own: a new message
+    on a child session continues its tree and plan budget exactly as an answer
+    to its approval does. No route gives a child a fresh budget, and a host
+    context can only narrow one.
+
+    :raises PlanBudgetInvalid: for an unknown context kind.
+    """
+    if context not in CONTEXT_KINDS:
+        raise PlanBudgetInvalid(f"Unknown run context kind [{context}].")
+    bare = context in ("none", "metadata")
+    tree = (
+        "none" if context == "runner" else "continue" if saved_tree else "open" if bare else "none"
+    )
+    if advancing or (prompt == "" and step_approval):
+        plan = "own" if bare else "refused"
+    else:
+        plan = "child" if context != "runner" and saved_plan_ledger else "none"
+    return {"tree": tree, "plan": plan}

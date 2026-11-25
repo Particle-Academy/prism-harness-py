@@ -274,6 +274,39 @@ class Session:
             else None
         )
 
+    def child_refs(self) -> dict[str, dict[str, str] | None] | None:
+        """The run tree and shared plan budget this session was last started
+        under as a subagent child, or None for a session the runner never
+        started (G-366). Every turn on the child that the runner did not start
+        reads them, a new message as much as an answer to its approval, so no
+        turn on it gets a fresh root budget.
+
+        Internal: written by the runtime when the subagent runner starts a
+        child run."""
+        stored = self._durable.get(self._durable_key()) or {}
+        refs = stored.get("child_refs")
+        if not isinstance(refs, dict):
+            return None
+        return {
+            "tree": _stored_pair(refs.get("tree"), "session", "run"),
+            "plan_ledger": _stored_pair(refs.get("plan_ledger"), "session", "plan"),
+        }
+
+    def remember_child_refs(
+        self, tree: dict[str, str] | None, plan_ledger: dict[str, str] | None
+    ) -> Session:
+        """Internal: save the run tree and plan budget a runner-started child
+        run belongs to, in the session's durable half."""
+        self._assert_writable()
+        refs = {
+            "tree": None if tree is None else dict(tree),
+            "plan_ledger": None if plan_ledger is None else dict(plan_ledger),
+        }
+        stored = self._durable.get(self._durable_key()) or {}
+        if stored.get("child_refs") != refs:
+            self._durable.put(self._durable_key(), {**stored, "child_refs": refs})
+        return self
+
     def using_capability(self, name: str, state: dict[str, Any]) -> Session:
         return self._write_capabilities(lambda capabilities: {**capabilities, name: state})
 
@@ -404,3 +437,11 @@ class Session:
                 **extra,
             },
         )
+
+
+def _stored_pair(value: object, first: str, second: str) -> dict[str, str] | None:
+    """A saved run tree or plan budget reference; None when absent or malformed."""
+    if not isinstance(value, dict):
+        return None
+    a, b = value.get(first), value.get(second)
+    return {first: a, second: b} if isinstance(a, str) and a and isinstance(b, str) and b else None

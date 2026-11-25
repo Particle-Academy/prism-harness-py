@@ -30,7 +30,7 @@ from prism_harness.events import (
 )
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.plans.service import Plans, refuse_unfunded_decision
-from prism_harness.run_trees import RunTrees, refuse_spent_tree, saved_tree
+from prism_harness.run_trees import RunTrees, refuse_spent_tree, saved_refs
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import ChildBinding, RunBudget, RunContext
@@ -190,14 +190,22 @@ _RESOLUTION_LOCK_SECONDS = 300
 
 #: The run context of the turn whose tools are running in this context. A
 #: subagent child started by one of those tools spends from it.
-_TURN_RUN: ContextVar[RunContext | None] = ContextVar("prism_harness_turn_run", default=None)
+_TURN_RUN: ContextVar[tuple[str, RunContext] | None] = ContextVar(
+    "prism_harness_turn_run", default=None
+)
 
 
-def current_turn_run() -> RunContext | None:
+def current_turn_run(session_key: str | None = None) -> RunContext | None:
     """The run context of the turn whose tools are running now, or None
     outside a turn. Its budget is the turn's own, already narrowed by every
-    limit that applies to it, a shared plan budget included."""
-    return _TURN_RUN.get()
+    limit that applies to it, a shared plan budget included.
+
+    With ``session_key``, only a turn on that session: a tool built for one
+    session that runs inside another session's turn does not borrow it."""
+    turn = _TURN_RUN.get()
+    if turn is None or (session_key is not None and turn[0] != session_key):
+        return None
+    return turn[1]
 
 
 #: How long a second worker waits for that lock before giving up without running anything.
@@ -650,20 +658,27 @@ class AgentRuntime:
             # G-366: one of the plan's own turns, with a shared budget, holds
             # what the plan has left, after the paused steps it continues are
             # counted. Any other turn is unchanged.
-            if context is None:
-                # A root run, or a child resumed outside the runner, which
-                # continues the run tree it was started in.
-                run = self._trees.root_run(
-                    session, run_id, run, saved_tree(paused), self.lock_ttl(session)
+            if context is not None and context.binding is not None:
+                # The runner is starting a child: save the run tree and plan
+                # budget it belongs to, so every later turn on the child the
+                # runner did not start continues them.
+                session.remember_child_refs(
+                    self._trees.child_started(session, run_id, context, self.lock_ttl(session)),
+                    self._plans.active_ledger(),
                 )
-            elif context.binding is not None:
-                self._trees.child_started(session, run_id, context, self.lock_ttl(session))
+            # A root run opens a tree; any turn on a child session the runner
+            # did not start (an answer, a new message, or a host context,
+            # narrowed to what is left) continues the run tree and plan budget
+            # it was saved with. The runner's own context is left alone.
+            kind = self._trees.context_kind(context)
+            tree, _ = saved_refs(session)
+            run = self._trees.root_run(session, run_id, run, context, tree, self.lock_ttl(session))
             run = self._plans.plan_turn(
-                session, run_id, run, context, self.lock_ttl(session), prompt
+                session, run_id, run, context, self.lock_ttl(session), prompt, kind
             )
             # From here every tool the turn runs, a subagent included, runs
             # under this run context (G-366).
-            turn_token = _TURN_RUN.set(run)
+            turn_token = _TURN_RUN.set((session.key(), run))
             if scope is not None:
                 names, legacy = scope
                 if legacy:

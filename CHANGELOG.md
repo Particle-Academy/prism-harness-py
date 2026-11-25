@@ -29,6 +29,17 @@
   what is left, settles what it spent, and is refused (`run_not_permitted`)
   once it is spent, and a decision on its approval is refused the same way
   before anything is recorded.
+- Every turn on a subagent child that the runner did not start continues the
+  child's run tree and shared plan budget, not only an empty-prompt resume: a
+  new message sent to the child instead of an answer no longer starts a fresh
+  root budget, and a `RunContext` the host hands `send()` for the child is
+  narrowed to what the tree and the plan budget have left. The references are
+  saved with the child session (`Session.child_refs()`) when the runner starts
+  it. Which budgets a turn spends from is one pure rule,
+  `plans.budget.route()`, pinned by the harness-plans corpus 0.1.5
+  (hpl-0053..hpl-0055).
+- A subagent tool built for one session no longer borrows another session's
+  running turn: `current_turn_run()` takes the tool's session key.
 
 - Agent plans (G-360). An agent proposes a plan, a person approves it, and
   `runtime.plan(session).advance()` works through it one step per turn. Off
