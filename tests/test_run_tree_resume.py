@@ -18,7 +18,14 @@ from typing import Any
 import pytest
 from test_plan_budget import Rig, pending
 
-from prism_harness import HarnessError, Participant, Session, record_approval
+from prism_harness import (
+    HarnessError,
+    Participant,
+    RunBudget,
+    RunContext,
+    Session,
+    record_approval,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -95,3 +102,56 @@ def test_a_resumed_child_is_charged_to_its_tree_once() -> None:
     rig.runtime.send(child, "")
 
     assert len(rig.requests) - before == 1
+
+
+# A turn on a child session the runner did not start never gets a fresh root
+# budget by any route: not a new message instead of an answer, and not a run
+# context the host hands in (which may only narrow what the tree has left).
+
+
+def test_a_new_message_to_a_child_session_runs_on_what_its_tree_has_left() -> None:
+    rig, child, _ = paused_child(4)
+    before = len(rig.requests)
+
+    rig.calls(("lookup", {"q": "a"}))
+    rig.calls(("lookup", {"q": "b"}))
+    rig.text("Child answer.")
+    rig.runtime.send(child, "New question")
+
+    assert len(rig.requests) - before == 1
+
+
+def test_a_new_message_to_a_child_session_whose_tree_is_spent_is_refused() -> None:
+    rig, child, _ = paused_child(3)
+    before = len(rig.requests)
+
+    with pytest.raises(HarnessError) as caught:
+        rig.runtime.send(child, "New question")
+    assert caught.value.code == "run_not_permitted"
+    assert len(rig.requests) == before
+
+
+def test_a_host_context_on_a_resumed_child_is_narrowed_to_what_its_tree_has_left() -> None:
+    rig, child, approval = paused_child(4)
+    before = len(rig.requests)
+
+    rig.calls(("lookup", {"q": "a"}))
+    rig.calls(("lookup", {"q": "b"}))
+    rig.text("Child answer.")
+    record_approval(child, approval, True)
+    rig.runtime.send(child, "", context=RunContext.root("host_root", RunBudget(100)))
+
+    assert rig.ran.count("weather") == 1
+    assert len(rig.requests) - before == 1
+
+
+def test_a_host_context_on_a_child_whose_tree_is_spent_is_refused() -> None:
+    rig, child, _ = paused_child(3)
+    before = len(rig.requests)
+
+    with pytest.raises(HarnessError) as caught:
+        rig.runtime.send(
+            child, "New question", context=RunContext.root("host_root", RunBudget(100))
+        )
+    assert caught.value.code == "run_not_permitted"
+    assert len(rig.requests) == before

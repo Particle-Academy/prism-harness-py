@@ -62,7 +62,7 @@ class SubagentTool:
         return self._runner.run(
             self._subagent,
             self._parent,
-            within_turn(self._context, current_turn_run()),
+            within_turn(self._context, current_turn_run(self._parent.key())),
             self._parent_run_id,
             task if isinstance(task, str) else "",
         ).to_tool_result()

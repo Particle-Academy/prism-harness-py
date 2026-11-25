@@ -267,9 +267,14 @@ What one run tree is:
   tree spent when it ends. The resumed child holds what the tree has left
   before it calls a model, settles what it spent when it ends, and is refused
   (`run_not_permitted`) once the allowance is spent. A decision on its approval
-  is refused the same way before anything is recorded. A child started under a
-  run context the host built outside a turn has no tree record and resumes as
-  before.
+  is refused the same way before anything is recorded. The tree and the shared
+  plan budget a child belongs to are also saved with the child session when
+  the runner starts it, so EVERY turn on the child the runner did not start
+  continues them: a new message instead of an answer as much as the answer,
+  and a `RunContext` the host hands `send()`, which is narrowed to what the
+  tree and the plan budget have left and can never widen them. A child started
+  under a run context the host built outside a turn has no tree record and
+  resumes as before.
 - Every other `send()` starts a new run tree, with nothing spent.
 - So does every `runtime.plan(session).advance()` that is not handed a
   `RunContext`: each step of a plan gets the full ceiling. To hold a whole plan
@@ -539,7 +544,9 @@ outside the ledger. An invalid mode or limit raises `PlanBudgetInvalid` when
 
 The plan's own turns are the turn `advance()` runs for the step it claimed, the
 resume of an approval that step asked for, and a subagent child those turns
-started when it is resumed outside the runner. Any other turn on the session,
+started, on any turn the runner did not start: an answer to its approval, a
+new message, or a host `RunContext` (narrowed to what the plan has left, never
+refused for having one). Any other turn on the session,
 such as the person chatting while a step waits on their approval, spends
 nothing from the plan's budget and is never refused for it. A decision
 (`record_approval()` or `runtime.decide()`) on an approval the step asked for
