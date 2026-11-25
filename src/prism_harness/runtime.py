@@ -984,6 +984,13 @@ class AgentRuntime:
             row = assistant_row(response.text, calls, metadata, requests)
             if requests:
                 row["harness_tool_names"] = [tool.name for tool in offered]
+                # What a root that opened its tree has left of its own step
+                # budget, so a decision on it is checked as its resume will be.
+                parked_as = self._trees.member(run_id)
+                if parked_as is not None and parked_as["route"] == "open":
+                    row["harness_steps_left"] = max(
+                        0, int(parked_as["own_max_steps"]) - run.ledger.steps
+                    )
                 # What a resume needs to continue this run as the same run.
                 if run.agent is not None:
                     row["harness_agent_spend"] = {
@@ -1323,6 +1330,11 @@ class AgentRuntime:
 
         try:
             result = tool.handle(dict(call.arguments))
+            # Written down inside the same guard: a result that cannot be
+            # recorded is the tool's failure too. Escaping here would leave
+            # every call resolved before it unrecorded, to run again on the
+            # next resume.
+            text = result if isinstance(result, str) else json.dumps(result)
         except HarnessError as error:
             # A refused call propagates. A refusal fed back to the model reads
             # as a retryable failure, which is the opposite of a guard.
@@ -1335,7 +1347,7 @@ class AgentRuntime:
             # recover, and losing the whole turn to one bad call is worse.
             return tool_result_entry(call, f"The tool failed: {error}")
 
-        return tool_result_entry(call, result if isinstance(result, str) else json.dumps(result))
+        return tool_result_entry(call, text)
 
     @staticmethod
     def _assert_document(schema: dict[str, Any], response: LlmResponse) -> None:

@@ -93,6 +93,8 @@ class Rig:
         self.ran: list[str] = []
         self.hooks: dict[str, Callable[[], None]] = {}
         self.depths: list[tuple[str, int]] = []
+        #: Host code run once, at the start of the next model call.
+        self.on_request: Callable[[], None] | None = None
         self._call = 0
         self.harness = PrismHarness(
             drivers={"memory": MemorySessionStore, "durable": durable},
@@ -158,6 +160,9 @@ class Rig:
         )
 
     def _client(self, request: LlmRequest) -> LlmResponse:
+        hook, self.on_request = self.on_request, None
+        if hook is not None:
+            hook()
         self.requests.append(request)
         if not self.queue:
             raise AssertionError("The scripted model has no response left.")
@@ -580,3 +585,108 @@ def test_a_resumed_root_that_would_overspend_its_tree_stops_at_the_trees_allowan
     record = tree_record(ada, {"session": ada.key(), "run": parked.run_id})
     assert isinstance(record, dict)
     assert record["steps"] <= record["max_steps"]
+
+
+# A parked root whose tree is spent: its decision is refused before anything
+# is recorded, so the person's answer is never consumed by a resume the tree
+# then refuses.
+def test_a_parked_roots_decision_on_a_spent_tree_is_refused_before_it_is_recorded() -> None:
+    rig, _, _, _ = resumed_root_delegates_again(6)
+    ada = rig.session("ada")
+    waiting = pending_approval_ids([entry.message for entry in ada.thread().messages()])
+    assert len(waiting) == 1
+    rows = len(ada.thread().messages())
+
+    with pytest.raises(HarnessError) as caught:
+        rig.runtime.decide(ada, waiting[0], True)
+
+    assert caught.value.code == "run_not_permitted"
+    assert pending_approval_ids([entry.message for entry in ada.thread().messages()]) == waiting
+    assert len(ada.thread().messages()) == rows
+
+
+# Two resumes of one parked root that never delegated, the second starting
+# while the first waits on its model: both join the tree the parked run began
+# in, and the tree's allowance bounds the two of them together.
+def test_two_concurrent_resumes_of_a_parked_root_never_overspend_its_tree() -> None:
+    rig = Rig(chat_steps=6)
+    ada = rig.session("ada")
+    rig.calls(("weather", {"city": "Paris"}))  # ada parks, delegating nothing
+    parked = rig.runtime.send(ada, "Go")
+    rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+    seen: dict[str, Any] = {}
+
+    def second_worker() -> None:
+        scripted = [
+            LlmResponse(
+                text="",
+                finish_reason="tool_calls",
+                tool_calls=[LlmToolCall(id="w2_1", name="survey", arguments={"task": "S."})],
+            ),
+            LlmResponse(text="Surveyed by the second worker.", finish_reason="stop"),
+            LlmResponse(text="Second worker done.", finish_reason="stop"),
+        ]
+        rig.queue[0:0] = scripted
+        before = len(rig.queue)
+        try:
+            seen["second"] = rig.runtime.send(ada, "").stopped_because
+        except HarnessError as error:
+            seen["second"] = error.code
+        unused = len(scripted) - (before - len(rig.queue))
+        del rig.queue[0 : max(0, unused)]
+
+    rig.on_request = second_worker
+    rig.calls(("survey", {"task": "Survey."}))  # the first resume
+    rig.text("Surveyed.")
+    for q in ("a", "b", "c"):
+        rig.calls(("lookup", {"q": q}))
+    rig.text("First worker done.")
+    rig.runtime.send(ada, "")
+
+    record = tree_record(ada, {"session": ada.key(), "run": parked.run_id})
+    assert isinstance(record, dict)
+    assert record["steps"] <= record["max_steps"]
+    assert seen["second"] == "run_not_permitted"
+
+
+class HookedStore(DurableMemoryStore):
+    """A durable memory store that runs a hook before a write to a watched key."""
+
+    watched: ClassVar[set[str]] = set()
+    hook: ClassVar[Callable[[], None] | None] = None
+
+    def put(self, key: str, payload: dict[str, Any], ttl_seconds: float | None = None) -> None:
+        hook = HookedStore.hook
+        if key in HookedStore.watched and hook is not None:
+            HookedStore.hook = None
+            hook()
+        super().put(key, payload, ttl_seconds)
+
+
+# The runner saving a child's binding and run tree never rewrites the child's
+# durable record, where the host keeps capabilities it may revoke from another
+# process while the parent delegates.
+def test_a_capability_revoked_while_the_runner_saves_a_child_stays_revoked() -> None:
+    HookedStore.hook = None
+    rig = Rig(durable=HookedStore)
+    ada = rig.session("ada")
+    rig.calls(("research", {"task": "One."}))
+    rig.text("Child one.")
+    rig.text("Ada one.")
+    rig.runtime.send(ada, "One")
+    child = rig.session("ada", "chat::sub::research")
+    child.using_capability("grant", {"on": True})
+
+    def revoke() -> None:
+        # Another worker, between the runner's read and its write.
+        rig.session("ada", "chat::sub::research").forget_capability("grant")
+
+    HookedStore.watched = {f"{child.key()}:durable", f"{child.key()}:child"}
+    HookedStore.hook = revoke
+    rig.calls(("research", {"task": "Two."}))
+    rig.text("Child two.")
+    rig.text("Ada two.")
+    rig.runtime.send(ada, "Two")
+
+    assert HookedStore.hook is None
+    assert rig.session("ada", "chat::sub::research").capability("grant") is None

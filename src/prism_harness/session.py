@@ -286,8 +286,7 @@ class Session:
 
         Internal: written by the runtime when the subagent runner starts a
         child run."""
-        stored = self._durable.get(self._durable_key()) or {}
-        refs = stored.get("child_refs")
+        refs = self._child_field("child_refs")
         if not isinstance(refs, dict):
             return None
         return {
@@ -306,8 +305,7 @@ class Session:
         may have expired.
 
         Internal: read by the runtime for every turn the runner did not start."""
-        stored = self._durable.get(self._durable_key()) or {}
-        binding = stored.get("child_binding")
+        binding = self._child_field("child_binding")
         return deepcopy(binding) if isinstance(binding, dict) else None
 
     def child_depth(self) -> int:
@@ -317,8 +315,7 @@ class Session:
         nesting.
 
         Internal: read by the runtime."""
-        stored = self._durable.get(self._durable_key()) or {}
-        depth = stored.get("child_depth")
+        depth = self._child_field("child_depth")
         return depth if type(depth) is int and depth > 0 else 0
 
     def remember_child_binding(self, binding: dict[str, Any], depth: int = 0) -> Session:
@@ -326,12 +323,8 @@ class Session:
         depth it started at, in the session's durable half."""
         self._assert_writable()
         depth = depth if type(depth) is int and depth > 0 else 0
-        stored = self._durable.get(self._durable_key()) or {}
-        if stored.get("child_binding") != binding or stored.get("child_depth", 0) != depth:
-            self._durable.put(
-                self._durable_key(),
-                {**stored, "child_binding": deepcopy(binding), "child_depth": depth},
-            )
+        if self._child_field("child_binding") != binding or self.child_depth() != depth:
+            self._write_child({"child_binding": deepcopy(binding), "child_depth": depth})
         return self
 
     def remember_child_refs(
@@ -344,10 +337,42 @@ class Session:
             "tree": None if tree is None else dict(tree),
             "plan_ledger": None if plan_ledger is None else dict(plan_ledger),
         }
-        stored = self._durable.get(self._durable_key()) or {}
-        if stored.get("child_refs") != refs:
-            self._durable.put(self._durable_key(), {**stored, "child_refs": refs})
+        if self._child_field("child_refs") != refs:
+            self._write_child({"child_refs": refs})
         return self
+
+    def _child_key(self) -> str:
+        """What the subagent runner saves about this session as a child (its
+        binding, depth and run tree references) lives under a key of its own,
+        never in the session's durable record, where a host keeps state
+        (capabilities) another process may change while the runner writes."""
+        return f"{self.key()}:child"
+
+    def _child_field(self, name: str) -> Any:
+        """A saved child field: from the child key, or, for a child saved
+        before that key existed, from the session's durable record."""
+        stored = self._durable.get(self._child_key())
+        if isinstance(stored, dict) and name in stored:
+            return stored[name]
+        legacy = self._durable.get(self._durable_key()) or {}
+        return legacy.get(name)
+
+    def _write_child(self, fields: dict[str, Any]) -> None:
+        """One locked change to the child key. A field never written there yet
+        is carried over from the legacy record, so the key is complete once
+        written."""
+        key = self._child_key()
+
+        def change() -> None:
+            stored = self._durable.get(key)
+            current = dict(stored) if isinstance(stored, dict) else {}
+            legacy = self._durable.get(self._durable_key()) or {}
+            for name in ("child_binding", "child_depth", "child_refs"):
+                if name not in current and name in legacy:
+                    current[name] = deepcopy(legacy[name])
+            self._durable.put(key, {**current, **fields})
+
+        self._durable.with_lock(key, change, 10, 5)
 
     def using_capability(self, name: str, state: dict[str, Any]) -> Session:
         return self._write_capabilities(lambda capabilities: {**capabilities, name: state})

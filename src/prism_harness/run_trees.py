@@ -248,8 +248,14 @@ class RunTrees:
     def record(
         self, session: Session, run_id: str, member: Mapping[str, Any], run: RunContext
     ) -> None:
-        """Record a live run's membership, until :meth:`finished`."""
-        self.members[run_id] = {**member, "session": session.key(), "ledger": run.ledger}
+        """Record a live run's membership, until :meth:`finished`, with its
+        own step ceiling (before any tree narrows it)."""
+        self.members[run_id] = {
+            **member,
+            "session": session.key(),
+            "ledger": run.ledger,
+            "own_max_steps": run.budget.max_steps,
+        }
 
     def member(self, run_id: str) -> dict[str, Any] | None:
         """The recorded membership of a live run, or None."""
@@ -278,11 +284,21 @@ class RunTrees:
         if route not in ("open", "continue"):
             return run
         tree: Tree = {"session": member["tree"]["session"], "run": member["tree"]["run"]}
-        # A root resuming its parked run is in the tree that run began. When
-        # that run delegated, the tree has a record, and the resumed root
-        # holds what it has left and is narrowed to it, as any other turn
-        # continuing the tree: the tree's allowance holds across the pause.
-        if route == "open" and tree["run"] != run_id and _record_of(session, tree) is not None:
+        # A root resuming its parked run is in the tree that run began, and
+        # is held to it as any other turn continuing the tree, so the tree's
+        # allowance holds across the pause: it holds what the tree's record
+        # has left and is narrowed to it. When that run never delegated, the
+        # record does not exist yet and is opened here, in the same locked
+        # change, so a second resume of the same parked run that starts
+        # meanwhile finds it and is bounded by it. An open run whose tree
+        # already has a record (whatever its run id) is held to it too.
+        # A run whose own step budget is already spent takes no step, so it
+        # is left as it was: it still acts on the person's decisions, then
+        # stops on its own budget, with the same outcome and message as
+        # before.
+        resumed = route == "open" and tree["run"] != run_id
+        own_left = run.budget.max_steps - run.ledger.steps
+        if route == "open" and own_left >= 1 and (resumed or _record_of(session, tree) is not None):
             route = "continue"
         ledger = run.ledger
         entry: dict[str, Any] = {
@@ -307,13 +323,22 @@ class RunTrees:
         )
         now = int(time.time())
 
+        left = max(0, own.max_steps - entry["steps"])
+
         def hold(state: dict[str, Any] | None) -> tuple[dict[str, Any] | None, Any]:
             if state is None:
-                # The tree's record is gone: closed, never a fresh budget.
-                return None, {"refused": budget.EXHAUSTED, "limit": "steps"}
-            return budget.reserve(
-                state, run_id, max(0, own.max_steps - entry["steps"]), turn_cost, now, hold_ttl
-            )
+                if not resumed:
+                    # The tree's record is gone: closed, never a fresh budget.
+                    return None, {"refused": budget.EXHAUSTED, "limit": "steps"}
+                # A resumed root whose parked run never delegated opens its
+                # tree's record, named by the tree's run, with what it has left.
+                state = budget.open_ledger(
+                    tree["run"],
+                    {"mode": "shared", "max_steps": left, "max_cost_micros": turn_cost},
+                )
+            return budget.reserve(state, run_id, left, turn_cost, now, hold_ttl)
+
+            return budget.reserve(state, run_id, left, turn_cost, now, hold_ttl)
 
         grant = _write(session.plan_store(), tree, hold)
         if "refused" in grant:
@@ -359,10 +384,8 @@ class RunTrees:
             plan_id: str = tree["run"]
 
             def open_and_hold(state: dict[str, Any] | None) -> tuple[dict[str, Any] | None, Any]:
-                # Named by the tree's run; held under the run that spends (a
-                # root resuming a parked run that never delegated opens its
-                # tree's record here). A resumed root whose tree already had
-                # a record holds from it in root_run instead, never here.
+                # Named by the tree's run; held under the run that spends. A
+                # resumed root holds from its tree in root_run, never here.
                 current = state if state is not None else budget.open_ledger(plan_id, settings)
                 return budget.reserve(
                     current,
@@ -373,7 +396,11 @@ class RunTrees:
                     hold_ttl,
                 )
 
-            _write(session.plan_store(), entry["tree"], open_and_hold)
+            grant = _write(session.plan_store(), entry["tree"], open_and_hold)
+            if "refused" in grant:
+                # The tree cannot fund it: the delegation is refused rather
+                # than run on a hold that was never taken.
+                raise HarnessError.run_not_permitted(f"This run may not proceed: {grant['limit']}.")
             entry["held"] = True
         return {"session": tree["session"], "run": tree["run"]}
 
@@ -474,8 +501,13 @@ def refuse_spent_tree(session: Session, now: int, hold_ttl: int) -> None:
     state = _record_of(session, tree)
     if would_be["route"] == "open":
         # A root resuming its parked run is held to its tree's record only
-        # when the parked run delegated and opened one.
+        # when one exists, and only when its own step budget has steps left:
+        # a resume that can take no step only acts on the decisions.
         if tree["run"] == "decision" or state is None:
+            return
+        row = paused_approval_row([entry.message for entry in session.thread().messages()])
+        steps_left = row.get("harness_steps_left") if row is not None else None
+        if type(steps_left) is int and steps_left < 1:
             return
     elif would_be["route"] != "continue":
         return
