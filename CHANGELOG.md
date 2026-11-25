@@ -19,6 +19,10 @@
   or refused for it. A decision on the step's approval is refused with
   `plan_budget_exhausted`, recording nothing, once the shared budget is spent,
   and the next `advance()` blocks the plan.
+- A subagent child started inside a turn spends from the turn's run context,
+  as the reference does: its steps and cost count against the turn, a shared
+  plan budget included. The `RunContext` given to `SubagentRunner.tool()` can
+  only narrow the turn's limits, never widen them.
 
 - Agent plans (G-360). An agent proposes a plan, a person approves it, and
   `runtime.plan(session).advance()` works through it one step per turn. Off

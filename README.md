@@ -541,6 +541,13 @@ inside a plan's turn carries the plan's ledger on its paused row
 (`harness_plan_ledger`), so its resume spends from that budget and a decision
 on it is refused the same way once the budget is spent.
 
+A subagent child started by a tool inside a turn spends from that turn's run
+context: its ledger, so a shared plan budget counts the child's steps, and its
+limits. The `RunContext` handed to `SubagentRunner.tool()` can only narrow
+them: what it has left is counted from the turn's spend so far, and no limit is
+raised past the turn's. Called outside a turn, the runner uses that context
+unchanged.
+
 ## Task lists
 
 An agent given a goal keeps working across many requests. `session.tasks()` is

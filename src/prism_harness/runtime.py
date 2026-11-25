@@ -8,6 +8,7 @@ import math
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -185,6 +186,18 @@ class StructuredAgentResponse(AgentResponse):
 
 #: How long resolving approvals may hold the session lock: long enough for a tool to run.
 _RESOLUTION_LOCK_SECONDS = 300
+
+#: The run context of the turn whose tools are running in this context. A
+#: subagent child started by one of those tools spends from it.
+_TURN_RUN: ContextVar[RunContext | None] = ContextVar("prism_harness_turn_run", default=None)
+
+
+def current_turn_run() -> RunContext | None:
+    """The run context of the turn whose tools are running now, or None
+    outside a turn. Its budget is the turn's own, already narrowed by every
+    limit that applies to it, a shared plan budget included."""
+    return _TURN_RUN.get()
+
 
 #: How long a second worker waits for that lock before giving up without running anything.
 _RESOLUTION_WAIT_SECONDS = 30
@@ -601,6 +614,7 @@ class AgentRuntime:
             )
         )
 
+        turn_token = None
         try:
             # The plan context (G-360), computed once per run and never stored:
             # a system prompt contribution, not a message. A turn with a new
@@ -635,6 +649,9 @@ class AgentRuntime:
             run = self._plans.plan_turn(
                 session, run_id, run, context, self.lock_ttl(session), prompt
             )
+            # From here every tool the turn runs, a subagent included, runs
+            # under this run context (G-366).
+            turn_token = _TURN_RUN.set(run)
             if scope is not None:
                 names, legacy = scope
                 if legacy:
@@ -712,6 +729,9 @@ class AgentRuntime:
             )
             self._plans.after_turn(session)
             raise
+        finally:
+            if turn_token is not None:
+                _TURN_RUN.reset(turn_token)
 
     def _with_plan_tools(
         self,
