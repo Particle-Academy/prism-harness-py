@@ -1,9 +1,9 @@
 {
   "suite": "harness-plans",
   "schema_version": 1,
-  "corpus_version": "0.1.6",
+  "corpus_version": "0.1.7",
   "generated_by": "tools/generate-harness-plans.mjs writes the inputs. `expected` is the PHP reference's recording; every security row was checked by hand against the G-360 design before TypeScript or Python ran. `result` records what each language measured, merged with --merge.",
-  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. binding_route runs the pure ChildBinding.route; whether a binding is saved starts false and carries from op to op, set when a route saves. A setting or context kind that is invalid records {invalid: true}.",
+  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. binding_route runs the pure ChildBinding.route; whether a binding is saved starts false and carries from op to op, set when a route saves. binding_context builds a real RunContext (none, or RunContext.root(\"host_root\") with a 10-step budget; bound when supplied_binding; marked through the runtime RunTrees.startingChild when runner_started; bound again by the host after the mark when rebound), records the kind RunTrees.bindingContextKind gives it and the binding_route of that kind, and carries whether a binding is saved like binding_route; marking no context, or a context kind other than none or host, is invalid. A setting or context kind that is invalid records {invalid: true}.",
   "cases": [
     {
       "id": "hpl-0001",
@@ -24354,6 +24354,324 @@
                 "binding": "saved",
                 "save": false
               }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0059",
+      "title": "a child the runner starts under a run tree the host built is the runner's, and its binding is saved",
+      "since": "0.1.7",
+      "notes": "Which kind of context a turn was handed for its binding (binding_context: the runtime's own RunTrees asked about a real RunContext, then binding_route). The host builds the root context (RunContext.root(\"host_root\")); the subagent runner derives the child's context from it, binds it and marks it as its own. That context is the runner's even though the tree is the host's, so the child's binding is saved; a later turn with no context, or a host context carrying another binding, runs on the saved one (a child started under a host tree whose next turn runs on the default provider).",
+      "ops": [
+        {
+          "op": "binding_context",
+          "context": "host",
+          "runner_started": true,
+          "rebound": false,
+          "supplied_binding": true,
+          "linked": false
+        },
+        {
+          "op": "binding_context",
+          "context": "none",
+          "runner_started": false,
+          "rebound": false,
+          "supplied_binding": false,
+          "linked": true
+        },
+        {
+          "op": "binding_context",
+          "context": "host",
+          "runner_started": false,
+          "rebound": false,
+          "supplied_binding": true,
+          "linked": true
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "kind": "runner",
+            "route": {
+              "binding": "runner",
+              "save": true
+            }
+          },
+          {
+            "kind": "none",
+            "route": {
+              "binding": "saved",
+              "save": false
+            }
+          },
+          {
+            "kind": "host",
+            "route": {
+              "binding": "saved",
+              "save": false
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "kind": "runner",
+              "route": {
+                "binding": "runner",
+                "save": true
+              }
+            },
+            {
+              "kind": "none",
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "kind": "host",
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "kind": "runner",
+              "route": {
+                "binding": "runner",
+                "save": true
+              }
+            },
+            {
+              "kind": "none",
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "kind": "host",
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "kind": "runner",
+              "route": {
+                "binding": "runner",
+                "save": true
+              }
+            },
+            {
+              "kind": "none",
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            },
+            {
+              "kind": "host",
+              "route": {
+                "binding": "saved",
+                "save": false
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0060",
+      "title": "a context the host builds, or re-binds from the runner's, is never the runner's",
+      "since": "0.1.7",
+      "notes": "Only the context the runner itself marked is the runner's. A host context carrying a binding is used for that turn and never saved; a context the host derives from the runner's by binding it again is a new context and is the host's; with nothing saved a plain turn then runs as a root. No context cannot be marked, and an unknown context kind is invalid (a host binding saved as if the runner chose it).",
+      "ops": [
+        {
+          "op": "binding_context",
+          "context": "host",
+          "runner_started": false,
+          "rebound": false,
+          "supplied_binding": true,
+          "linked": false
+        },
+        {
+          "op": "binding_context",
+          "context": "host",
+          "runner_started": true,
+          "rebound": true,
+          "supplied_binding": true,
+          "linked": false
+        },
+        {
+          "op": "binding_context",
+          "context": "none",
+          "runner_started": false,
+          "rebound": false,
+          "supplied_binding": false,
+          "linked": false
+        },
+        {
+          "op": "binding_context",
+          "context": "none",
+          "runner_started": true,
+          "rebound": false,
+          "supplied_binding": false,
+          "linked": false
+        },
+        {
+          "op": "binding_context",
+          "context": "root",
+          "runner_started": false,
+          "rebound": false,
+          "supplied_binding": true,
+          "linked": false
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "kind": "host",
+            "route": {
+              "binding": "host",
+              "save": false
+            }
+          },
+          {
+            "kind": "host",
+            "route": {
+              "binding": "host",
+              "save": false
+            }
+          },
+          {
+            "kind": "none",
+            "route": {
+              "binding": "root",
+              "save": false
+            }
+          },
+          {
+            "invalid": true
+          },
+          {
+            "invalid": true
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "kind": "host",
+              "route": {
+                "binding": "host",
+                "save": false
+              }
+            },
+            {
+              "kind": "host",
+              "route": {
+                "binding": "host",
+                "save": false
+              }
+            },
+            {
+              "kind": "none",
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "kind": "host",
+              "route": {
+                "binding": "host",
+                "save": false
+              }
+            },
+            {
+              "kind": "host",
+              "route": {
+                "binding": "host",
+                "save": false
+              }
+            },
+            {
+              "kind": "none",
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "kind": "host",
+              "route": {
+                "binding": "host",
+                "save": false
+              }
+            },
+            {
+              "kind": "host",
+              "route": {
+                "binding": "host",
+                "save": false
+              }
+            },
+            {
+              "kind": "none",
+              "route": {
+                "binding": "root",
+                "save": false
+              }
+            },
+            {
+              "invalid": true
             },
             {
               "invalid": true

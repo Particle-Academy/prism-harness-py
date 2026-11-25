@@ -18,7 +18,14 @@ from typing import Any
 
 import pytest
 
-from prism_harness import HarnessError, ToolPolicy, binding_route
+from prism_harness import (
+    ChildBinding,
+    HarnessError,
+    RunBudget,
+    RunContext,
+    ToolPolicy,
+    binding_route,
+)
 from prism_harness.plans import (
     PlanBudgetInvalid,
     PlanIds,
@@ -29,6 +36,7 @@ from prism_harness.plans import (
     view,
 )
 from prism_harness.plans import text as plan_text
+from prism_harness.run_trees import RunTrees
 
 CORPUS: dict[str, Any] = json.loads(
     (Path(__file__).parent / "fixtures" / "harness-plans.json").read_text(encoding="utf-8")
@@ -73,6 +81,8 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         try:
             if op["op"] == "binding_route":
                 results.append(plans_binding_op(op, state))
+            elif op["op"] == "binding_context":
+                results.append(plans_binding_context_op(op, state))
             elif str(op["op"]).startswith("budget_"):
                 results.append(plans_budget_op(op, state, now))
             else:
@@ -99,6 +109,39 @@ def plans_binding_op(op: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
         return {"invalid": True}
     state["saved_binding"] = saved or route["save"]
     return {"route": route}
+
+
+CHEAP_BINDING = ChildBinding(declared_provider="custom-cheap", declared_model="cheap-model")
+
+
+def plans_binding_context_op(op: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Which kind of context a turn was handed for its binding
+    (RunTrees.binding_context_kind on a real RunContext), then the route of
+    that kind. The host builds the root context; the runner marks the child
+    context it builds with RunTrees.starting_child; ``rebound`` binds it again
+    after the mark, as a host deriving a context from the runner's would."""
+    if op["context"] not in ("none", "host") or (
+        op["context"] == "none"
+        and (op["runner_started"] or op["supplied_binding"] or op["rebound"])
+    ):
+        return {"invalid": True}
+    trees = RunTrees()
+    context = RunContext.root("host_root", RunBudget(10)) if op["context"] == "host" else None
+    if context is not None and op["supplied_binding"]:
+        context = context.with_binding(CHEAP_BINDING)
+    if context is not None and op["runner_started"]:
+        context = trees.starting_child(context)
+    if context is not None and op["rebound"]:
+        context = context.with_binding(CHEAP_BINDING)
+    kind = trees.binding_context_kind(context)
+    route = binding_route(
+        kind,
+        context is not None and context.binding is not None,
+        state["saved_binding"],
+        op["linked"],
+    )
+    state["saved_binding"] = state["saved_binding"] or route["save"]
+    return {"kind": kind, "route": route}
 
 
 def plans_budget_op(op: dict[str, Any], state: dict[str, Any], now: int) -> dict[str, Any]:
@@ -330,7 +373,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 58
+        assert len(CASES) == 60
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:
