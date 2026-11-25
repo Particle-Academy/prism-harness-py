@@ -305,7 +305,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 48
+        assert len(CASES) == 52
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:

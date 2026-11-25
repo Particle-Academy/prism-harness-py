@@ -458,6 +458,12 @@ def prepare(
             step = {**step, "state": "waiting_input"}
             plan["steps"][head] = step
             outcome = ["waiting", step["id"]]
+        elif budget_exhausted and step["owner"] == "agent" and step["state"] == "held":
+            # G-366: a step held on an approval whose resume the spent shared
+            # budget could not run stops the plan, once, instead of waiting on a
+            # decision that would be refused.
+            plan = _block(plan, "plan_budget_exhausted")
+            outcome = ["blocked", "plan_budget_exhausted"]
         elif step["state"] != "todo":
             outcome = ["waiting", step["id"]]
         elif plan["counters"]["advances"] >= limits.max_advances:

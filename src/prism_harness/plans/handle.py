@@ -145,6 +145,8 @@ class PlanHandle:
             outcome, step = self._prepare()
             if step is None:
                 return outcome
+            # This turn, and only this one, is the step's own (G-366).
+            serving = self._plans.serving_step(self._session)
             try:
                 response = self._runtime.send(self._session, _prompt(step), context=context)
             except HarnessError as error:
@@ -156,6 +158,8 @@ class PlanHandle:
                 if stopped is None:
                     raise
                 return stopped
+            finally:
+                serving()
             return AdvanceOutcome("ran", "active", step["id"], response.run_id)
         finally:
             release()

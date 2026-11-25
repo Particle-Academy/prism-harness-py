@@ -6,12 +6,29 @@
 
 - Plan budgets (G-366): the `Plans` config's `budget.mode` is `per_step` (the
   default, unchanged behaviour), `shared` (one ledger of `max_steps` model
-  steps and optionally `max_cost_usd` across every turn that serves the plan,
+  steps and optionally `max_cost_usd` across the plan's own turns,
   kept in the plan store) or `none`. Host code can choose it per plan with
   `PlanHandle.use_budget()`; `PlanHandle.budget()` reports it. A spent shared
   budget blocks the plan with `plan_budget_exhausted`, emits
   `PlanBudgetExhausted` once, and cannot be resumed. See "Plan budgets" in the
   README.
+- A shared plan budget charges only the plan's own turns: the turn
+  `advance()` runs for the step it claimed, the resume of an approval that step
+  asked for, and a subagent child those turns started, resumed outside the
+  runner. A person chatting while a step waits is no longer charged to the plan
+  or refused for it. A decision on the step's approval is refused with
+  `plan_budget_exhausted`, recording nothing, once the shared budget is spent,
+  and the next `advance()` blocks the plan.
+- A subagent child started inside a turn spends from the turn's run context,
+  as the reference does: its steps and cost count against the turn, a shared
+  plan budget included. The `RunContext` given to `SubagentRunner.tool()` can
+  only narrow the turn's limits, never widen them.
+- A subagent child resumed outside the runner continues the run tree it was
+  started in instead of starting a fresh root budget. The tree's allowance is
+  kept in the durable store from the first child on; the resumed child holds
+  what is left, settles what it spent, and is refused (`run_not_permitted`)
+  once it is spent, and a decision on its approval is refused the same way
+  before anything is recorded.
 
 - Agent plans (G-360). An agent proposes a plan, a person approves it, and
   `runtime.plan(session).advance()` works through it one step per turn. Off

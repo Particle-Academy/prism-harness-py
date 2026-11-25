@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -27,7 +29,8 @@ from prism_harness.events import (
     ToolDenied,
 )
 from prism_harness.modes import AgentMode, ModeRegistry
-from prism_harness.plans.service import Plans
+from prism_harness.plans.service import Plans, refuse_unfunded_decision
+from prism_harness.run_trees import RunTrees, refuse_spent_tree, saved_tree
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import ChildBinding, RunBudget, RunContext
@@ -185,6 +188,18 @@ class StructuredAgentResponse(AgentResponse):
 #: How long resolving approvals may hold the session lock: long enough for a tool to run.
 _RESOLUTION_LOCK_SECONDS = 300
 
+#: The run context of the turn whose tools are running in this context. A
+#: subagent child started by one of those tools spends from it.
+_TURN_RUN: ContextVar[RunContext | None] = ContextVar("prism_harness_turn_run", default=None)
+
+
+def current_turn_run() -> RunContext | None:
+    """The run context of the turn whose tools are running now, or None
+    outside a turn. Its budget is the turn's own, already narrowed by every
+    limit that applies to it, a shared plan budget included."""
+    return _TURN_RUN.get()
+
+
 #: How long a second worker waits for that lock before giving up without running anything.
 _RESOLUTION_WAIT_SECONDS = 30
 
@@ -262,6 +277,9 @@ class AgentRuntime:
         # session's mode sets ``plans``.
         self._plans = plans if isinstance(plans, Plans) else Plans(plans)
         self._plans._attach(modes, events)
+        # The durable half of run tree budgets, for children resumed outside
+        # the runner.
+        self._trees = RunTrees()
 
     @property
     def plans(self) -> Plans:
@@ -294,6 +312,7 @@ class AgentRuntime:
             reason,
             options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
             options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
+            self._plans.now,
         )
         self._plans.decided(session)
 
@@ -599,6 +618,7 @@ class AgentRuntime:
             )
         )
 
+        turn_token = None
         try:
             # The plan context (G-360), computed once per run and never stored:
             # a system prompt contribution, not a message. A turn with a new
@@ -627,9 +647,23 @@ class AgentRuntime:
             # the tree ledger its caller hands back in.
             if prompt == "" and context is None:
                 run.ledger.record_steps(approval_run_steps(stored) or 0)
-            # G-366: a turn serving a plan step with a shared budget holds what
-            # the plan has left, after the paused steps it continues are counted.
-            run = self._plans.plan_turn(session, run_id, run, context, self.lock_ttl(session))
+            # G-366: one of the plan's own turns, with a shared budget, holds
+            # what the plan has left, after the paused steps it continues are
+            # counted. Any other turn is unchanged.
+            if context is None:
+                # A root run, or a child resumed outside the runner, which
+                # continues the run tree it was started in.
+                run = self._trees.root_run(
+                    session, run_id, run, saved_tree(paused), self.lock_ttl(session)
+                )
+            elif context.binding is not None:
+                self._trees.child_started(session, run_id, context, self.lock_ttl(session))
+            run = self._plans.plan_turn(
+                session, run_id, run, context, self.lock_ttl(session), prompt
+            )
+            # From here every tool the turn runs, a subagent included, runs
+            # under this run context (G-366).
+            turn_token = _TURN_RUN.set(run)
             if scope is not None:
                 names, legacy = scope
                 if legacy:
@@ -706,7 +740,11 @@ class AgentRuntime:
                 )
             )
             self._plans.after_turn(session)
+            self._trees.finished(session, run_id)
             raise
+        finally:
+            if turn_token is not None:
+                _TURN_RUN.reset(turn_token)
 
     def _with_plan_tools(
         self,
@@ -867,6 +905,15 @@ class AgentRuntime:
                     }
                 if run.binding is not None:
                     row["harness_binding"] = run.binding.to_row()
+                    # The shared plan budget the tree spends from, so the child
+                    # resumed outside the runner spends from it too (G-366).
+                    plan_ledger = self._plans.ledger_of(run_id) or self._plans.active_ledger()
+                    if plan_ledger is not None:
+                        row["harness_plan_ledger"] = plan_ledger
+                    # And the run tree whose budget a resumed child continues.
+                    tree = self._trees.tree_of(run_id)
+                    if tree is not None:
+                        row["harness_tree"] = tree
             thread.record([row], run_id)
 
             if failed_finish:
@@ -960,6 +1007,7 @@ class AgentRuntime:
                 # in the thread, so a different process can resume after a person
                 # answers.
                 self._plans.after_turn(session)
+                self._trees.finished(session, run_id)
                 return AgentResponse(
                     run_id=run_id,
                     text=text,
@@ -1221,6 +1269,8 @@ class AgentRuntime:
         session.complete_run(run_id, finish_reason, called)
         # G-360: when the run is over, the plan reads the thread it left.
         self._plans.after_turn(session)
+        # A root run that holds part of a run tree's budget settles it.
+        self._trees.finished(session, run_id)
         self._emit(
             RunFinished(
                 run_id=run_id,
@@ -1297,6 +1347,7 @@ def _record_decision(
     reason: str | None,
     ttl_seconds: float,
     wait_seconds: float,
+    clock: Callable[[], int] | None = None,
 ) -> None:
     """The pending check and the write, together under the session lock.
 
@@ -1309,6 +1360,13 @@ def _record_decision(
         rows = [entry.message for entry in live.thread().messages()]
         if approval_id not in pending_approval_ids(rows):
             raise HarnessError.approval_not_pending(approval_id)
+        # A decision a spent shared plan budget could not run is refused here,
+        # with nothing recorded, rather than consumed by a resume that is then
+        # refused (G-366).
+        now = clock() if clock is not None else int(time.time())
+        refuse_unfunded_decision(live, approval_id, now, int(ttl_seconds))
+        # The same for a subagent child whose run tree has nothing left.
+        refuse_spent_tree(live, int(time.time()), int(ttl_seconds))
 
         run = live.run()
 

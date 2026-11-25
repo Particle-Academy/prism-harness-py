@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from prism_harness.errors import HarnessError
 from prism_harness.harness import PrismHarness
 from prism_harness.modes import AgentMode
-from prism_harness.runtime import AgentRuntime
+from prism_harness.runtime import AgentRuntime, current_turn_run
 from prism_harness.session import Session
-from prism_harness.subagents import MAX_DEPTH, ChildBinding, RunContext, Subagent
+from prism_harness.subagents import MAX_DEPTH, ChildBinding, RunBudget, RunContext, Subagent
 from prism_harness.tools import HarnessTool
 
 __all__ = ["SubagentResult", "SubagentRunner", "SubagentTool"]
@@ -62,7 +62,7 @@ class SubagentTool:
         return self._runner.run(
             self._subagent,
             self._parent,
-            self._context,
+            within_turn(self._context, current_turn_run()),
             self._parent_run_id,
             task if isinstance(task, str) else "",
         ).to_tool_result()
@@ -201,6 +201,48 @@ class SubagentRunner:
             if error.code == "mode_not_configured":
                 return None
             raise
+
+
+def within_turn(host: RunContext, turn: RunContext | None) -> RunContext:
+    """The run context a subagent tool's child is started under (G-366).
+
+    Inside a turn, the TURN's: its ledger, so the child's spend lands where the
+    turn is measured, a shared plan budget included, and its budget narrowed by
+    the context the host built the tool with. The host's context can only
+    narrow: what it has left is counted from the turn's spend so far, and no
+    limit is ever raised past the turn's. Outside a turn (the runner driven
+    directly), the host's context, unchanged.
+    """
+    if turn is None or host is turn:
+        return host
+    own, spent, ledger = turn.budget, host.ledger, turn.ledger
+    # What the host's context has left, by its own ledger (the turn's, when the
+    # host handed the turn's context in).
+    steps_left = host.budget.max_steps - spent.steps
+    cost_left = spent.remaining_cost(host.budget)
+    seconds_left = spent.remaining_seconds(host.budget)
+    budget = RunBudget(
+        max_steps=min(own.max_steps, ledger.steps + max(0, steps_left)),
+        max_cost_usd=_lower(
+            own.max_cost_usd, None if cost_left is None else ledger.cost_usd + cost_left
+        ),
+        max_seconds=_lower_int(
+            own.max_seconds,
+            None if seconds_left is None else int(ledger.elapsed_seconds()) + seconds_left,
+        ),
+        max_output_tokens_per_call=_lower_int(
+            own.max_output_tokens_per_call, host.budget.max_output_tokens_per_call
+        ),
+    )
+    return replace(turn, budget=budget, depth=max(turn.depth, host.depth))
+
+
+def _lower(a: float | None, b: float | None) -> float | None:
+    return b if a is None else a if b is None else min(a, b)
+
+
+def _lower_int(a: int | None, b: int | None) -> int | None:
+    return b if a is None else a if b is None else min(a, b)
 
 
 def _refused(

@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,7 @@ from prism_harness.plans.limits import PlanLimits
 from prism_harness.plans.refusal import PlanRefused, PlansDisabled
 from prism_harness.plans.thread_facts import approval_decisions, pending_approval_calls
 from prism_harness.stores.base import SessionStore
+from prism_harness.thread_rows import paused_approval_row
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from prism_harness.modes import ModeRegistry
@@ -36,7 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from prism_harness.session import Session
     from prism_harness.subagents import RunContext
 
-__all__ = ["HEARTBEAT_KEY", "INDEX_KEY", "Plans"]
+__all__ = ["HEARTBEAT_KEY", "INDEX_KEY", "Plans", "refuse_unfunded_decision"]
 
 INDEX_KEY = "prism-harness:plans:live"
 HEARTBEAT_KEY = "prism-harness:plans:heartbeat"
@@ -44,6 +46,12 @@ HEARTBEAT_KEY = "prism-harness:plans:heartbeat"
 _log = logging.getLogger("prism_harness.plans")
 
 Plan = dict[str, Any]
+
+#: The shared plan ledger the plan turn running in this context spends from,
+#: so a subagent child that turn starts can carry it on its paused row (G-366).
+_ACTIVE_LEDGER: ContextVar[dict[str, str] | None] = ContextVar(
+    "prism_harness_plan_ledger", default=None
+)
 
 
 class Plans:
@@ -83,6 +91,8 @@ class Plans:
         self._budget = budget.settings(self._config.get("budget"))
         #: Turns spending from a shared plan budget, by run id, until they settle.
         self._budget_turns: dict[str, dict[str, Any]] = {}
+        #: Sessions whose advance() is running the turn of the step it claimed.
+        self._advancing: dict[str, int] = {}
         self._index_store = index_store
         self._ids = ids
         self._clock = clock
@@ -329,14 +339,76 @@ class Plans:
             )
         )
 
-    def serving_shared(self, session: Session) -> bool:
-        """Whether a turn on this session now spends from a shared plan budget."""
-        if not self.enabled_for(session):
+    def serving_shared(self, session: Session, prompt: str = "") -> bool:
+        """Whether this turn on this session spends from a shared plan budget."""
+        return self._ledger_for(session, prompt, None) is not None
+
+    def serving_step(self, session: Session) -> Callable[[], None]:
+        """Mark the turn advance() runs for the step it claimed as the plan's
+        own, until the returned release is called."""
+        key = session.key()
+        self._advancing[key] = self._advancing.get(key, 0) + 1
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            left = self._advancing.get(key, 1) - 1
+            if left <= 0:
+                self._advancing.pop(key, None)
+            else:
+                self._advancing[key] = left
+
+        return release
+
+    def ledger_of(self, run_id: str) -> dict[str, str] | None:
+        """The shared plan ledger a run spends from, as the session key the plan
+        belongs to and the plan id; None when it spends from none."""
+        turn = self._budget_turns.get(run_id)
+        return None if turn is None else {"session": turn["ledger"], "plan": turn["plan"]}
+
+    def active_ledger(self) -> dict[str, str] | None:
+        """The shared plan ledger of the plan turn running in this context, for a
+        subagent child it starts to carry; None outside one."""
+        ledger = _ACTIVE_LEDGER.get()
+        return None if ledger is None else dict(ledger)
+
+    def assert_decision_funded(self, session: Session, approval_id: str, hold_ttl: int) -> None:
+        """Refuse, before it is recorded, a decision whose resume would spend
+        from a shared plan budget that is already spent. See
+        :func:`refuse_unfunded_decision`."""
+        refuse_unfunded_decision(session, approval_id, self.now(), hold_ttl)
+
+    def _ledger_for(
+        self, session: Session, prompt: str, context: RunContext | None
+    ) -> dict[str, Any] | None:
+        """The shared ledger a turn spends from: its own plan's when the turn is
+        the plan's own; else, for a subagent child resumed outside the runner,
+        the ledger saved on its paused row."""
+        if not self._enabled:
+            return None
+        if self.enabled_for(session):
+            plan = self.load(session)
+            if plan is not None and self._own_turn(session, plan, prompt):
+                if self.budget_for(session, plan["id"])["mode"] != "shared":
+                    return None
+                return {"session": session.key(), "plan": plan["id"]}
+        if context is not None or prompt != "":
+            return None
+        return _child_ledger(session)
+
+    def _own_turn(self, session: Session, plan: Plan, prompt: str) -> bool:
+        """Whether a turn is one of the plan's own: the turn advance() runs for
+        the step it claimed, or a turn with no new message that continues an
+        approval the step asked for."""
+        step = _active_agent_step(plan)
+        if step is None:
             return False
-        plan = self.load(session)
-        if plan is None or not _serving(plan):
-            return False
-        return bool(self.budget_for(session, plan["id"])["mode"] == "shared")
+        if session.key() in self._advancing:
+            return True
+        return prompt == "" and bool(set(step["approvalIds"]) & set(_paused_ids(_rows(session))))
 
     def plan_turn(
         self,
@@ -345,21 +417,24 @@ class Plans:
         run: RunContext,
         context: RunContext | None,
         hold_ttl: int,
+        prompt: str = "",
     ) -> RunContext:
-        """The run a turn executes under, when the turn serves a plan step whose
-        budget is shared: the per-turn budget, narrowed to what the plan's
-        ledger holds for it. Any other run is returned unchanged. A run handed a
-        run tree of its own cannot also spend from the plan's ledger, so it is
-        refused rather than let around it. Called by the runtime once a run's
-        own budget is known."""
-        if not self.enabled_for(session):
-            return run
-        plan = self.load(session)
-        if (
-            plan is None
-            or not _serving(plan)
-            or self.budget_for(session, plan["id"])["mode"] != "shared"
-        ):
+        """The run a turn executes under, when the turn is one of the plan's own
+        and its budget is shared: the per-turn budget, narrowed to what the
+        plan's ledger holds for it. Any other run is returned unchanged.
+
+        The plan's own turns are the one advance() runs for the step it
+        claimed, the resume of an approval that step asked for, and a subagent
+        child those turns started, resumed outside the runner. Any other turn
+        on the session (a person chatting while a step waits on them, or while
+        a claim whose worker died is still live) spends nothing from the plan's
+        budget and is never refused for it.
+
+        A run handed a run tree of its own cannot also spend from the plan's
+        ledger, so it is refused rather than let around it. Called by the
+        runtime once a run's own budget is known."""
+        target = self._ledger_for(session, prompt, context)
+        if target is None:
             return run
         if context is not None:
             raise PlanRefused("plan.budget_context")
@@ -374,9 +449,10 @@ class Plans:
             else budget.micros(max(0.0, own.max_cost_usd - base_cost))
         )
         now = self.now()
-        _, grant = self._budget_write(
-            session,
-            plan["id"],
+        _, grant = self._budget_write_at(
+            session.plan_store(),
+            target["session"],
+            target["plan"],
             self._budget,
             lambda state: budget.reserve(
                 state, run_id, max(0, own.max_steps - base_steps), turn_cost, now, hold_ttl
@@ -398,13 +474,16 @@ class Plans:
                 else base_cost + grant["cost_micros"] / 1_000_000,
             ),
         )
+        ledger_ref = {"session": target["session"], "plan": target["plan"]}
         self._budget_turns[run_id] = {
             "session": session.key(),
-            "plan": plan["id"],
+            "ledger": target["session"],
+            "plan": target["plan"],
             "context": narrowed,
             "steps": base_steps,
             "cost": base_cost,
             "unmetered": ledger.unmetered_runs,
+            "token": _ACTIVE_LEDGER.set(ledger_ref),
         }
         return narrowed
 
@@ -417,6 +496,10 @@ class Plans:
             return
         assert isinstance(run_id, str)
         del self._budget_turns[run_id]
+        try:
+            _ACTIVE_LEDGER.reset(turn["token"])
+        except ValueError:  # set in another context; nothing of this one to undo
+            pass
         ledger = turn["context"].ledger
         steps = ledger.steps - turn["steps"]
         cost = (
@@ -425,8 +508,9 @@ class Plans:
             else budget.micros(max(0.0, ledger.cost_usd - turn["cost"]))
         )
         try:
-            self._budget_write(
-                session,
+            self._budget_write_at(
+                session.plan_store(),
+                turn["ledger"],
                 turn["plan"],
                 self._budget,
                 lambda state: (budget.settle(state, run_id, steps, cost), None),
@@ -443,8 +527,19 @@ class Plans:
     ) -> tuple[dict[str, Any], Any]:
         """One locked change to this plan's budget record, opening it from
         ``chosen`` when it is absent or belongs to an earlier plan."""
-        store = session.plan_store()
-        key = _budget_key(session.key())
+        return self._budget_write_at(session.plan_store(), session.key(), plan_id, chosen, change)
+
+    def _budget_write_at(
+        self,
+        store: SessionStore,
+        session_key: str,
+        plan_id: str,
+        chosen: dict[str, Any],
+        change: Callable[[dict[str, Any]], tuple[dict[str, Any], Any]],
+    ) -> tuple[dict[str, Any], Any]:
+        """The same change to the budget record of the plan kept under another
+        session key, in the same durable store (a subagent child's parent)."""
+        key = _budget_key(session_key)
 
         def swap() -> tuple[dict[str, Any], Any]:
             stored = store.get(key)
@@ -511,13 +606,95 @@ def _budget_key(session_key: str) -> str:
     return f"{session_key}:plan-budget"
 
 
-def _serving(plan: Plan) -> bool:
-    """A turn serves the plan while the plan's head step is claimed for a turn
-    or held on an approval that turn asked for."""
-    if plan.get("status") not in ("active", "waiting"):
-        return False
+def _active_agent_step(plan: Plan | None) -> dict[str, Any] | None:
+    """The plan's head step when it is the agent's and claimed for a turn or
+    held on an approval that turn asked for; None otherwise."""
+    if plan is None or plan.get("status") not in ("active", "waiting", "blocked"):
+        return None
     head = machine.head_index(plan)
-    return head is not None and plan["steps"][head]["state"] in ("running", "held")
+    if head is None:
+        return None
+    step: dict[str, Any] = plan["steps"][head]
+    if step["owner"] != "agent" or step["state"] not in ("running", "held"):
+        return None
+    return step
+
+
+def _rows(session: Session) -> list[dict[str, Any]]:
+    return [entry.message for entry in session.thread().messages()]
+
+
+def _paused_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Every approval id the run paused at the transcript tail asked for,
+    answered or not. A turn with no new message continues exactly these."""
+    row = paused_approval_row(rows)
+    requests = row.get("tool_approval_requests") if row is not None else None
+    if not isinstance(requests, list):
+        return []
+    return [
+        entry["approval_id"]
+        for entry in requests
+        if isinstance(entry, dict) and isinstance(entry.get("approval_id"), str)
+    ]
+
+
+def _shared_record(store: SessionStore, session_key: str, plan_id: str) -> dict[str, Any] | None:
+    record = store.get(_budget_key(session_key))
+    if (
+        isinstance(record, dict)
+        and record.get("planId") == plan_id
+        and record.get("mode") == "shared"
+    ):
+        return record
+    return None
+
+
+def _child_ledger(session: Session) -> dict[str, str] | None:
+    """The plan ledger a subagent child's paused row carries, while it is still
+    that plan's shared ledger."""
+    row = paused_approval_row(_rows(session))
+    saved = row.get("harness_plan_ledger") if row is not None else None
+    if not (
+        isinstance(saved, dict)
+        and isinstance(saved.get("session"), str)
+        and isinstance(saved.get("plan"), str)
+    ):
+        return None
+    if _shared_record(session.plan_store(), saved["session"], saved["plan"]) is None:
+        return None
+    return {"session": saved["session"], "plan": saved["plan"]}
+
+
+def refuse_unfunded_decision(session: Session, approval_id: str, now: int, hold_ttl: int) -> None:
+    """Refuse, before anything is recorded, a decision on an approval whose
+    resume would spend from a shared plan budget that is already spent.
+
+    Recorded, the decision would be consumed by a resume the budget then
+    refuses, and the approved call would never run. Read from the stored plan
+    and its budget record only (G-366): the approval the plan's head step asked
+    for, or the paused row of a subagent child started by a plan turn.
+    """
+    store = session.plan_store()
+    target: dict[str, str] | None = None
+    payload = store.get(_key(session.key()))
+    plan = payload.get("plan") if isinstance(payload, dict) else None
+    step = _active_agent_step(plan if isinstance(plan, dict) else None)
+    if isinstance(plan, dict) and step is not None and approval_id in step["approvalIds"]:
+        target = {"session": session.key(), "plan": plan["id"]}
+    else:
+        target = _child_ledger(session)
+    if target is None:
+        return
+    record = _shared_record(store, target["session"], target["plan"])
+    if record is None:
+        return
+    limit = budget.exhaustion(budget.expire(record, now, hold_ttl))
+    if limit is not None:
+        raise HarnessError(
+            budget.EXHAUSTED,
+            "This plan step may not proceed (plan_budget_exhausted): the plan's shared "
+            f"{limit} budget is spent.",
+        )
 
 
 def _report_quietly(failure: BaseException) -> None:
