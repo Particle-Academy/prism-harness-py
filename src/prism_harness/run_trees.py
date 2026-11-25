@@ -78,6 +78,20 @@ class RunTrees:
         builds and binds itself is never the runner's."""
         return self.context_kind(context)
 
+    def _entry_of(self, context: RunContext) -> dict[str, Any] | None:
+        """The live run of this runtime a context spends from: the root run its
+        ledger names, or the run that holds that ledger. A child resumed under a
+        context the host built continues its saved tree under its OWN run id
+        while its ledger is the host's, so the children it starts are found by
+        the ledger."""
+        named = self._runs.get(context.root_run_id)
+        if named is not None:
+            return named
+        for entry in self._runs.values():
+            if entry["ledger"] is context.ledger:
+                return entry
+        return None
+
     def context_kind(self, context: RunContext | None) -> str:
         """What kind of run context a turn was handed, for
         :func:`~prism_harness.plans.budget.route`: ``runner`` when it is a
@@ -173,7 +187,7 @@ class RunTrees:
         a child. None when the tree's root is not a run of this runtime (a
         context the host built itself)."""
         root_run_id = context.root_run_id
-        entry = self._runs.get(root_run_id)
+        entry = self._entry_of(context)
         if entry is None:
             return None
         if not entry["held"]:

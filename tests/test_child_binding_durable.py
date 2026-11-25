@@ -84,7 +84,7 @@ CHEAP = ("custom-cheap", "cheap-model")
 
 
 class Rig:
-    def __init__(self, chat_steps: int = 20) -> None:
+    def __init__(self, chat_steps: int = 20, nested: bool = False) -> None:
         self.events = HarnessEvents()
         self.depths: list[int] = []
         self.events.listen(
@@ -113,10 +113,12 @@ class Rig:
             },
             "research": {
                 "system_prompt": "Research.",
-                "tools": ["weather"],
+                "tools": ["weather", "dig"] if nested else ["weather"],
                 "requires_approval": ["weather"],
                 "max_steps": 8,
+                **({"subagents": {"dig": {"mode": "dig"}}} if nested else {}),
             },
+            "dig": {"system_prompt": "Dig.", "tools": [], "max_steps": 4},
         }
         tools = ToolRegistry().register(Weather())
 
@@ -127,6 +129,15 @@ class Rig:
             )
 
         tools.register_factory("research", research)
+
+        def dig(session: Session) -> Any:
+            subagent = self.runtime.mode_for(session).subagents["dig"]
+            return SubagentRunner(self.harness, self.runtime).tool(
+                subagent, session, RunContext.root("dig-run", RunBudget(100)), "dig-run"
+            )
+
+        if nested:
+            tools.register_factory("dig", dig)
         self.runtime = AgentRuntime(
             client=self._client,
             modes=ModeRegistry({"default": "chat", "modes": modes}),
@@ -377,3 +388,26 @@ def test_a_child_started_again_runs_at_the_depth_the_runner_gives_it() -> None:
 
     assert rig.depths == [0, 1]
     assert child.child_depth() == 1
+
+
+# A child resumed under a run context the host built continues the run tree it
+# saved, and a grandchild it starts belongs to that tree too: the grandchild
+# saves the same tree, so its own later turns continue it.
+def test_a_grandchild_of_a_child_resumed_under_a_host_context_saves_the_tree() -> None:
+    rig = Rig(nested=True)
+    rig.calls(("research", {"task": "Find the weather."}))
+    rig.calls(("weather", {"city": "Paris"}))
+    rig.text("Parent answer.")
+    rig.runtime.send(rig.session(), "Go")
+    child = rig.session("chat::sub::research")
+    refs = child.child_refs()
+    assert refs is not None and refs["tree"] is not None
+
+    rig.calls(("dig", {"task": "Dig."}))
+    rig.text("Grandchild answer.")
+    rig.text("Child answer.")
+    rig.runtime.send(child, "Dig deeper", context=RunContext.root("host_answer", RunBudget(100)))
+
+    grandchild = rig.session("chat::sub::research::sub::dig")
+    grand = grandchild.child_refs()
+    assert grand is not None and grand["tree"] == refs["tree"]
