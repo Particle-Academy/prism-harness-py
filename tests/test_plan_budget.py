@@ -597,3 +597,67 @@ def test_the_host_context_of_a_subagent_tool_cannot_widen_a_shared_plan_budget()
     # child still stopped where the plan's budget did.
     assert rig.lookups() == 1
     assert rig.budget()["steps"] == 2
+
+
+# A turn on a child session the runner did not start spends from the shared
+# plan budget it was started under, whatever its prompt, and a run context the
+# host hands in is narrowed to that budget rather than let around it.
+
+
+def test_a_host_context_on_a_resumed_child_is_charged_to_the_shared_plan_budget() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 10}}, subagents=True)
+    child, approval = paused_child(rig)
+    spent = rig.budget()["steps"]
+
+    rig.text("Child answer.")
+    record_approval(child, approval, True)
+    rig.runtime.send(child, "", context=RunContext.root("host_root", RunBudget(100)))
+
+    assert rig.ran.count("weather") == 1
+    assert rig.budget()["steps"] == spent + 1
+
+
+def test_a_new_message_to_a_child_session_is_charged_to_the_shared_plan_budget() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 10}}, subagents=True)
+    child, _ = paused_child(rig)
+    spent = rig.budget()["steps"]
+
+    rig.text("Child answer.")
+    rig.runtime.send(child, "New question")
+
+    assert rig.budget()["steps"] == spent + 1
+
+
+def test_a_host_context_on_a_child_whose_shared_plan_budget_is_spent_is_refused() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 3}}, subagents=True)
+    child, _ = paused_child(rig)
+    before = len(rig.requests)
+
+    with pytest.raises(HarnessError):
+        rig.runtime.send(
+            child, "New question", context=RunContext.root("host_root", RunBudget(100))
+        )
+    assert len(rig.requests) == before
+    assert rig.budget()["steps"] == 3
+
+
+def test_a_subagent_tool_for_another_session_does_not_borrow_the_running_turn() -> None:
+    rig = Rig(subagents=True, mode={"plans": False})
+    other = rig.harness.for_(Participant("User", "bob")).session("chat")
+    host = RunContext.root("host-run", RunBudget(8))
+    turn_steps: list[int] = []
+
+    def delegate_for_another_session() -> None:
+        subagent = rig.runtime.mode_for(other).subagents["research"]
+        tool = SubagentRunner(rig.harness, rig.runtime).tool(subagent, other, host, "host-run")
+        tool.handle({"task": "Look it up."})
+        turn_steps.append(host.ledger.steps)
+
+    rig.on_lookup = delegate_for_another_session
+    rig.calls(("lookup", {"q": "a"}))  # the turn on ada's session
+    rig.text("Other answer.")  # bob's child, on the host's own context
+    rig.text("Done.")  # the turn
+    rig.runtime.send(rig.session, "Go")
+
+    # The child spent from the context its tool was built with, not ada's turn.
+    assert turn_steps == [1]
