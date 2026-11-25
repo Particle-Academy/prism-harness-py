@@ -44,6 +44,7 @@ from prism_harness import (
     ToolRegistry,
 )
 from prism_harness.runtime import current_turn_run
+from prism_harness.thread_rows import pending_approval_ids
 
 
 @pytest.fixture(autouse=True)
@@ -80,7 +81,7 @@ class Rig:
     """chat delegates to research, research to dig. ``relay`` and ``forge`` run
     whatever host code a test hooks onto them, inside the turn that calls them."""
 
-    def __init__(self, plans: dict[str, Any] | None = None) -> None:
+    def __init__(self, plans: dict[str, Any] | None = None, chat_steps: int = 20) -> None:
         self.queue: list[LlmResponse] = []
         self.requests: list[LlmRequest] = []
         self.ran: list[str] = []
@@ -104,7 +105,7 @@ class Rig:
                 "system_prompt": "You delegate.",
                 "tools": ["research", "survey", "relay", "forge", "lookup", "weather"],
                 "requires_approval": ["weather"],
-                "max_steps": 20,
+                "max_steps": chat_steps,
                 "plans": plans is not None,
                 "subagents": {"research": {"mode": "research"}, "survey": {"mode": "research"}},
             },
@@ -439,3 +440,29 @@ def test_a_top_level_session_bound_by_its_host_keeps_resuming_after_it_parks() -
     rig.text("Again.")
     assert rig.runtime.send(ada, "New question").stopped_because is None
     assert rig.ran.count("weather") == 3
+
+
+def test_a_parked_subagent_keeps_its_tree_budget_after_the_root_resumed_and_delegated() -> None:
+    rig = Rig(chat_steps=6)
+    ada = rig.session("ada")
+    rig.calls(("research", {"task": "Look."}))  # ada
+    rig.calls(("weather", {"city": "Paris"}))  # her child: parks
+    rig.calls(("weather", {"city": "Rome"}))  # ada: parks on her own approval
+    first = rig.runtime.send(ada, "Go").pending_approvals[0].id
+
+    rig.runtime.decide(ada, first, True)
+    rig.calls(("survey", {"task": "Survey."}))  # ada, resumed: delegates again
+    rig.text("Surveyed.")  # the new child completes
+    rig.calls(("weather", {"city": "Oslo"}))  # ada parks again
+    assert len(rig.runtime.send(ada, "").pending_approvals) == 1
+
+    child = rig.session("ada", "chat::sub::research")
+    waiting = pending_approval_ids([entry.message for entry in child.thread().messages()])
+    assert len(waiting) == 1
+    ran = rig.ran.count("weather")
+    rig.text("Child done.")
+    rig.runtime.decide(child, waiting[0], True)
+    resumed = rig.runtime.send(child, "")
+
+    assert rig.ran.count("weather") == ran + 1
+    assert resumed.stopped_because is None

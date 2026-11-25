@@ -353,6 +353,16 @@ class RunTrees:
             plan_id: str = tree["run"]
 
             def open_and_hold(state: dict[str, Any] | None) -> tuple[dict[str, Any] | None, Any]:
+                # A root resuming its parked run is in the tree that run began
+                # in, but spends from its own budget: when that tree's record
+                # already exists (the parked run delegated before), it is left
+                # alone, so the resumed root never takes from what the
+                # subagents parked in it have left. Otherwise it is opened
+                # here, named by the tree's run, and held under the run that
+                # spends. Either way the entry is marked held, so this is not
+                # retried, and settling a hold it never took changes nothing.
+                if state is not None and holder != plan_id:
+                    return None, None
                 current = state if state is not None else budget.open_ledger(plan_id, settings)
                 return budget.reserve(
                     current,
