@@ -132,7 +132,7 @@ class Rig:
             chat["subagents"] = {"research": {"mode": "research"}}
             modes["research"] = {
                 "system_prompt": "Research.",
-                "tools": ["weather"],
+                "tools": ["weather", "lookup"],
                 "requires_approval": ["weather"],
                 "max_steps": 4,
             }
@@ -569,3 +569,31 @@ def test_an_approval_for_a_child_whose_shared_plan_budget_is_spent_is_refused() 
     assert pending(rig, child) == [approval]
     assert rig.ran.count("weather") == 0
     assert len(rig.requests) == before
+
+
+# A subagent child started inside a turn spends from that TURN's ledger, as the
+# reference hands the runner the turn's own run context. The context the host
+# built the subagent tool with can only narrow it, never widen it.
+
+
+def test_a_child_started_in_a_shared_plan_step_spends_from_the_plan_budget() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 10}}, subagents=True)
+    paused_child(rig)
+
+    # Three parent steps and the child's one.
+    assert rig.budget()["steps"] == 4
+
+
+def test_the_host_context_of_a_subagent_tool_cannot_widen_a_shared_plan_budget() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 2}}, subagents=True)
+    rig.active(1)
+    rig.calls(("research", {"task": "Look it up."}))  # parent: 1 step
+    for q in ("a", "b", "c"):
+        rig.calls(("lookup", {"q": q}))  # child: wants 4 steps; 1 is left
+    rig.text("Child answer.")
+    rig.advance()
+
+    # The host built the tool with RunBudget(8) on a ledger of its own; the
+    # child still stopped where the plan's budget did.
+    assert rig.lookups() == 1
+    assert rig.budget()["steps"] == 2
