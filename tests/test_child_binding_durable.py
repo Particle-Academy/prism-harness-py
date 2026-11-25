@@ -361,3 +361,19 @@ def test_a_child_keeps_the_depth_the_runner_started_it_at() -> None:
     rig.runtime.send(child, "Hosted question", context=RunContext.root("host_root", RunBudget(100)))
 
     assert rig.depths[start:] == [1, 1]
+
+
+def test_a_child_started_again_runs_at_the_depth_the_runner_gives_it() -> None:
+    rig = Rig()
+    child = rig.session("chat::sub::research")
+    child.remember_child_binding(
+        ChildBinding(declared_provider=CHEAP[0], declared_model=CHEAP[1]).to_row(), 3
+    )
+
+    rig.calls(("research", {"task": "Find the weather."}))
+    rig.text("Child answer.")
+    rig.text("Parent answer.")
+    rig.runtime.send(rig.session(), "Go")
+
+    assert rig.depths == [0, 1]
+    assert child.child_depth() == 1
