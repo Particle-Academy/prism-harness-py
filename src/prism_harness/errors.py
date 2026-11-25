@@ -29,6 +29,9 @@ class ErrorCode(str, Enum):
     TOOL_NOT_AVAILABLE = "tool_not_available"
     #: A run was refused -- by budget, by depth, or by a cancelled ledger.
     RUN_NOT_PERMITTED = "run_not_permitted"
+    #: A subagent child session has no saved provider and model binding, so it
+    #: may not run outside the subagent runner. The same code in prism-harness.
+    CHILD_BINDING_MISSING = "child_binding_missing"
     #: A named agent has spent its ``spend_ceiling`` in this run tree.
     AGENT_SPEND_CEILING_EXCEEDED = "agent_spend_ceiling_exceeded"
     #: A call under a cost cap reported no cost, so the cap cannot be enforced.
@@ -160,6 +163,19 @@ class HarnessError(Exception):
     @classmethod
     def run_not_permitted(cls, reason: str) -> HarnessError:
         return cls(ErrorCode.RUN_NOT_PERMITTED, reason)
+
+    @classmethod
+    def child_binding_missing(cls) -> HarnessError:
+        """A subagent child session has no saved provider and model binding.
+
+        Running it on the root rules would send the child's conversation to a
+        provider its declaration did not choose, so it is refused instead.
+        """
+        return cls(
+            ErrorCode.CHILD_BINDING_MISSING,
+            "This subagent child session has no saved provider and model binding, "
+            "so it may not run outside the subagent runner.",
+        )
 
     @classmethod
     def model_step_failed(cls, finish_reason: Literal["error", "unknown"]) -> HarnessError:

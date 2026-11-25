@@ -593,9 +593,26 @@ class AgentRuntime:
             if prompt == "" and context is None
             else None
         )
-        stored_binding = ChildBinding.from_row(paused.get("harness_binding")) if paused else None
-        if stored_binding is not None:
-            base = base.with_binding(stored_binding)
+        # The binding: from the runner's own context when the runner starts
+        # the child; otherwise the one SAVED with the child session, which a
+        # context the host supplies never replaces. A child paused before the
+        # binding was saved there carries it on its paused row. A session the
+        # runner started as a child (it has saved run tree references) with no
+        # binding anywhere is refused rather than run on the root rules, which
+        # would send its conversation to a provider nobody chose for it.
+        kind = self._trees.context_kind(context)
+        runner_binding = context.binding if context is not None and kind == "runner" else None
+        saved_binding: ChildBinding | None = None
+        if runner_binding is None:
+            saved_binding = ChildBinding.from_row(session.child_binding())
+            if saved_binding is None:
+                tail = paused_approval_row([entry.message for entry in session.thread().messages()])
+                saved_binding = ChildBinding.from_row(tail.get("harness_binding")) if tail else None
+        is_child = saved_binding is not None or session.child_refs() is not None
+        if runner_binding is None and saved_binding is None and is_child:
+            raise HarnessError.child_binding_missing()
+        if saved_binding is not None:
+            base = base.with_binding(saved_binding)
         run = self._bounded_run(session, base)
         if paused is not None and run.agent is not None and "harness_agent_spend" in paused:
             run.ledger.carry_agent_spend(
@@ -658,10 +675,12 @@ class AgentRuntime:
             # G-366: one of the plan's own turns, with a shared budget, holds
             # what the plan has left, after the paused steps it continues are
             # counted. Any other turn is unchanged.
-            if context is not None and context.binding is not None:
-                # The runner is starting a child: save the run tree and plan
-                # budget it belongs to, so every later turn on the child the
-                # runner did not start continues them.
+            if context is not None and runner_binding is not None:
+                # The runner is starting a child: save its binding and the run
+                # tree and plan budget it belongs to, so every later turn on
+                # the child the runner did not start continues them. Only the
+                # runner's own context writes them.
+                session.remember_child_binding(runner_binding.to_row())
                 session.remember_child_refs(
                     self._trees.child_started(session, run_id, context, self.lock_ttl(session)),
                     self._plans.active_ledger(),
@@ -670,7 +689,6 @@ class AgentRuntime:
             # did not start (an answer, a new message, or a host context,
             # narrowed to what is left) continues the run tree and plan budget
             # it was saved with. The runner's own context is left alone.
-            kind = self._trees.context_kind(context)
             tree, _ = saved_refs(session)
             run = self._trees.root_run(session, run_id, run, context, tree, self.lock_ttl(session))
             run = self._plans.plan_turn(

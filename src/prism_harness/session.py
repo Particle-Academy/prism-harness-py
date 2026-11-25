@@ -292,6 +292,30 @@ class Session:
             "plan_ledger": _stored_pair(refs.get("plan_ledger"), "session", "plan"),
         }
 
+    def child_binding(self) -> dict[str, Any] | None:
+        """The provider and model binding the subagent runner gave this
+        session's child runs, as stored (``ChildBinding.to_row()``), or None
+        for a session the runner never started or one started before the
+        binding was kept here.
+
+        Kept in the DURABLE half, beside the thread and its pending approvals:
+        a child is answered or sent a new message long after the ephemeral half
+        may have expired.
+
+        Internal: read by the runtime for every turn the runner did not start."""
+        stored = self._durable.get(self._durable_key()) or {}
+        binding = stored.get("child_binding")
+        return deepcopy(binding) if isinstance(binding, dict) else None
+
+    def remember_child_binding(self, binding: dict[str, Any]) -> Session:
+        """Internal: save the binding the runner gave a child run, in the
+        session's durable half."""
+        self._assert_writable()
+        stored = self._durable.get(self._durable_key()) or {}
+        if stored.get("child_binding") != binding:
+            self._durable.put(self._durable_key(), {**stored, "child_binding": deepcopy(binding)})
+        return self
+
     def remember_child_refs(
         self, tree: dict[str, str] | None, plan_ledger: dict[str, str] | None
     ) -> Session:

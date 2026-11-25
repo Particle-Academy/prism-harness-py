@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import socket
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -60,7 +60,7 @@ class DurableMemoryStore(MemorySessionStore):
 class ExpiringStore(MemorySessionStore):
     """An ephemeral store a test can empty, as an expired TTL would."""
 
-    keys: set[str] = set()
+    keys: ClassVar[set[str]] = set()
 
     def put(self, key: str, payload: dict[str, Any], ttl_seconds: float | None = None) -> None:
         ExpiringStore.keys.add(key)
