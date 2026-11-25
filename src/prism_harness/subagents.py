@@ -340,6 +340,41 @@ def subagent_from_config(name: str, config: dict[str, Any]) -> Subagent:
     )
 
 
+def binding_route(
+    context: str, supplied_binding: bool, saved_binding: bool, linked: bool
+) -> dict[str, Any]:
+    """Which binding a turn runs on, and whether it is saved with the session.
+
+    The one rule every language's runtime asks (the reference's
+    ``ChildBinding::route``), pinned by the harness-plans corpus:
+
+    - ``runner``: the subagent runner's own context starts the child; its
+      binding is used and saved with the child's session.
+    - ``saved``: any other turn on a session with a saved binding uses it. A
+      binding on a context the host supplied never replaces it.
+    - ``refused``: a session the runner started as a child (``linked``) with
+      no saved binding is refused (``child_binding_missing``) before any
+      request.
+    - ``host``: a host context's binding on a session that was never a child
+      is used for that turn only; it is never saved.
+    - ``root``: otherwise the root rules.
+
+    :param context: none, metadata, runner or host, as ``RunTrees.context_kind``
+    :raises ValueError: for an unknown context kind
+    """
+    if context not in ("none", "metadata", "runner", "host"):
+        raise ValueError("Unknown run context kind.")
+    if context == "runner" and supplied_binding:
+        return {"binding": "runner", "save": True}
+    if saved_binding:
+        binding = "saved"
+    elif linked:
+        binding = "refused"
+    else:
+        binding = "host" if supplied_binding else "root"
+    return {"binding": binding, "save": False}
+
+
 @dataclass(frozen=True)
 class ChildBinding:
     """What a subagent child's provider and model resolve from, beside its own mode.

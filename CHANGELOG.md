@@ -4,6 +4,10 @@
 
 ### Added
 
+- `binding_route()`: the one rule for which provider/model binding a turn
+  runs on and whether it is saved with the session, now asked by the runtime
+  and pinned by the harness-plans corpus (hpl-0056..hpl-0058) in all three
+  languages. Behaviour is unchanged.
 - Plan budgets (G-366): the `Plans` config's `budget.mode` is `per_step` (the
   default, unchanged behaviour), `shared` (one ledger of `max_steps` model
   steps and optionally `max_cost_usd` across the plan's own turns,

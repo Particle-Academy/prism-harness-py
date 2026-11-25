@@ -33,7 +33,7 @@ from prism_harness.plans.service import Plans, refuse_unfunded_decision
 from prism_harness.run_trees import RunTrees, refuse_spent_tree, saved_refs
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
-from prism_harness.subagents import ChildBinding, RunBudget, RunContext
+from prism_harness.subagents import ChildBinding, RunBudget, RunContext, binding_route
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     ToolCallInput,
@@ -600,18 +600,26 @@ class AgentRuntime:
         # runner started as a child (it has saved run tree references) with no
         # binding anywhere is refused rather than run on the root rules, which
         # would send its conversation to a provider nobody chose for it.
+        # A host context on a session that was never a child keeps the
+        # binding it states for that turn; it is never saved. The rule is
+        # binding_route(), the one the harness-plans corpus pins.
         kind = self._trees.context_kind(context)
-        runner_binding = context.binding if context is not None and kind == "runner" else None
-        saved_binding: ChildBinding | None = None
-        if runner_binding is None:
-            saved_binding = ChildBinding.from_row(session.child_binding())
-            if saved_binding is None:
-                tail = paused_approval_row([entry.message for entry in session.thread().messages()])
-                saved_binding = ChildBinding.from_row(tail.get("harness_binding")) if tail else None
-        is_child = saved_binding is not None or session.child_refs() is not None
-        if runner_binding is None and saved_binding is None and is_child:
+        saved_binding = ChildBinding.from_row(session.child_binding())
+        if saved_binding is None:
+            tail = paused_approval_row([entry.message for entry in session.thread().messages()])
+            saved_binding = ChildBinding.from_row(tail.get("harness_binding")) if tail else None
+        route = binding_route(
+            kind,
+            context is not None and context.binding is not None,
+            saved_binding is not None,
+            session.child_refs() is not None,
+        )
+        if route["binding"] == "refused":
             raise HarnessError.child_binding_missing()
-        if saved_binding is not None:
+        runner_binding = (
+            context.binding if context is not None and route["binding"] == "runner" else None
+        )
+        if route["binding"] == "saved" and saved_binding is not None:
             base = base.with_binding(saved_binding)
         run = self._bounded_run(session, base)
         if paused is not None and run.agent is not None and "harness_agent_spend" in paused:
