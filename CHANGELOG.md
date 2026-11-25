@@ -23,6 +23,12 @@
   as the reference does: its steps and cost count against the turn, a shared
   plan budget included. The `RunContext` given to `SubagentRunner.tool()` can
   only narrow the turn's limits, never widen them.
+- A subagent child resumed outside the runner continues the run tree it was
+  started in instead of starting a fresh root budget. The tree's allowance is
+  kept in the durable store from the first child on; the resumed child holds
+  what is left, settles what it spent, and is refused (`run_not_permitted`)
+  once it is spent, and a decision on its approval is refused the same way
+  before anything is recorded.
 
 - Agent plans (G-360). An agent proposes a plan, a person approves it, and
   `runtime.plan(session).advance()` works through it one step per turn. Off

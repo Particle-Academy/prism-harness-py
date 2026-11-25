@@ -260,7 +260,16 @@ What one run tree is:
   the same run. The approval row it paused on records what its agent had spent
   (`harness_agent_spend`), and the resume counts that against the ceiling, as
   it counts the steps already taken. A subagent child resumed this way also
-  keeps the provider and model its runner bound it to (`harness_binding`).
+  keeps the provider and model its runner bound it to (`harness_binding`), and
+  continues the run tree it was started in (`harness_tree`): the first time a
+  root run starts a child, the tree's allowance is kept in the durable store
+  with the root run holding all of it, and the root run settles what the whole
+  tree spent when it ends. The resumed child holds what the tree has left
+  before it calls a model, settles what it spent when it ends, and is refused
+  (`run_not_permitted`) once the allowance is spent. A decision on its approval
+  is refused the same way before anything is recorded. A child started under a
+  run context the host built outside a turn has no tree record and resumes as
+  before.
 - Every other `send()` starts a new run tree, with nothing spent.
 - So does every `runtime.plan(session).advance()` that is not handed a
   `RunContext`: each step of a plan gets the full ceiling. To hold a whole plan
