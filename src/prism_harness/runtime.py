@@ -634,8 +634,10 @@ class AgentRuntime:
         # or one handed a host context, delegates under the same depth ceiling
         # as it would inside its tree. A context may put it deeper, never
         # shallower.
+        # The runner's own context is at the depth it starts the child at, and
+        # that is the depth it saves: it is never raised to an older one.
         saved_depth = session.child_depth()
-        if saved_depth > run.depth:
+        if runner_binding is None and saved_depth > run.depth:
             run = replace(run, depth=saved_depth)
         if paused is not None and run.agent is not None and "harness_agent_spend" in paused:
             run.ledger.carry_agent_spend(
