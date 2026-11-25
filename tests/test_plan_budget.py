@@ -33,9 +33,12 @@ from prism_harness import (
     RunBudget,
     RunContext,
     Session,
+    SubagentRunner,
     ToolRegistry,
+    record_approval,
 )
 from prism_harness.plans import PlanRefused, Plans, machine
+from prism_harness.thread_rows import pending_approval_ids
 
 
 @pytest.fixture(autouse=True)
@@ -53,6 +56,15 @@ class DurableMemoryStore(MemorySessionStore):
 
     def durability(self) -> Durability:
         return Durability.DURABLE
+
+
+class FailingBudgetStore(DurableMemoryStore):
+    """A durable store that fails to write a plan budget record, and only that."""
+
+    def put(self, key: str, payload: dict[str, Any], ttl_seconds: float | None = None) -> None:
+        if key.endswith(":plan-budget"):
+            raise OSError("store down")
+        super().put(key, payload, ttl_seconds)
 
 
 class Counted:
@@ -74,7 +86,12 @@ class Counted:
 
 class Rig:
     def __init__(
-        self, plans: dict[str, Any] | None = None, mode: dict[str, Any] | None = None
+        self,
+        plans: dict[str, Any] | None = None,
+        mode: dict[str, Any] | None = None,
+        *,
+        subagents: bool = False,
+        durable: type[MemorySessionStore] = DurableMemoryStore,
     ) -> None:
         self.queue: list[LlmResponse] = []
         self.requests: list[LlmRequest] = []
@@ -84,8 +101,9 @@ class Rig:
         self._call = 0
         self._plans_config = {"enabled": True, **(plans or {})}
         self._mode = mode or {}
+        self._subagents = subagents
         self.harness = PrismHarness(
-            drivers={"memory": MemorySessionStore, "durable": DurableMemoryStore},
+            drivers={"memory": MemorySessionStore, "durable": durable},
             stores={"ephemeral": "memory", "durable": "durable"},
         )
         self.restart()
@@ -103,12 +121,33 @@ class Rig:
             "plans": True,
             **self._mode,
         }
+        modes: dict[str, Any] = {"chat": chat}
+        tools = (
+            ToolRegistry()
+            .register(Counted("weather", "Sunny", self))
+            .register(Counted("lookup", "Found", self))
+        )
+        if self._subagents:
+            chat["tools"] = [*chat["tools"], "research"]
+            chat["subagents"] = {"research": {"mode": "research"}}
+            modes["research"] = {
+                "system_prompt": "Research.",
+                "tools": ["weather"],
+                "requires_approval": ["weather"],
+                "max_steps": 4,
+            }
+
+            def research(session: Session) -> Any:
+                subagent = self.runtime.mode_for(session).subagents["research"]
+                return SubagentRunner(self.harness, self.runtime).tool(
+                    subagent, session, RunContext.root("parent-run", RunBudget(8)), "parent-run"
+                )
+
+            tools.register_factory("research", research)
         self.runtime = AgentRuntime(
             client=self._client,
-            modes=ModeRegistry({"default": "chat", "modes": {"chat": chat}}),
-            tools=ToolRegistry()
-            .register(Counted("weather", "Sunny", self))
-            .register(Counted("lookup", "Found", self)),
+            modes=ModeRegistry({"default": "chat", "modes": modes}),
+            tools=tools,
             events=events,
             config={"provider": "openai", "model": "gpt-4o"},
             plans=Plans(self._plans_config, index_store=self.harness.durable_store()),
@@ -371,3 +410,159 @@ def test_host_code_chooses_a_plan_budget_and_can_only_lower_it() -> None:
 def test_an_invalid_plan_budget_fails_when_the_host_configures_it(budget: object) -> None:
     with pytest.raises(PlanBudgetInvalid):
         Plans({"enabled": True, "budget": budget})
+
+
+# Only the plan's own turns spend from a shared budget: the turns advance()
+# runs, and the resume of an approval its held step asked for. A person
+# chatting while a step waits is not the plan, and is never refused for it.
+
+
+def held(rig: Rig) -> str:
+    """A shared plan whose first step paused on a weather approval after one model step."""
+    rig.active(2)
+    rig.calls(("weather", {"city": "Paris"}))
+    rig.advance()
+    step = rig.plan()["steps"][0]
+    assert step["state"] == "held"
+    assert rig.budget()["steps"] == 1
+    approval: str = step["approvalIds"][0]
+    return approval
+
+
+def pending(rig: Rig, session: Session | None = None) -> list[str]:
+    target = session or rig.session
+    return pending_approval_ids([entry.message for entry in target.thread().messages()])
+
+
+def test_a_chat_turn_while_a_shared_step_is_held_is_not_charged() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 10}})
+    held(rig)
+
+    rig.calls(("lookup", {"q": "a"}))
+    rig.calls(("lookup", {"q": "b"}))
+    rig.text("Unrelated answer.")
+    rig.runtime.send(rig.session, "Unrelated question")
+
+    assert rig.lookups() == 2
+    assert rig.budget()["steps"] == 1
+
+
+def test_the_person_can_chat_when_a_shared_budget_is_spent_while_a_step_is_held() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 1}})
+    held(rig)
+
+    rig.text("Unrelated answer.")
+    assert rig.runtime.send(rig.session, "Unrelated question").text == "Unrelated answer."
+    assert rig.budget()["steps"] == 1
+
+
+def test_a_turn_while_a_step_is_claimed_by_no_running_advance_is_not_charged() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 10}})
+    rig.active(1)
+    plans = rig.runtime.plans
+    plan = plans.load(rig.session)
+    assert plan is not None
+    # A worker claimed the step and died before its turn ran.
+    claimed = machine.claim(plan, plan["steps"][0]["id"], "worker", plans.now() + 300, plans.now())
+    plans.write(rig.session, claimed, plan["revision"])
+
+    rig.calls(("lookup", {"q": "a"}))
+    rig.text("Unrelated answer.")
+    rig.runtime.send(rig.session, "Unrelated question")
+
+    assert rig.lookups() == 1
+    assert rig.budget()["steps"] == 0
+
+
+@pytest.mark.parametrize("path", ["decide", "record_approval"])
+def test_an_approval_a_spent_shared_budget_cannot_run_is_refused_and_records_nothing(
+    path: str,
+) -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 1}})
+    approval = held(rig)
+    before = len(rig.requests)
+
+    def answer() -> None:
+        if path == "decide":
+            rig.runtime.decide(rig.session, approval, True)
+        else:
+            record_approval(rig.session, approval, True)
+
+    with pytest.raises(HarnessError) as caught:
+        answer()
+    assert caught.value.code == "plan_budget_exhausted"
+    assert pending(rig) == [approval]
+    assert rig.ran.count("weather") == 0
+    assert len(rig.requests) == before
+
+    outcome = rig.advance()
+    assert outcome.status == "blocked"
+    assert outcome.reason == "plan_budget_exhausted"
+    assert len([event for event in rig.events if isinstance(event, PlanBudgetExhausted)]) == 1
+    assert rig.advance().status == "not_active"
+    assert len([event for event in rig.events if isinstance(event, PlanBudgetExhausted)]) == 1
+
+    # Still refused once the plan is blocked: the call never runs outside the budget.
+    with pytest.raises(HarnessError) as again:
+        answer()
+    assert again.value.code == "plan_budget_exhausted"
+    assert pending(rig) == [approval]
+    assert rig.ran.count("weather") == 0
+    assert len(rig.requests) == before
+
+
+def test_a_failed_plan_budget_write_closes_the_run() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 10}}, durable=FailingBudgetStore)
+    rig.active(1)
+    rig.text("unused")
+
+    with pytest.raises(OSError):
+        rig.advance()
+    run = rig.session.run()
+    assert run is not None
+    assert run["status"] == "failed"
+
+
+# A subagent child that pauses on an approval is resumed later on its own
+# session, outside the runner. When the turn that started it spent from a
+# shared plan budget, the resumed child spends from the same one.
+
+
+def paused_child(rig: Rig) -> tuple[Session, str]:
+    rig.active(1)
+    rig.calls(("research", {"task": "Find the weather."}))  # parent
+    rig.calls(("weather", {"city": "Paris"}))  # child: pauses
+    rig.calls(("plan_complete_step", {"summary": "Asked."}))  # parent
+    rig.text("Step done.")  # parent
+    rig.advance()
+    child = rig.harness.for_(Participant("User", "ada")).session("chat::sub::research")
+    waiting = pending(rig, child)
+    assert len(waiting) == 1
+    return child, waiting[0]
+
+
+def test_a_child_resumed_outside_the_runner_spends_from_the_shared_plan_budget() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 10}}, subagents=True)
+    child, approval = paused_child(rig)
+    spent = rig.budget()["steps"]
+
+    rig.text("Child answer.")
+    record_approval(child, approval, True)
+    rig.runtime.send(child, "")
+
+    assert rig.ran.count("weather") == 1
+    assert rig.budget()["steps"] == spent + 1
+
+
+def test_an_approval_for_a_child_whose_shared_plan_budget_is_spent_is_refused() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 3}}, subagents=True)
+    child, approval = paused_child(rig)
+    assert rig.budget()["steps"] == 3
+    before = len(rig.requests)
+
+    with pytest.raises(HarnessError) as caught:
+        rig.runtime.decide(child, approval, True)
+    assert caught.value.code == "plan_budget_exhausted"
+    assert pending(rig, child) == [approval]
+    assert rig.ran.count("weather") == 0
+    assert len(rig.requests) == before
