@@ -64,6 +64,16 @@
 
 ### Fixed
 
+- A subagent child's provider and model binding is now kept with the child
+  session's durable data, as prism-harness keeps it, not only on the row a
+  paused run stopped on. A new message to a child session, a resume, and a
+  turn under a context the host built all run on the binding the runner gave
+  the child; before, a new message resolved its provider and model like a
+  root run. A child session with saved run tree references and no saved
+  binding is refused with `child_binding_missing`, the reference's code,
+  before any request. A context the host supplies never replaces the binding
+  or run tree a child saved: only the runner's own context writes them.
+
 - Two decisions for the same approval can no longer both be recorded.
   `record_approval()` and `AgentRuntime.decide()` now check that the approval
   is pending and write the decision under the session lock, so a second answer
