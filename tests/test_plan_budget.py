@@ -73,7 +73,9 @@ class Counted:
 
 
 class Rig:
-    def __init__(self, plans: dict[str, Any] | None = None, mode: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, plans: dict[str, Any] | None = None, mode: dict[str, Any] | None = None
+    ) -> None:
         self.queue: list[LlmResponse] = []
         self.requests: list[LlmRequest] = []
         self.ran: list[str] = []
@@ -300,7 +302,9 @@ def test_two_turns_are_never_granted_the_same_remainder() -> None:
     plans.write(rig.session, claimed, plan["revision"])
 
     def turn(run_id: str) -> RunContext:
-        return plans.plan_turn(rig.session, run_id, RunContext.root(run_id, RunBudget(8)), None, 300)
+        return plans.plan_turn(
+            rig.session, run_id, RunContext.root(run_id, RunBudget(8)), None, 300
+        )
 
     assert turn("run_a").budget.max_steps == 8
     assert turn("run_b").budget.max_steps == 2

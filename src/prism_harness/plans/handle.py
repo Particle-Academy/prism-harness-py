@@ -7,7 +7,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from prism_harness.plans import machine, view
+from prism_harness.errors import HarnessError
+from prism_harness.plans import budget, machine, view
 from prism_harness.plans.refusal import PlanRefused
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -144,7 +145,17 @@ class PlanHandle:
             outcome, step = self._prepare()
             if step is None:
                 return outcome
-            response = self._runtime.send(self._session, _prompt(step), context=context)
+            try:
+                response = self._runtime.send(self._session, _prompt(step), context=context)
+            except HarnessError as error:
+                stopped = (
+                    self._stopped_on_budget()
+                    if error.code in ("run_not_permitted", budget.EXHAUSTED)
+                    else None
+                )
+                if stopped is None:
+                    raise
+                return stopped
             return AdvanceOutcome("ran", "active", step["id"], response.run_id)
         finally:
             release()
@@ -152,6 +163,35 @@ class PlanHandle:
     def continue_plan(self, context: RunContext | None = None) -> AdvanceOutcome:
         """An alias of :meth:`advance`, the name the request used."""
         return self.advance(context)
+
+    def use_budget(self, requested: dict[str, Any]) -> None:
+        """Choose this plan's budget (G-366), in host code: ``shared`` with
+        ``max_steps`` and optionally ``max_cost_usd``, ``per_step``, or ``none``.
+        Each limit is the lower of this and the configured one. The first
+        choice, or the plan's first shared turn, fixes the budget: after that
+        the mode cannot change (``plan.budget_fixed``) and a limit can only be
+        lowered. Never reachable from a tool or the model."""
+        plan = self._plans.load(self._session)
+        if plan is None or not machine.is_live(plan):
+            raise PlanRefused("plan.no_plan")
+        self._plans.use_budget(self._session, plan["id"], requested)
+
+    def budget(self) -> dict[str, Any] | None:
+        """The plan's budget as it stands: mode, limits and what a shared budget
+        has spent. None when there is no plan."""
+        plan = self._plans.load(self._session)
+        if plan is None:
+            return None
+        chosen = self._plans.budget_for(self._session, plan["id"])
+        record = self._plans.budget_record(self._session, plan["id"]) or {}
+        cost = chosen["max_cost_micros"]
+        return {
+            "mode": chosen["mode"],
+            "max_steps": chosen["max_steps"],
+            "max_cost_usd": None if cost is None else cost / 1_000_000,
+            "steps": int(record.get("steps", 0)),
+            "cost_usd": int(record.get("cost_micros", 0)) / 1_000_000,
+        }
 
     def answer_step(self, step_id: str, text: str, choice: str | None, actor: str) -> PlanSnapshot:
         """A person answers a question step. The answer is data the agent reads on
@@ -196,11 +236,18 @@ class PlanHandle:
         run = self._session.run()
         run_failed = isinstance(run, dict) and run.get("status") == "failed"
         now = self._plans.now()
+        spent = (
+            self._plans.budget_exhaustion(self._session, plan["id"], self._lock_ttl())
+            if plan["status"] == "active"
+            else None
+        )
         following, (kind, value) = machine.prepare(
-            plan, run_failed, self._plans.limits(), now, None
+            plan, run_failed, self._plans.limits(), now, None, spent is not None
         )
         if following != plan:
             self._plans.write(self._session, following, plan["revision"])
+        if kind == "blocked" and value == budget.EXHAUSTED:
+            self._plans.announce_budget_exhausted(self._session, plan["id"], str(spent))
         if kind != "run":
             status = following["status"]
             if kind == "waiting":
@@ -222,6 +269,18 @@ class PlanHandle:
             if step["id"] == value:
                 return AdvanceOutcome("ran", "active", value), step
         raise PlanRefused("plan.conflict")
+
+    def _stopped_on_budget(self) -> AdvanceOutcome | None:
+        """A turn refused because the plan's shared budget is spent stops the
+        plan cleanly; None when the budget is not what stopped it."""
+        plan = self._plans.load(self._session)
+        if (
+            plan is None
+            or plan["status"] != "active"
+            or self._plans.budget_exhaustion(self._session, plan["id"], self._lock_ttl()) is None
+        ):
+            return None
+        return self._prepare()[0]
 
     def _lock_ttl(self) -> int:
         ttl = self._runtime.lock_ttl(self._session)

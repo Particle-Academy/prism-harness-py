@@ -429,7 +429,12 @@ def _reconcile_agent_step(
 
 
 def prepare(
-    plan: Plan, run_failed: bool, limits: PlanLimits, now: int, run_id: str | None
+    plan: Plan,
+    run_failed: bool,
+    limits: PlanLimits,
+    now: int,
+    run_id: str | None,
+    budget_exhausted: bool = False,
 ) -> tuple[Plan, list[str | None]]:
     """Settle the previous head from persisted state, check the limits, and
     choose what happens next. Returns the plan and an outcome: ``[run, stepId]``,
@@ -458,6 +463,11 @@ def prepare(
         elif plan["counters"]["advances"] >= limits.max_advances:
             plan = _block(plan, "budget")
             outcome = ["blocked", "budget"]
+        elif budget_exhausted:
+            # G-366: the plan's shared budget is spent. It is only ever
+            # lowered, so resume() refuses this as it refuses "budget".
+            plan = _block(plan, "plan_budget_exhausted")
+            outcome = ["blocked", "plan_budget_exhausted"]
         else:
             outcome = ["run", step["id"]]
     plan = _normalised(plan)
@@ -772,7 +782,7 @@ def resume(plan: Plan, ids: PlanIds, limits: PlanLimits, now: int) -> Plan:
     """The host unblocks a plan. A step that failed for lack of a person's card
     or of attempts gets a retry step after it; a step that paused too often is
     not replayed; a plan that ran out of advances stays blocked."""
-    if plan["status"] != "blocked" or plan["blockedReason"] == "budget":
+    if plan["status"] != "blocked" or plan["blockedReason"] in ("budget", "plan_budget_exhausted"):
         raise PlanRefused("plan.not_resumable")
     plan = deepcopy(plan)
     reason = plan["blockedReason"]

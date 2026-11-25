@@ -627,6 +627,9 @@ class AgentRuntime:
             # the tree ledger its caller hands back in.
             if prompt == "" and context is None:
                 run.ledger.record_steps(approval_run_steps(stored) or 0)
+            # G-366: a turn serving a plan step with a shared budget holds what
+            # the plan has left, after the paused steps it continues are counted.
+            run = self._plans.plan_turn(session, run_id, run, context, self.lock_ttl(session))
             if scope is not None:
                 names, legacy = scope
                 if legacy:

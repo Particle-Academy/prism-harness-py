@@ -19,7 +19,15 @@ from typing import Any
 import pytest
 
 from prism_harness import HarnessError, ToolPolicy
-from prism_harness.plans import PlanIds, PlanLimits, PlanRefused, machine, view
+from prism_harness.plans import (
+    PlanBudgetInvalid,
+    PlanIds,
+    PlanLimits,
+    PlanRefused,
+    budget,
+    machine,
+    view,
+)
 from prism_harness.plans import text as plan_text
 
 CORPUS: dict[str, Any] = json.loads(
@@ -58,16 +66,79 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         return f"{prefix}_{counter[0]:026d}"
 
     ids = PlanIds(mint)
-    state: dict[str, Any] = {"plan": None, "marked": None}
+    state: dict[str, Any] = {"plan": None, "marked": None, "ledger": None}
     results: list[dict[str, Any]] = []
     for op in case["ops"]:
         now = op.get("now", case.get("now", 1767225600))
         try:
-            results.append(plans_op(op, state, ids, limits, now))
+            if str(op["op"]).startswith("budget_"):
+                results.append(plans_budget_op(op, state, now))
+            else:
+                results.append(plans_op(op, state, ids, limits, now))
         except PlanRefused as refused:
             results.append({"refused": refused.code})
     plan = state["plan"]
-    return {"results": results, "final": None if plan is None else plans_final(plan, limits)}
+    out: dict[str, Any] = {
+        "results": results,
+        "final": None if plan is None else plans_final(plan, limits),
+    }
+    if state["ledger"] is not None:
+        out["budget"] = plans_budget_final(state["ledger"])
+    return out
+
+
+def plans_budget_op(op: dict[str, Any], state: dict[str, Any], now: int) -> dict[str, Any]:
+    """The plan budget ops (G-366): settings and the shared ledger, pure."""
+    kind = op["op"]
+    try:
+        if kind == "budget_settings":
+            return {"settings": budget.settings(op["config"])}
+        if kind == "budget_for_plan":
+            return {"settings": budget.for_plan(budget.settings(op["configured"]), op["requested"])}
+        if kind == "budget_open":
+            state["ledger"] = budget.open_ledger("plan", budget.settings(op["config"]))
+            return {"ok": True}
+        if kind == "budget_narrow":
+            state["ledger"] = budget.narrow(
+                state["ledger"], budget.for_plan(budget.settings(None), op["requested"])
+            )
+            return {"ok": True}
+        if kind == "budget_reserve":
+            state["ledger"], grant = budget.reserve(
+                state["ledger"], op["hold"], op["steps"], op["cost_micros"], now, op.get("ttl", 300)
+            )
+            return grant if "refused" in grant else {"grant": grant}
+        if kind == "budget_settle":
+            state["ledger"] = budget.settle(
+                state["ledger"], op["hold"], op["steps"], op["cost_micros"]
+            )
+            return {"ok": True}
+        if kind == "budget_exhaustion":
+            return {"exhaustion": budget.exhaustion(state["ledger"])}
+    except PlanBudgetInvalid:
+        return {"invalid": True}
+    raise AssertionError(f"Unknown op {kind}")
+
+
+def plans_budget_final(ledger: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "mode": ledger["mode"],
+        "max_steps": ledger["max_steps"],
+        "max_cost_micros": ledger["max_cost_micros"],
+        "steps": ledger["steps"],
+        "cost_micros": ledger["cost_micros"],
+        "unmetered": ledger["unmetered"],
+        "holds": [
+            {
+                "id": key,
+                "steps": hold["steps"],
+                "cost_micros": hold["cost_micros"],
+                "at": hold["at"],
+            }
+            for key, hold in ledger["holds"].items()
+        ],
+        "exhaustion": budget.exhaustion(ledger),
+    }
 
 
 def plans_op(
@@ -101,7 +172,10 @@ def plans_op(
         )
         return {"ok": True}
     if kind == "prepare":
-        state["plan"], outcome = machine.prepare(needs(), op["run_failed"], limits, now, None)
+        exhausted = state["ledger"] is not None and budget.exhaustion(state["ledger"]) is not None
+        state["plan"], outcome = machine.prepare(
+            needs(), op["run_failed"], limits, now, None, exhausted
+        )
         return {"outcome": outcome}
     if kind == "claim":
         current = needs()
@@ -231,7 +305,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 39
+        assert len(CASES) == 48
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:

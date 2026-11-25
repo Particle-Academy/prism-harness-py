@@ -27,6 +27,8 @@ from prism_harness.harness import AgentHarness, AgentHarnessConfig, PendingSessi
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.plans import (
     AdvanceOutcome,
+    PlanBudgetExhausted,
+    PlanBudgetInvalid,
     PlanHandle,
     PlanLimits,
     PlanRefused,
@@ -157,6 +159,8 @@ __all__ = [
     "ParticipantRef",
     "PendingApproval",
     "PendingSession",
+    "PlanBudgetExhausted",
+    "PlanBudgetInvalid",
     "PlanHandle",
     "PlanLimits",
     "PlanRefused",

@@ -496,6 +496,38 @@ runtime.plans.reap_using(lambda session_key, plan_id: queue.push(session_key))
 runtime.plans.reap()  # every few minutes
 ```
 
+### Plan budgets
+
+How a plan's steps are budgeted is the app's choice, set in the `Plans`
+config's `budget` or per plan with `runtime.plan(session).use_budget({...})`.
+The model and per-call options cannot choose it or widen it.
+
+| mode | what it means |
+|---|---|
+| `per_step` (default) | Each step's turn gets the per-turn budget, as before. |
+| `shared` | Every turn that serves the plan also spends from one ledger: `max_steps` model steps in total (required) and optionally `max_cost_usd`. Per-turn limits still apply to each turn. When the ledger is spent, the plan is blocked with `plan_budget_exhausted` and a `PlanBudgetExhausted` event (`plan.budget_exhausted`) is emitted once. |
+| `none` | No plan-level budget. Per-turn limits, the plan's own limits and agent spend ceilings still apply. |
+
+```python
+plans = Plans({"enabled": True, "budget": {"mode": "shared", "max_steps": 40, "max_cost_usd": 2.0}})
+
+# or for one plan, in host code:
+runtime.plan(session).use_budget({"mode": "shared", "max_steps": 12})
+runtime.plan(session).budget()  # mode, limits, and what a shared budget has spent
+```
+
+A shared ledger lives in the plan store, so it carries across approval pauses,
+restarts and workers. Each turn holds what it may spend before it starts and
+settles what it spent when it ends, in one locked write each, so two turns are
+never granted the same remainder. A hold whose turn never settled is charged in
+full once the session lock TTL has passed. A plan's budget is fixed when it is
+first chosen or first used: after that its mode cannot change
+(`plan.budget_fixed`) and its limits can only be lowered. A step whose turn is
+handed a run tree of its own is refused (`plan.budget_context`) rather than run
+outside the ledger. An invalid mode or limit raises `PlanBudgetInvalid` when
+`Plans` is built. A turn the ledger refuses raises `HarnessError` with code
+`plan_budget_exhausted`.
+
 ## Task lists
 
 An agent given a goal keeps working across many requests. `session.tasks()` is
