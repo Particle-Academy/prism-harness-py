@@ -8,9 +8,12 @@ and record_approval(), with a fake provider that always asks for a gated tool.
 
 from __future__ import annotations
 
+import socket
 import tempfile
 from collections.abc import Callable
 from typing import Any
+
+import pytest
 
 from prism_harness import (
     AgentResponse,
@@ -27,6 +30,18 @@ from prism_harness import (
     ToolRegistry,
     record_approval,
 )
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The provider below is a fake; opening a socket is a bug."""
+
+    def refuse(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("A test tried to use the network.")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+
 
 MAX_STEPS = 3
 APPROVALS = 6

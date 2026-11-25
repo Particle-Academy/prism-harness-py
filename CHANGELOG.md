@@ -35,6 +35,13 @@
   is read the same way everywhere that decides what runs: the first one
   recorded counts, for the resumed call, for the plan, and for the plan tool's
   own check. The thread view shown to a provider is unchanged.
+  Recording a decision now takes the session lock, which is not re-entrant: a
+  host that calls `record_approval()` or `decide()` from inside its own
+  `session.lock(...)` callback waits for the lock and then gets
+  `session_locked`, with nothing written. Record the decision outside the
+  lock. The module-level `record_approval()` waits 30 seconds with a
+  300-second lock TTL; `AgentRuntime.decide()` uses the runtime's `lock_ttl`
+  and `lock_wait`.
 - Tool-call arguments nested as deep as the harness accepts (just under 500
   levels) no longer make the approval path raise `RecursionError`. The args
   digest is computed without recursion. A call whose arguments cannot be
