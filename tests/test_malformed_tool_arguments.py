@@ -131,7 +131,7 @@ def test_runs_a_well_formed_call_as_before() -> None:
     assert outcome["response"].finish_reason == "stop"
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """The client below is a fake; opening a socket is a bug."""
 
