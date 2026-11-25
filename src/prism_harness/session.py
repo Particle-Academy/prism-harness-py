@@ -19,6 +19,9 @@ from prism_harness.thread import Thread
 
 __all__ = ["Participant", "Session"]
 
+#: How many runs' trees a session keeps in its durable half (G-381).
+_RUN_TREE_HISTORY = 20
+
 R = TypeVar("R")
 
 
@@ -283,8 +286,7 @@ class Session:
 
         Internal: written by the runtime when the subagent runner starts a
         child run."""
-        stored = self._durable.get(self._durable_key()) or {}
-        refs = stored.get("child_refs")
+        refs = self._child_field("child_refs")
         if not isinstance(refs, dict):
             return None
         return {
@@ -303,8 +305,7 @@ class Session:
         may have expired.
 
         Internal: read by the runtime for every turn the runner did not start."""
-        stored = self._durable.get(self._durable_key()) or {}
-        binding = stored.get("child_binding")
+        binding = self._child_field("child_binding")
         return deepcopy(binding) if isinstance(binding, dict) else None
 
     def child_depth(self) -> int:
@@ -314,8 +315,7 @@ class Session:
         nesting.
 
         Internal: read by the runtime."""
-        stored = self._durable.get(self._durable_key()) or {}
-        depth = stored.get("child_depth")
+        depth = self._child_field("child_depth")
         return depth if type(depth) is int and depth > 0 else 0
 
     def remember_child_binding(self, binding: dict[str, Any], depth: int = 0) -> Session:
@@ -323,12 +323,8 @@ class Session:
         depth it started at, in the session's durable half."""
         self._assert_writable()
         depth = depth if type(depth) is int and depth > 0 else 0
-        stored = self._durable.get(self._durable_key()) or {}
-        if stored.get("child_binding") != binding or stored.get("child_depth", 0) != depth:
-            self._durable.put(
-                self._durable_key(),
-                {**stored, "child_binding": deepcopy(binding), "child_depth": depth},
-            )
+        if self._child_field("child_binding") != binding or self.child_depth() != depth:
+            self._write_child({"child_binding": deepcopy(binding), "child_depth": depth})
         return self
 
     def remember_child_refs(
@@ -341,10 +337,42 @@ class Session:
             "tree": None if tree is None else dict(tree),
             "plan_ledger": None if plan_ledger is None else dict(plan_ledger),
         }
-        stored = self._durable.get(self._durable_key()) or {}
-        if stored.get("child_refs") != refs:
-            self._durable.put(self._durable_key(), {**stored, "child_refs": refs})
+        if self._child_field("child_refs") != refs:
+            self._write_child({"child_refs": refs})
         return self
+
+    def _child_key(self) -> str:
+        """What the subagent runner saves about this session as a child (its
+        binding, depth and run tree references) lives under a key of its own,
+        never in the session's durable record, where a host keeps state
+        (capabilities) another process may change while the runner writes."""
+        return f"{self.key()}:child"
+
+    def _child_field(self, name: str) -> Any:
+        """A saved child field: from the child key, or, for a child saved
+        before that key existed, from the session's durable record."""
+        stored = self._durable.get(self._child_key())
+        if isinstance(stored, dict) and name in stored:
+            return stored[name]
+        legacy = self._durable.get(self._durable_key()) or {}
+        return legacy.get(name)
+
+    def _write_child(self, fields: dict[str, Any]) -> None:
+        """One locked change to the child key. A field never written there yet
+        is carried over from the legacy record, so the key is complete once
+        written."""
+        key = self._child_key()
+
+        def change() -> None:
+            stored = self._durable.get(key)
+            current = dict(stored) if isinstance(stored, dict) else {}
+            legacy = self._durable.get(self._durable_key()) or {}
+            for name in ("child_binding", "child_depth", "child_refs"):
+                if name not in current and name in legacy:
+                    current[name] = deepcopy(legacy[name])
+            self._durable.put(key, {**current, **fields})
+
+        self._durable.with_lock(key, change, 10, 5)
 
     def using_capability(self, name: str, state: dict[str, Any]) -> Session:
         return self._write_capabilities(lambda capabilities: {**capabilities, name: state})
@@ -360,7 +388,25 @@ class Session:
         run = self.state().get("run")
         return run if isinstance(run, dict) and isinstance(run.get("id"), str) else None
 
-    def begin_run(self, run_id: str, mode: str, provider: str, model: str) -> Session:
+    def begin_run(
+        self,
+        run_id: str,
+        mode: str,
+        provider: str,
+        model: str,
+        tree: dict[str, str] | str = "none",
+        depth: int = 0,
+    ) -> Session:
+        """``tree`` and ``depth`` are the run's membership (G-381): the run tree
+        it belongs to (``{session, run}``, ``host`` or ``none``) and how deep it
+        is, decided once when the run begins. Also kept durably, by run id,
+        so the root that resumes a run parked on approvals stays in the tree
+        that run began in, whatever became of the ephemeral half
+        (:meth:`resumed_run_tree`)."""
+        self._assert_writable()
+        self._remember_run_tree(
+            run_id, {"tree": dict(tree) if isinstance(tree, dict) else tree, "depth": depth}
+        )
         return self._write(
             "run",
             {
@@ -369,9 +415,90 @@ class Session:
                 "mode": mode,
                 "provider": provider,
                 "model": model,
+                "tree": dict(tree) if isinstance(tree, dict) else tree,
+                "depth": depth,
                 "started_at": datetime.now(timezone.utc).isoformat(),
             },
         )
+
+    def resumed_run_tree(self, prompt: str) -> dict[str, str] | None:
+        """The durable run tree the run parked on this session's approvals
+        began in (G-381), for a turn with no new message that resumes it; None
+        for a new message, a session parked on nothing, or a run in the host's
+        tree, in none, or no longer remembered.
+
+        Internal: read by the runtime when a run begins."""
+        if prompt != "":
+            return None
+        for entry in reversed(self.thread().messages()):
+            row = entry.message
+            kind = row.get("type")
+            if kind == "user":
+                return None
+            if kind != "assistant":
+                continue
+            requests = row.get("tool_approval_requests")
+            if not isinstance(requests, list) or not any(
+                isinstance(request, dict) for request in requests
+            ):
+                return None
+            return self._run_tree(entry.run_id) if entry.run_id else None
+        return None
+
+    def _parked_run_ids(self) -> set[str]:
+        """The runs that issued the approvals this session's thread is parked
+        on: the paused row's run, or none."""
+        for entry in reversed(self.thread().messages()):
+            kind = entry.message.get("type")
+            if kind == "user":
+                return set()
+            if kind != "assistant":
+                continue
+            requests = entry.message.get("tool_approval_requests")
+            paused = isinstance(requests, list) and any(isinstance(r, dict) for r in requests)
+            return {entry.run_id} if paused and entry.run_id else set()
+        return set()
+
+    def _run_trees_key(self) -> str:
+        """The run trees live under a key of their own, never in the session's
+        durable record, where a host keeps state (capabilities, the child
+        binding) another process may change while a run starts."""
+        return f"{self.key()}:run-trees"
+
+    def _remember_run_tree(self, run_id: str, member: dict[str, Any]) -> None:
+        """Keep a run's tree under the run-trees key, in one locked change:
+        the newest runs by an explicit sequence, and always the run the thread
+        is parked on, so a retried resume never forgets the tree it belongs
+        to."""
+        key = self._run_trees_key()
+        parked = self._parked_run_ids()
+
+        def change() -> None:
+            stored = self._durable.get(key) or {}
+            runs = stored.get("runs") if isinstance(stored.get("runs"), dict) else {}
+            assert isinstance(runs, dict)
+            last = stored.get("seq")
+            seq = last + 1 if type(last) is int else 1
+            runs = {**runs, run_id: {**member, "seq": seq}}
+
+            def order(item: tuple[str, Any]) -> int:
+                at = item[1].get("seq") if isinstance(item[1], dict) else None
+                return at if type(at) is int else 0
+
+            kept: dict[str, Any] = {}
+            for held, entry in sorted(runs.items(), key=order, reverse=True):
+                if len(kept) < _RUN_TREE_HISTORY or held in parked:
+                    kept[held] = entry
+            self._durable.put(key, {"seq": seq, "runs": kept})
+
+        self._durable.with_lock(key, change, 10, 5)
+
+    def _run_tree(self, run_id: str) -> dict[str, str] | None:
+        stored = self._durable.get(self._run_trees_key()) or {}
+        runs = stored.get("runs")
+        recorded = runs.get(run_id) if isinstance(runs, dict) else None
+        tree = recorded.get("tree") if isinstance(recorded, dict) else None
+        return _stored_pair(tree, "session", "run")
 
     def complete_run(
         self, run_id: str, finish_reason: str, tool_calls: Sequence[str] = ()
