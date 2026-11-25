@@ -19,6 +19,7 @@ from prism_harness.errors import HarnessError
 from prism_harness.events import (
     HarnessEvent,
     HarnessEvents,
+    RunCancelled,
     RunFailed,
     RunFinished,
     RunStarted,
@@ -31,9 +32,9 @@ from prism_harness.events import (
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.plans.service import Plans, refuse_unfunded_decision
 from prism_harness.run_trees import RunTrees, refuse_spent_tree, saved_refs
-from prism_harness.session import Session
+from prism_harness.session import CancelOutcome, Session
 from prism_harness.structured import schema_name, schema_problems
-from prism_harness.subagents import ChildBinding, RunBudget, RunContext, binding_route
+from prism_harness.subagents import CANCELLED, ChildBinding, RunBudget, RunContext, binding_route
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     ToolCallInput,
@@ -185,6 +186,9 @@ class StructuredAgentResponse(AgentResponse):
     structured: Any = None
 
 
+#: What a tool call the cancel check refused records as its result (G-285).
+CANCEL_REFUSAL = "Not run: the run was cancelled."
+
 #: How long resolving approvals may hold the session lock: long enough for a tool to run.
 _RESOLUTION_LOCK_SECONDS = 300
 
@@ -323,6 +327,15 @@ class AgentRuntime:
             self._plans.now,
         )
         self._plans.decided(session)
+
+    def cancel(self, session: Session, run_id: str) -> CancelOutcome:
+        """Ask a run of this session to stop (G-285), from any process, with
+        ``run.cancel_requested`` emitted on this runtime's events. See
+        :meth:`Session.cancel` for the contract.
+
+        Who may cancel is the application's decision: authorize before calling.
+        """
+        return session.cancel(run_id, self._events)
 
     def lock_ttl(self, session: Session) -> int:
         """How long a held session lock lasts for this session's agent."""
@@ -636,7 +649,16 @@ class AgentRuntime:
                 "reporting rather than executing."
             )
 
-        session.begin_run(run_id, mode.name, provider, model)
+        # A cancelled run never resumes (G-285): refused before it begins.
+        if session.resumes_cancelled_run(prompt):
+            raise HarnessError.run_cancelled()
+        # The parked run an empty-prompt turn continues, read before this run
+        # begins: a cancel written for it while this turn started must stop
+        # this turn too.
+        resumed = session.run() if prompt == "" else None
+        resumed_from = resumed["id"] if resumed is not None else None
+
+        session.begin_run(run_id, mode.name, provider, model, run.parent_run_id, run.root_run_id)
         self._emit(
             RunStarted(
                 run_id=run_id,
@@ -652,6 +674,18 @@ class AgentRuntime:
         )
 
         turn_token = None
+        # Every check this run's tree makes reads this run's durable cancel
+        # flag, for as long as the run executes here (G-285).
+        unwatch = run.ledger.watch_cancel(
+            lambda: (
+                session.cancel_requested_for(run_id)
+                or (
+                    resumed_from is not None
+                    and resumed_from != run_id
+                    and session.cancel_requested_for(resumed_from)
+                )
+            )
+        )
         try:
             # The plan context (G-360), computed once per run and never stored:
             # a system prompt contribution, not a message. A turn with a new
@@ -723,7 +757,7 @@ class AgentRuntime:
             # a new prompt is recorded, so the results land after the calls they
             # answer rather than after the new turn.
             offered = self._resolve_approvals(
-                session, mode, offered, run_id, called, scope is not None and scope[1]
+                session, mode, offered, run_id, called, scope is not None and scope[1], run
             )
 
             if prompt != "":
@@ -769,21 +803,40 @@ class AgentRuntime:
                 if isinstance(error, HarnessError) and error.document is not None
                 else str(error)
             )
-            session.fail_run(run_id, failure)
-            self._emit(
-                RunFailed(
-                    run_id=run_id,
-                    session_key=session.key(),
-                    failure=failure,
-                    steps=run.ledger.steps,
-                    at=_now(),
-                    harness_agent=session.agent,
+            # A cancel ends the run cancelled, and announces run.cancelled
+            # INSTEAD of run.failed (G-285). So does any failure that lands
+            # after the flag was set.
+            if isinstance(error, HarnessError) and error.code == "run_cancelled":
+                status, announce = "cancelled", session.cancel_run(run_id)
+            else:
+                status, announce = session.end_run(run_id, "failed", {"failure": failure})
+            if status != "cancelled":
+                self._emit(
+                    RunFailed(
+                        run_id=run_id,
+                        session_key=session.key(),
+                        failure=failure,
+                        steps=run.ledger.steps,
+                        at=_now(),
+                        harness_agent=session.agent,
+                    )
                 )
-            )
+            elif announce:
+                self._emit(
+                    RunCancelled(
+                        run_id=run_id,
+                        session_key=session.key(),
+                        parent_run_id=run.parent_run_id,
+                        root_run_id=run.root_run_id,
+                        at=_now(),
+                        harness_agent=session.agent,
+                    )
+                )
             self._plans.after_turn(session)
             self._trees.finished(session, run_id)
             raise
         finally:
+            unwatch()
             if turn_token is not None:
                 _TURN_RUN.reset(turn_token)
 
@@ -846,6 +899,10 @@ class AgentRuntime:
             # BEFORE the step, never after. Checking afterwards means the step
             # that broke the limit has already been paid for.
             exhausted = run.ledger.exhaustion(run.budget)
+
+            # A person cancelled this run or its tree (G-285): no next step.
+            if exhausted == CANCELLED:
+                raise HarnessError.run_cancelled()
 
             if exhausted is not None:
                 return self._finish(
@@ -1022,6 +1079,13 @@ class AgentRuntime:
                     )
                     continue
 
+                # Checked immediately before each call, so a cancel that lands
+                # while an earlier call of this step runs refuses the rest
+                # (G-285). A call already running is never interrupted.
+                if run.ledger.cancel_requested():
+                    results.append(tool_result_entry(call, CANCEL_REFUSAL))
+                    continue
+
                 if call in auto_allowed:
                     # Checked again at the moment it would run: a revoke since
                     # the step began refuses it rather than letting it stand.
@@ -1044,6 +1108,10 @@ class AgentRuntime:
                 thread.record([tool_result_row(results)], run_id)
 
             if requests:
+                # A cancel that landed during this step's calls ends the run
+                # here instead of parking it (G-285).
+                if run.ledger.cancel_requested():
+                    raise HarnessError.run_cancelled()
                 # FAILS CLOSED. The gated calls have not run, and the requests are
                 # in the thread, so a different process can resume after a person
                 # answers.
@@ -1074,6 +1142,7 @@ class AgentRuntime:
         run_id: str,
         called: list[str],
         legacy_diagnostic_emitted: bool,
+        run: RunContext | None = None,
     ) -> list[HarnessTool]:
         """Act on the decisions recorded for the last turn that stopped for a person.
 
@@ -1148,6 +1217,14 @@ class AgentRuntime:
                         ToolApprovalExpired, live, run_id, cleared, declared, "policy"
                     )
                     resolved.append(tool_result_entry(cleared, _approval_expired(call.name)))
+                elif (
+                    decision is not None
+                    and decision["approved"]
+                    and run is not None
+                    and run.ledger.cancel_requested()
+                ):
+                    # Cancelled before it started (G-285): not run.
+                    resolved.append(tool_result_entry(call, CANCEL_REFUSAL))
                 elif decision is not None and decision["approved"]:
                     self._tool_decision(ToolApproved, live, run_id, call, declared, "person")
                     called.append(call.name)
@@ -1307,7 +1384,14 @@ class AgentRuntime:
         run: RunContext,
         stopped_because: str | None,
     ) -> AgentResponse:
-        session.complete_run(run_id, finish_reason, called)
+        status, _ = session.end_run(
+            run_id, "completed", {"finish_reason": finish_reason, "tool_calls": list(called)}
+        )
+        # A cancel that landed during the last step still ends the run
+        # cancelled (G-285); its answer is kept in the thread. Raised, so the
+        # turn's failure path announces run.cancelled, once.
+        if status == "cancelled":
+            raise HarnessError.run_cancelled()
         # G-360: when the run is over, the plan reads the thread it left.
         self._plans.after_turn(session)
         # A root run that holds part of a run tree's budget settles it.
@@ -1401,6 +1485,9 @@ def _record_decision(
         rows = [entry.message for entry in live.thread().messages()]
         if approval_id not in pending_approval_ids(rows):
             raise HarnessError.approval_not_pending(approval_id)
+        # Settled-cancelled, never pending: a cancelled run never resumes (G-285).
+        if live.approval_run_cancelled(approval_id):
+            raise HarnessError.approval_cancelled(approval_id)
         # A decision a spent shared plan budget could not run is refused here,
         # with nothing recorded, rather than consumed by a resume that is then
         # refused (G-366).

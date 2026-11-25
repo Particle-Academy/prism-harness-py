@@ -160,6 +160,10 @@ class SubagentRunner:
             # tree, not the child's failure, and only that agent stops.
             if error.code in ("agent_spend_ceiling_exceeded", "budget_unpriced"):
                 return _refused(subagent.name, run_id, parent_run_id, "exhausted", str(error))
+            # A person cancelled the tree (G-285): the child stopped, and the
+            # parent stops at its own next check on the same ledger.
+            if error.code == "run_cancelled":
+                return _refused(subagent.name, run_id, parent_run_id, "cancelled", str(error))
             return _refused(subagent.name, run_id, parent_run_id, "failed", str(error))
         except Exception as error:  # noqa: BLE001 - framed, not propagated
             # Tearing down the parent run would discard work it has already

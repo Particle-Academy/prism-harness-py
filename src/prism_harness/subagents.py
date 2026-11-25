@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
 from prism_harness.errors import HarnessError
 
 __all__ = [
+    "CANCELLED",
     "MAX_DEPTH",
     "ChildBinding",
     "RunBudget",
@@ -32,6 +33,10 @@ __all__ = [
 #: and a config that produced one is a mistake worth reporting rather than
 #: executing.
 MAX_DEPTH = 4
+
+#: The reason a ledger stopped by a person's cancel carries (G-285), so a
+#: cancel is never confused with a spent budget.
+CANCELLED = "run cancelled"
 
 
 @dataclass(frozen=True)
@@ -147,6 +152,10 @@ class RunLedger:
         # second ledger: every charge also lands in the tree's total above.
         self._agent_cost: dict[str, float] = {}
         self._agent_unmetered: dict[str, int] = {}
+        # Durable cancel flags this tree watches, one per run executing on it
+        # in this process (G-285). Each reads the store when polled.
+        self._cancel_probes: dict[int, Callable[[], bool]] = {}
+        self._probe_sequence = 0
 
     @classmethod
     def start(cls, root_run_id: str) -> RunLedger:
@@ -229,6 +238,35 @@ class RunLedger:
         self._cancelled = True
         self._cancel_reason = reason
 
+    def watch_cancel(self, probe: Callable[[], bool]) -> Callable[[], None]:
+        """Watch a run's durable cancel flag (G-285).
+
+        Every check this tree makes before a step, a tool or a child reads it;
+        once one reads true the tree is cancelled, for every run on it, and
+        stays cancelled with the reason :data:`CANCELLED`. Returns the unwatch,
+        called when that run ends. Internal: registered by the runtime.
+        """
+        self._probe_sequence += 1
+        key = self._probe_sequence
+        self._cancel_probes[key] = probe
+
+        def unwatch() -> None:
+            self._cancel_probes.pop(key, None)
+
+        return unwatch
+
+    def cancel_requested(self) -> bool:
+        """Whether a person cancelled this tree (G-285), reading every watched
+        flag now. A budget stop is not a cancel and never reads as one."""
+        if self._cancelled:
+            return self._cancel_reason == CANCELLED
+        for probe in list(self._cancel_probes.values()):
+            if probe():
+                self._cancelled = True
+                self._cancel_reason = CANCELLED
+                return True
+        return False
+
     def remaining_cost(self, budget: RunBudget) -> float | None:
         if budget.max_cost_usd is None:
             return None
@@ -248,6 +286,7 @@ class RunLedger:
         the collapse this ecosystem keeps finding. See prism-parity decision
         0020.
         """
+        self.cancel_requested()
         if self._cancelled:
             return self._cancel_reason or "cancelled"
 

@@ -12,6 +12,8 @@ __all__ = [
     "HarnessEvents",
     "HarnessListener",
     "PlanUpdated",
+    "RunCancelRequested",
+    "RunCancelled",
     "RunFailed",
     "RunFinished",
     "RunStarted",
@@ -69,6 +71,38 @@ class RunFailed:
     #: The named agent this run spends as (G-321), or None in the legacy
     #: namespace -- where :meth:`HarnessEvents.to_dict` omits it, so a legacy
     #: event keeps its shape. Unrelated to agent-integrations' presence id.
+    harness_agent: str | None = None
+
+
+@dataclass(frozen=True)
+class RunCancelRequested:
+    """A person asked a run to stop (G-285), emitted the moment the durable
+    flag is written, by the process that wrote it. ``state`` is ``running``
+    (the run stops at its next check) or ``parked`` (it was waiting on an
+    approval and is settled now, with :class:`RunCancelled` right after)."""
+
+    type: str = field(default="run.cancel_requested", init=False)
+    run_id: str = ""
+    session_key: str = ""
+    parent_run_id: str | None = None
+    root_run_id: str | None = None
+    state: str = "running"
+    at: str = ""
+    harness_agent: str | None = None
+
+
+@dataclass(frozen=True)
+class RunCancelled:
+    """A run stopped because a person cancelled it, or the run tree it belongs
+    to (G-285). Emitted INSTEAD of ``run.finished`` or ``run.failed``, never
+    beside them."""
+
+    type: str = field(default="run.cancelled", init=False)
+    run_id: str = ""
+    session_key: str = ""
+    parent_run_id: str | None = None
+    root_run_id: str | None = None
+    at: str = ""
     harness_agent: str | None = None
 
 
@@ -175,6 +209,8 @@ HarnessEvent = (
     RunStarted
     | RunFinished
     | RunFailed
+    | RunCancelRequested
+    | RunCancelled
     | ToolAutoAllowed
     | ToolApprovalAsked
     | ToolApproved

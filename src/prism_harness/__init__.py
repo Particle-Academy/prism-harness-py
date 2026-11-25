@@ -14,6 +14,8 @@ from prism_harness.events import (
     HarnessEvent,
     HarnessEvents,
     HarnessListener,
+    RunCancelled,
+    RunCancelRequested,
     RunFailed,
     RunFinished,
     RunStarted,
@@ -50,7 +52,7 @@ from prism_harness.runtime import (
     StructuredAgentResponse,
     record_approval,
 )
-from prism_harness.session import Participant, Session
+from prism_harness.session import CancelOutcome, Participant, Session
 from prism_harness.skills import SkillRegistry
 from prism_harness.stores.base import Durability, SessionStore
 from prism_harness.stores.file import FileSessionStore
@@ -135,6 +137,7 @@ __all__ = [
     "AgentTaskSource",
     "AuthorizedTool",
     "CallPolicy",
+    "CancelOutcome",
     "ChildBinding",
     "DoctorFinding",
     "DoctorReport",
@@ -172,6 +175,8 @@ __all__ = [
     "PrismHarness",
     "RegistrationCollision",
     "RunBudget",
+    "RunCancelRequested",
+    "RunCancelled",
     "RunContext",
     "RunFailed",
     "RunFinished",

@@ -4,6 +4,22 @@
 
 ### Added
 
+- Durable cross-process cancel (G-285): `runtime.cancel(session, run_id)` (or
+  `session.cancel(run_id, events)`) returns a `CancelOutcome` (`ok`,
+  `not-running`, `no-turn`, `unsupported`, `refused`) and writes a cancel flag
+  to the durable store that another process sees. The run checks it before
+  every model step and every tool call; a running tool is not interrupted, the
+  next is recorded as `Not run: the run was cancelled.`, and the run ends
+  `cancelled` with `HarnessError` code `run_cancelled`. New events
+  `run.cancel_requested` and `run.cancelled` (the latter instead of
+  `run.finished` / `run.failed`). A run parked on an approval is settled at once:
+  `session.approval_status()` reads `cancelled`, decisions are refused with
+  `approval_not_pending`, and an empty-prompt resume is refused. The whole run
+  tree stops, and a plan whose step turn was cancelled is blocked with
+  `run_cancelled`. See "Cancelling a run" in the README.
+- `Session.begin_run()` records `parent_run_id`, `root_run_id` and a bounded
+  `run_history` (20 ids) in the run state.
+
 - `binding_route()`: the one rule for which provider/model binding a turn
   runs on and whether it is saved with the session, now asked by the runtime
   and pinned by the harness-plans corpus (hpl-0056..hpl-0058) in all three
