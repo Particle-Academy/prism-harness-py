@@ -153,6 +153,24 @@ class ToolApprovalExpired(_ToolDecision):
     type: str = field(default="tool_approval_expired", init=False)
 
 
+@dataclass(frozen=True)
+class PlanBudgetExhausted:
+    """A plan stopped because its shared budget is spent (G-366). Emitted once,
+    when advance() blocks the plan for it; resume() refuses such a plan. Counts
+    only; no plan text."""
+
+    type: str = field(default="plan.budget_exhausted", init=False)
+    session_key: str = ""
+    plan_id: str = ""
+    #: Always ``plan_budget_exhausted``, the code all three languages use.
+    code: str = "plan_budget_exhausted"
+    #: Which limit: ``steps``, ``cost`` or ``cost_unmetered``.
+    limit: str = ""
+    steps: int = 0
+    cost_usd: float = 0.0
+    harness_agent: str | None = None
+
+
 HarnessEvent = (
     RunStarted
     | RunFinished
@@ -163,6 +181,7 @@ HarnessEvent = (
     | ToolDenied
     | ToolApprovalExpired
     | PlanUpdated
+    | PlanBudgetExhausted
 )
 HarnessListener = Callable[[HarnessEvent], None]
 

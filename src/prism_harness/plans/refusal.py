@@ -36,6 +36,8 @@ MESSAGES: dict[str, str] = {
     "plan.not_resumable": "Refused: this plan cannot be resumed.",
     "plan.not_live": "Refused: this plan is already finished.",
     "plan.not_authorized": "Refused: the host application does not allow this call. Nothing was saved.",
+    "plan.budget_fixed": "Refused: the budget of this plan is already set. Its mode cannot change and its limits can only be lowered.",
+    "plan.budget_context": "Refused: the steps of this plan share one budget, so a step cannot run under a run tree of its own.",
     "plan.conflict": "Refused: the plan changed while this update was being written.",
 }
 

@@ -11,8 +11,9 @@ the session's mode sets ``plans``.
 
 from __future__ import annotations
 
-from prism_harness.events import PlanUpdated
-from prism_harness.plans import machine, text, view
+from prism_harness.events import PlanBudgetExhausted, PlanUpdated
+from prism_harness.plans import budget, machine, text, view
+from prism_harness.plans.budget import PlanBudgetInvalid
 from prism_harness.plans.handle import AdvanceOutcome, PlanHandle, PlanSnapshot
 from prism_harness.plans.ids import PlanIds, is_step_id, ulid
 from prism_harness.plans.limits import EVENT_BYTES_CEILING, STEPS_CEILING, PlanLimits
@@ -29,6 +30,8 @@ __all__ = [
     "EVENT_BYTES_CEILING",
     "STEPS_CEILING",
     "AdvanceOutcome",
+    "PlanBudgetExhausted",
+    "PlanBudgetInvalid",
     "PlanHandle",
     "PlanIds",
     "PlanLimits",
@@ -38,6 +41,7 @@ __all__ = [
     "PlanUpdated",
     "Plans",
     "PlansDisabled",
+    "budget",
     "is_step_id",
     "machine",
     "refusal_for_model",

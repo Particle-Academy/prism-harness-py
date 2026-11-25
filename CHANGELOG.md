@@ -4,6 +4,15 @@
 
 ### Added
 
+- Plan budgets (G-366): the `Plans` config's `budget.mode` is `per_step` (the
+  default, unchanged behaviour), `shared` (one ledger of `max_steps` model
+  steps and optionally `max_cost_usd` across every turn that serves the plan,
+  kept in the plan store) or `none`. Host code can choose it per plan with
+  `PlanHandle.use_budget()`; `PlanHandle.budget()` reports it. A spent shared
+  budget blocks the plan with `plan_budget_exhausted`, emits
+  `PlanBudgetExhausted` once, and cannot be resumed. See "Plan budgets" in the
+  README.
+
 - Agent plans (G-360). An agent proposes a plan, a person approves it, and
   `runtime.plan(session).advance()` works through it one step per turn. Off
   unless both `AgentRuntime(plans=Plans({"enabled": True}))` and the mode's
