@@ -278,6 +278,12 @@ class RunTrees:
         if route not in ("open", "continue"):
             return run
         tree: Tree = {"session": member["tree"]["session"], "run": member["tree"]["run"]}
+        # A root resuming its parked run is in the tree that run began. When
+        # that run delegated, the tree has a record, and the resumed root
+        # holds what it has left and is narrowed to it, as any other turn
+        # continuing the tree: the tree's allowance holds across the pause.
+        if route == "open" and tree["run"] != run_id and _record_of(session, tree) is not None:
+            route = "continue"
         ledger = run.ledger
         entry: dict[str, Any] = {
             "session": session.key(),
@@ -353,16 +359,10 @@ class RunTrees:
             plan_id: str = tree["run"]
 
             def open_and_hold(state: dict[str, Any] | None) -> tuple[dict[str, Any] | None, Any]:
-                # A root resuming its parked run is in the tree that run began
-                # in, but spends from its own budget: when that tree's record
-                # already exists (the parked run delegated before), it is left
-                # alone, so the resumed root never takes from what the
-                # subagents parked in it have left. Otherwise it is opened
-                # here, named by the tree's run, and held under the run that
-                # spends. Either way the entry is marked held, so this is not
-                # retried, and settling a hold it never took changes nothing.
-                if state is not None and holder != plan_id:
-                    return None, None
+                # Named by the tree's run; held under the run that spends (a
+                # root resuming a parked run that never delegated opens its
+                # tree's record here). A resumed root whose tree already had
+                # a record holds from it in root_run instead, never here.
                 current = state if state is not None else budget.open_ledger(plan_id, settings)
                 return budget.reserve(
                     current,
@@ -454,18 +454,42 @@ def refuse_spent_tree(session: Session, now: int, hold_ttl: int) -> None:
 
     :raises HarnessError: ``run_not_permitted``.
     """
-    tree, _ = saved_refs(session)
-    # A decision takes no context: it resumes as a turn with none, and that
-    # turn's would-be membership says whether it continues a tree.
-    would_be = membership("none", session.key(), "decision", None, tree, session.child_depth(), 0)
-    if tree is None or would_be["route"] != "continue":
+    saved, _ = saved_refs(session)
+    # A decision takes no context: it resumes as a turn with none and no new
+    # message, and that turn's would-be membership says whether it is held to
+    # a tree's record.
+    would_be = membership(
+        "none",
+        session.key(),
+        "decision",
+        None,
+        saved,
+        session.child_depth(),
+        0,
+        session.resumed_run_tree(""),
+    )
+    tree = would_be["tree"]
+    if not isinstance(tree, dict):
         return
-    state = session.plan_store().get(_key(tree))
-    if not isinstance(state, dict) or state.get("planId") != tree["run"]:
+    state = _record_of(session, tree)
+    if would_be["route"] == "open":
+        # A root resuming its parked run is held to its tree's record only
+        # when the parked run delegated and opened one.
+        if tree["run"] == "decision" or state is None:
+            return
+    elif would_be["route"] != "continue":
+        return
+    if state is None:
         raise HarnessError.run_not_permitted("This run may not proceed: steps.")
     _, grant = budget.reserve(state, "decision", 1, None, now, hold_ttl)
     if "refused" in grant:
         raise HarnessError.run_not_permitted(f"This run may not proceed: {grant['limit']}.")
+
+
+def _record_of(session: Session, tree: Tree) -> dict[str, Any] | None:
+    """The durable budget record of a run tree, or None when it has none."""
+    state = session.plan_store().get(_key(tree))
+    return state if isinstance(state, dict) and state.get("planId") == tree["run"] else None
 
 
 def _write(

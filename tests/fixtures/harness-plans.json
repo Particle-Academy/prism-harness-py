@@ -26587,9 +26587,123 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_r2",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_r2",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 0,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_other"
+                },
+                "spends": "run_r2",
+                "depth": 1,
+                "route": "continue"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root2"
+                },
+                "spends": "run_root2",
+                "depth": 1,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_r2",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_r2",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 0,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_other"
+                },
+                "spends": "run_r2",
+                "depth": 1,
+                "route": "continue"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root2"
+                },
+                "spends": "run_root2",
+                "depth": 1,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     }
   ]
 }

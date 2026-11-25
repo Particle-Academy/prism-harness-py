@@ -17,7 +17,7 @@ from __future__ import annotations
 import socket
 from collections.abc import Callable, Iterator
 from copy import deepcopy
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from test_plan_budget import DurableMemoryStore
@@ -26,6 +26,7 @@ from prism_harness import (
     MAX_DEPTH,
     AgentRuntime,
     ChildBinding,
+    HarnessError,
     HarnessEvents,
     LlmRequest,
     LlmResponse,
@@ -81,7 +82,12 @@ class Rig:
     """chat delegates to research, research to dig. ``relay`` and ``forge`` run
     whatever host code a test hooks onto them, inside the turn that calls them."""
 
-    def __init__(self, plans: dict[str, Any] | None = None, chat_steps: int = 20) -> None:
+    def __init__(
+        self,
+        plans: dict[str, Any] | None = None,
+        chat_steps: int = 20,
+        durable: type[MemorySessionStore] = DurableMemoryStore,
+    ) -> None:
         self.queue: list[LlmResponse] = []
         self.requests: list[LlmRequest] = []
         self.ran: list[str] = []
@@ -89,7 +95,7 @@ class Rig:
         self.depths: list[tuple[str, int]] = []
         self._call = 0
         self.harness = PrismHarness(
-            drivers={"memory": MemorySessionStore, "durable": DurableMemoryStore},
+            drivers={"memory": MemorySessionStore, "durable": durable},
             stores={"ephemeral": "memory", "durable": "durable"},
         )
         events = HarnessEvents()
@@ -442,27 +448,135 @@ def test_a_top_level_session_bound_by_its_host_keeps_resuming_after_it_parks() -
     assert rig.ran.count("weather") == 3
 
 
-def test_a_parked_subagent_keeps_its_tree_budget_after_the_root_resumed_and_delegated() -> None:
+# A root that resumes into a tree that already has a budget record holds what
+# the tree has left and is narrowed to it, like any other turn that continues
+# the tree: the tree's allowance holds across the approval pause.
+
+
+def resumed_root_delegates_again(chat_steps: int) -> tuple[Rig, Session, str, str]:
+    """Ada delegates research (its child parks on weather) and parks on her
+    own weather; her approval is decided and she resumes, delegates survey
+    (it answers) and parks again. Returns the rig, the parked child, its
+    approval id and Ada's first run id."""
+    rig = Rig(chat_steps=chat_steps)
+    ada = rig.session("ada")
+    rig.calls(("research", {"task": "Look."}))  # ada
+    rig.calls(("weather", {"city": "Paris"}))  # her child: parks
+    rig.calls(("weather", {"city": "Rome"}))  # ada: parks on her own approval
+    parked = rig.runtime.send(ada, "Go")
+    first = parked.run_id
+
+    rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+    rig.calls(("survey", {"task": "Survey."}))  # ada, resumed: delegates again
+    rig.text("Surveyed.")  # the new child answers
+    rig.calls(("weather", {"city": "Oslo"}))  # ada parks again
+    rig.text("Spare.")
+    try:
+        rig.runtime.send(ada, "")
+    except HarnessError:
+        pass
+
+    child = rig.session("ada", "chat::sub::research")
+    waiting = pending_approval_ids([entry.message for entry in child.thread().messages()])
+    assert len(waiting) == 1
+    return rig, child, waiting[0], first
+
+
+def test_a_parked_subagent_keeps_what_its_tree_has_left_after_the_root_resumed() -> None:
+    rig, child, approval, _ = resumed_root_delegates_again(20)
+    ran = rig.ran.count("weather")
+
+    rig.text("Child done.")
+    rig.runtime.decide(child, approval, True)
+    resumed = rig.runtime.send(child, "")
+
+    assert rig.ran.count("weather") == ran + 1
+    assert resumed.stopped_because is None
+
+
+def test_a_resumed_root_is_held_to_its_tree_record_so_the_tree_never_overspends() -> None:
+    rig, child, approval, first = resumed_root_delegates_again(6)
+    ada = rig.session("ada")
+    record = tree_record(ada, {"session": ada.key(), "run": first})
+    assert isinstance(record, dict)
+    assert record["steps"] <= record["max_steps"]
+    assert record["steps"] == record["max_steps"]
+    ran, requests = rig.ran.count("weather"), len(rig.requests)
+
+    # Spent, the tree refuses the parked child before anything is recorded.
+    with pytest.raises(HarnessError) as caught:
+        rig.runtime.decide(child, approval, True)
+    assert caught.value.code == "run_not_permitted"
+    assert pending_approval_ids([entry.message for entry in child.thread().messages()]) == [
+        approval
+    ]
+    assert rig.ran.count("weather") == ran
+    assert len(rig.requests) == requests
+
+
+# A resume the spent tree refuses still begins a run, and the session keeps the
+# trees of its newest runs only. The run the thread is parked on is never
+# dropped, so retrying the refused resume never escapes the tree.
+def test_a_resume_of_a_spent_tree_is_refused_however_often_it_is_retried() -> None:
+    rig, _, _, _ = resumed_root_delegates_again(6)
+    ada = rig.session("ada")
+    assert len(pending_approval_ids([entry.message for entry in ada.thread().messages()])) == 1
+    ran, requests = len(rig.ran), len(rig.requests)
+    refusals = 0
+    for _ in range(23):
+        try:
+            rig.runtime.send(ada, "")
+        except HarnessError as error:
+            assert error.code == "run_not_permitted"
+            refusals += 1
+
+    assert refusals == 23
+    assert len(rig.ran) == ran
+    assert len(rig.requests) == requests
+
+
+class RecordingStore(DurableMemoryStore):
+    """A durable memory store that records every key it is asked to write."""
+
+    puts: ClassVar[list[str]] = []
+
+    def put(self, key: str, payload: dict[str, Any], ttl_seconds: float | None = None) -> None:
+        RecordingStore.puts.append(key)
+        super().put(key, payload, ttl_seconds)
+
+
+# A run's tree is kept under a key of its own: starting a run never rewrites
+# the session's durable record, where a host keeps capabilities it may revoke
+# from another process while the run starts.
+def test_a_run_start_never_rewrites_the_session_durable_record() -> None:
+    rig = Rig(durable=RecordingStore)
+    ada = rig.session("ada")
+    ada.using_capability("grant", {"on": True})
+    RecordingStore.puts = []
+
+    rig.text("Done.")
+    rig.runtime.send(ada, "Go")
+
+    assert f"{ada.key()}:durable" not in RecordingStore.puts
+    assert f"{ada.key()}:run-trees" in RecordingStore.puts
+
+
+def test_a_resumed_root_that_would_overspend_its_tree_stops_at_the_trees_allowance() -> None:
     rig = Rig(chat_steps=6)
     ada = rig.session("ada")
     rig.calls(("research", {"task": "Look."}))  # ada
     rig.calls(("weather", {"city": "Paris"}))  # her child: parks
     rig.calls(("weather", {"city": "Rome"}))  # ada: parks on her own approval
-    first = rig.runtime.send(ada, "Go").pending_approvals[0].id
+    parked = rig.runtime.send(ada, "Go")
 
-    rig.runtime.decide(ada, first, True)
-    rig.calls(("survey", {"task": "Survey."}))  # ada, resumed: delegates again
-    rig.text("Surveyed.")  # the new child completes
-    rig.calls(("weather", {"city": "Oslo"}))  # ada parks again
-    assert len(rig.runtime.send(ada, "").pending_approvals) == 1
+    rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+    rig.calls(("survey", {"task": "Survey."}))  # ada, resumed
+    rig.text("Surveyed.")
+    for q in ("a", "b", "c", "d"):
+        rig.calls(("lookup", {"q": q}))  # ada would keep going
+    rig.text("Done.")
+    rig.runtime.send(ada, "")
 
-    child = rig.session("ada", "chat::sub::research")
-    waiting = pending_approval_ids([entry.message for entry in child.thread().messages()])
-    assert len(waiting) == 1
-    ran = rig.ran.count("weather")
-    rig.text("Child done.")
-    rig.runtime.decide(child, waiting[0], True)
-    resumed = rig.runtime.send(child, "")
-
-    assert rig.ran.count("weather") == ran + 1
-    assert resumed.stopped_because is None
+    record = tree_record(ada, {"session": ada.key(), "run": parked.run_id})
+    assert isinstance(record, dict)
+    assert record["steps"] <= record["max_steps"]

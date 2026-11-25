@@ -374,22 +374,13 @@ class Session:
     ) -> Session:
         """``tree`` and ``depth`` are the run's membership (G-381): the run tree
         it belongs to (``{session, run}``, ``host`` or ``none``) and how deep it
-        is, decided once when the run begins. Also kept, by run id, in the
-        durable half for the last few runs, so the root that resumes a run
-        parked on approvals stays in the tree that run began in, whatever
-        became of the ephemeral half (:meth:`resumed_run_tree`)."""
+        is, decided once when the run begins. Also kept durably, by run id,
+        so the root that resumes a run parked on approvals stays in the tree
+        that run began in, whatever became of the ephemeral half
+        (:meth:`resumed_run_tree`)."""
         self._assert_writable()
-        stored = self._durable.get(self._durable_key()) or {}
-        trees = stored.get("run_trees")
-        kept = {
-            key: value
-            for key, value in (trees.items() if isinstance(trees, dict) else ())
-            if key != run_id
-        }
-        kept[run_id] = {"tree": dict(tree) if isinstance(tree, dict) else tree, "depth": depth}
-        self._durable.put(
-            self._durable_key(),
-            {**stored, "run_trees": dict(list(kept.items())[-_RUN_TREE_HISTORY:])},
+        self._remember_run_tree(
+            run_id, {"tree": dict(tree) if isinstance(tree, dict) else tree, "depth": depth}
         )
         return self._write(
             "run",
@@ -429,10 +420,58 @@ class Session:
             return self._run_tree(entry.run_id) if entry.run_id else None
         return None
 
+    def _parked_run_ids(self) -> set[str]:
+        """The runs that issued the approvals this session's thread is parked
+        on: the paused row's run, or none."""
+        for entry in reversed(self.thread().messages()):
+            kind = entry.message.get("type")
+            if kind == "user":
+                return set()
+            if kind != "assistant":
+                continue
+            requests = entry.message.get("tool_approval_requests")
+            paused = isinstance(requests, list) and any(isinstance(r, dict) for r in requests)
+            return {entry.run_id} if paused and entry.run_id else set()
+        return set()
+
+    def _run_trees_key(self) -> str:
+        """The run trees live under a key of their own, never in the session's
+        durable record, where a host keeps state (capabilities, the child
+        binding) another process may change while a run starts."""
+        return f"{self.key()}:run-trees"
+
+    def _remember_run_tree(self, run_id: str, member: dict[str, Any]) -> None:
+        """Keep a run's tree under the run-trees key, in one locked change:
+        the newest runs by an explicit sequence, and always the run the thread
+        is parked on, so a retried resume never forgets the tree it belongs
+        to."""
+        key = self._run_trees_key()
+        parked = self._parked_run_ids()
+
+        def change() -> None:
+            stored = self._durable.get(key) or {}
+            runs = stored.get("runs") if isinstance(stored.get("runs"), dict) else {}
+            assert isinstance(runs, dict)
+            last = stored.get("seq")
+            seq = last + 1 if type(last) is int else 1
+            runs = {**runs, run_id: {**member, "seq": seq}}
+
+            def order(item: tuple[str, Any]) -> int:
+                at = item[1].get("seq") if isinstance(item[1], dict) else None
+                return at if type(at) is int else 0
+
+            kept: dict[str, Any] = {}
+            for held, entry in sorted(runs.items(), key=order, reverse=True):
+                if len(kept) < _RUN_TREE_HISTORY or held in parked:
+                    kept[held] = entry
+            self._durable.put(key, {"seq": seq, "runs": kept})
+
+        self._durable.with_lock(key, change, 10, 5)
+
     def _run_tree(self, run_id: str) -> dict[str, str] | None:
-        stored = self._durable.get(self._durable_key()) or {}
-        trees = stored.get("run_trees")
-        recorded = trees.get(run_id) if isinstance(trees, dict) else None
+        stored = self._durable.get(self._run_trees_key()) or {}
+        runs = stored.get("runs")
+        recorded = runs.get(run_id) if isinstance(runs, dict) else None
         tree = recorded.get("tree") if isinstance(recorded, dict) else None
         return _stored_pair(tree, "session", "run")
 
