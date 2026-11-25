@@ -133,7 +133,9 @@ def plans_binding_context_op(op: dict[str, Any], state: dict[str, Any]) -> dict[
         context = trees.starting_child(context)
     if context is not None and op["rebound"]:
         context = context.with_binding(CHEAP_BINDING)
-    kind = trees.binding_context_kind(context)
+    # The budget routes read the same kind: the runner's context is the runner's for both.
+    kind = trees.context_kind(context)
+    assert trees.binding_context_kind(context) == kind
     route = binding_route(
         kind,
         context is not None and context.binding is not None,
