@@ -307,13 +307,28 @@ class Session:
         binding = stored.get("child_binding")
         return deepcopy(binding) if isinstance(binding, dict) else None
 
-    def remember_child_binding(self, binding: dict[str, Any]) -> Session:
-        """Internal: save the binding the runner gave a child run, in the
-        session's durable half."""
-        self._assert_writable()
+    def child_depth(self) -> int:
+        """The depth the subagent runner started this session's child run at,
+        or 0 for a session the runner never started. Every later turn on the
+        child runs at least this deep, so a resumed child cannot reset its
+        nesting.
+
+        Internal: read by the runtime."""
         stored = self._durable.get(self._durable_key()) or {}
-        if stored.get("child_binding") != binding:
-            self._durable.put(self._durable_key(), {**stored, "child_binding": deepcopy(binding)})
+        depth = stored.get("child_depth")
+        return depth if type(depth) is int and depth > 0 else 0
+
+    def remember_child_binding(self, binding: dict[str, Any], depth: int = 0) -> Session:
+        """Internal: save the binding the runner gave a child run, and the
+        depth it started at, in the session's durable half."""
+        self._assert_writable()
+        depth = depth if type(depth) is int and depth > 0 else 0
+        stored = self._durable.get(self._durable_key()) or {}
+        if stored.get("child_binding") != binding or stored.get("child_depth", 0) != depth:
+            self._durable.put(
+                self._durable_key(),
+                {**stored, "child_binding": deepcopy(binding), "child_depth": depth},
+            )
         return self
 
     def remember_child_refs(

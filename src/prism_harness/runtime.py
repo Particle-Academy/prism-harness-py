@@ -9,7 +9,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -629,6 +629,14 @@ class AgentRuntime:
         if route["binding"] == "saved" and saved_binding is not None:
             base = base.with_binding(saved_binding)
         run = self._bounded_run(session, base)
+        # A turn on a child session runs at least as deep as the runner started
+        # the child, as in the reference (atSavedChildDepth): a resumed child,
+        # or one handed a host context, delegates under the same depth ceiling
+        # as it would inside its tree. A context may put it deeper, never
+        # shallower.
+        saved_depth = session.child_depth()
+        if saved_depth > run.depth:
+            run = replace(run, depth=saved_depth)
         if paused is not None and run.agent is not None and "harness_agent_spend" in paused:
             run.ledger.carry_agent_spend(
                 run.agent, *carried_agent_spend(paused["harness_agent_spend"])
@@ -695,11 +703,19 @@ class AgentRuntime:
                 # tree and plan budget it belongs to, so every later turn on
                 # the child the runner did not start continues them. Only the
                 # runner's own context writes them.
-                session.remember_child_binding(runner_binding.to_row())
-                session.remember_child_refs(
-                    self._trees.child_started(session, run_id, context, self.lock_ttl(session)),
-                    self._plans.active_ledger(),
+                session.remember_child_binding(runner_binding.to_row(), context.depth)
+                started = self._trees.child_started(
+                    session, run_id, context, self.lock_ttl(session)
                 )
+                # Under a run tree the host built there is no durable tree to
+                # name: the references the child saved before are kept, never
+                # replaced with nothing, so a later turn the runner does not
+                # start still continues the tree it last had rather than a
+                # fresh root budget.
+                if started is not None:
+                    session.remember_child_refs(started, self._plans.active_ledger())
+                elif session.child_refs() is None:
+                    session.remember_child_refs(None, None)
             # A root run opens a tree; any turn on a child session the runner
             # did not start (an answer, a new message, or a host context,
             # narrowed to what is left) continues the run tree and plan budget
