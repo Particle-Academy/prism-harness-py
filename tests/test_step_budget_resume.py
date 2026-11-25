@@ -100,7 +100,7 @@ def persisted() -> Callable[[], Session]:
             stores={"ephemeral": "files", "durable": "files"},
         )
         session = harness.for_(Participant("User", 1)).session("support")
-        session.using_provider("anthropic").using_model("claude-sonnet-4-5")
+        session.using_provider("anthropic").using_model("claude-sonnet-5-5")
         return session
 
     return open_session
@@ -113,7 +113,7 @@ def one_session() -> Callable[[], Session]:
         stores={"ephemeral": "memory", "durable": "files"},
     )
     session = harness.for_(Participant("User", 1)).session("support")
-    session.using_provider("anthropic").using_model("claude-sonnet-4-5")
+    session.using_provider("anthropic").using_model("claude-sonnet-5-5")
     return lambda: session
 
 

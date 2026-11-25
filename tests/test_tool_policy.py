@@ -105,7 +105,7 @@ def world(
         stores={"ephemeral": "memory", "durable": "files"},
     )
     session = harness.for_(Participant("User", 1)).session("support")
-    session.using_provider("anthropic").using_model("claude-sonnet-4-5")
+    session.using_provider("anthropic").using_model("claude-sonnet-5-5")
     ran: list[str] = []
     tools = ToolRegistry()
     register(tools, ran)

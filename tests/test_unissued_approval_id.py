@@ -81,7 +81,7 @@ class Rig:
             stores={"ephemeral": "memory", "durable": "files"},
         )
         self.session: Session = harness.for_(Participant("User", 1)).session("support")
-        self.session.using_provider("anthropic").using_model("claude-sonnet-4-5")
+        self.session.using_provider("anthropic").using_model("claude-sonnet-5-5")
         self.requests: list[LlmRequest] = []
         self.counts: dict[str, int] = {}
         tools = (

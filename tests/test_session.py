@@ -65,7 +65,7 @@ def test_keeps_the_same_id_under_two_participant_types_apart() -> None:
     user = harness.for_(Participant("User", 7)).session("s")
     team = harness.for_(Participant("Team", 7)).session("s")
 
-    user.using_model("claude-sonnet-4-5")
+    user.using_model("claude-sonnet-5-5")
 
     assert team.model() is None
     assert user.key() != team.key()
@@ -76,10 +76,10 @@ def test_keeps_the_same_id_under_two_participant_types_apart() -> None:
 
 def test_round_trips_mode_model_and_provider() -> None:
     live = a_session()
-    live.using_mode("plan").using_model("claude-sonnet-4-5").using_provider("anthropic")
+    live.using_mode("plan").using_model("claude-sonnet-5-5").using_provider("anthropic")
 
     assert live.mode() == "plan"
-    assert live.model() == "claude-sonnet-4-5"
+    assert live.model() == "claude-sonnet-5-5"
     assert live.provider() == "anthropic"
 
 
@@ -131,7 +131,7 @@ def test_a_capability_survives_the_ephemeral_half_being_dropped() -> None:
 
 def test_records_a_run_through_its_lifecycle() -> None:
     live = a_session()
-    live.begin_run("run-1", "plan", "anthropic", "claude-sonnet-4-5")
+    live.begin_run("run-1", "plan", "anthropic", "claude-sonnet-5-5")
 
     run = live.run()
     assert run is not None
