@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from prism_harness import HarnessError, ToolPolicy
+from prism_harness import HarnessError, ToolPolicy, binding_route
 from prism_harness.plans import (
     PlanBudgetInvalid,
     PlanIds,
@@ -66,12 +66,14 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         return f"{prefix}_{counter[0]:026d}"
 
     ids = PlanIds(mint)
-    state: dict[str, Any] = {"plan": None, "marked": None, "ledger": None}
+    state: dict[str, Any] = {"plan": None, "marked": None, "ledger": None, "saved_binding": False}
     results: list[dict[str, Any]] = []
     for op in case["ops"]:
         now = op.get("now", case.get("now", 1767225600))
         try:
-            if str(op["op"]).startswith("budget_"):
+            if op["op"] == "binding_route":
+                results.append(plans_binding_op(op, state))
+            elif str(op["op"]).startswith("budget_"):
                 results.append(plans_budget_op(op, state, now))
             else:
                 results.append(plans_op(op, state, ids, limits, now))
@@ -85,6 +87,18 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     if state["ledger"] is not None:
         out["budget"] = plans_budget_final(state["ledger"])
     return out
+
+
+def plans_binding_op(op: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Which binding a turn runs on, and whether it is saved (binding_route).
+    Whether a binding is saved carries from op to op, as it does on a session."""
+    saved = bool(op.get("saved_binding", state["saved_binding"]))
+    try:
+        route = binding_route(op["context"], op["supplied_binding"], saved, op["linked"])
+    except ValueError:
+        return {"invalid": True}
+    state["saved_binding"] = saved or route["save"]
+    return {"route": route}
 
 
 def plans_budget_op(op: dict[str, Any], state: dict[str, Any], now: int) -> dict[str, Any]:
@@ -316,7 +330,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 55
+        assert len(CASES) == 58
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:
