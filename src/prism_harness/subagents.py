@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -184,6 +185,18 @@ class RunLedger:
     def agent_unmetered_runs(self, agent: str) -> int:
         return self._agent_unmetered.get(agent, 0)
 
+    def carry_agent_spend(self, agent: str, usd: float, unmetered_runs: int) -> None:
+        """Carry what ``agent`` spent before an approval pause into this tree.
+
+        A resumed run is the same run, so its agent's ceiling is measured
+        against what it spent before the pause as well. Charged to the agent's
+        account only, never to the tree total: that spend was already reported
+        by the run that paused, and a total here would count it twice.
+        """
+        self._agent_cost[agent] = self._agent_cost.get(agent, 0.0) + max(0.0, usd)
+        if unmetered_runs > 0:
+            self._agent_unmetered[agent] = self._agent_unmetered.get(agent, 0) + unmetered_runs
+
     def record_cost(self, usd: float | None, agent: str | None = None) -> None:
         """Charge a run's cost to the tree.
 
@@ -349,6 +362,40 @@ class ChildBinding:
     declared_model: str | None = None
     parent_mode_provider: str | None = None
     parent_mode_model: str | None = None
+
+    def to_row(self) -> dict[str, dict[str, str | None]]:
+        """The ``harness_binding`` a paused child's approval row carries."""
+        return {
+            "session": {"provider": self.session_provider, "model": self.session_model},
+            "declared": {"provider": self.declared_provider, "model": self.declared_model},
+            "parent_mode": {
+                "provider": self.parent_mode_provider,
+                "model": self.parent_mode_model,
+            },
+        }
+
+    @classmethod
+    def from_row(cls, value: object) -> ChildBinding | None:
+        """The binding a paused row stored, or None when absent or malformed.
+
+        Malformed is ignored rather than refused: the run then resolves as a
+        root run does, which is what it did before bindings were stored.
+        """
+        if not isinstance(value, Mapping):
+            return None
+        fields: list[str | None] = []
+        for part in ("session", "declared", "parent_mode"):
+            entry = value.get(part)
+            if not isinstance(entry, Mapping):
+                return None
+            for key in ("provider", "model"):
+                if key not in entry:
+                    return None
+                chosen = entry[key]
+                if chosen is not None and not isinstance(chosen, str):
+                    return None
+                fields.append(chosen)
+        return cls(*fields)
 
 
 @dataclass(frozen=True)

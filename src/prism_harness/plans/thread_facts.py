@@ -79,7 +79,7 @@ def approved_calls_awaiting_result(rows: Rows, name: str, digest: str) -> int:
 
     The evidence a self-gated plan tool requires before it applies anything.
     """
-    approved: set[str] = set()
+    decided: dict[str, bool] = {}
     finished: set[str] = set()
     for row in reversed(rows):
         kind = row.get("type")
@@ -87,15 +87,15 @@ def approved_calls_awaiting_result(rows: Rows, name: str, digest: str) -> int:
             for result in _dicts(row.get("tool_results")):
                 if isinstance(result.get("tool_call_id"), str):
                     finished.add(result["tool_call_id"])
-            for response in _dicts(row.get("tool_approval_responses")):
-                if (
-                    isinstance(response.get("approval_id"), str)
-                    and response.get("approved") is True
-                ):
-                    approved.add(response["approval_id"])
+            # Newest first, so the last write is the FIRST decision recorded:
+            # the one that counts, as in approval_decisions().
+            for response in reversed(_dicts(row.get("tool_approval_responses"))):
+                if isinstance(response.get("approval_id"), str):
+                    decided[response["approval_id"]] = response.get("approved") is True
             continue
         if kind != "assistant":
             return 0
+        approved = {approval_id for approval_id, yes in decided.items() if yes}
         approved_calls = {
             request["tool_call_id"]
             for request in _dicts(row.get("tool_approval_requests"))

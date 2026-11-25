@@ -11,6 +11,7 @@ prism-parity's ``harness-thread-rows`` corpus pins it.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -37,7 +38,7 @@ class ToolCallInput:
 
 
 #: The marker on an approval request whose call was stored exactly as the model
-#: sent it. 0.5.1 and earlier wrote none, and stored a call that a client handed
+#: sent it. 0.5.2 and earlier wrote none, and stored a call that a client handed
 #: over as no arguments, which earlier cores also did for a bare number or
 #: boolean on the wire, as ``{}``. Such an approval expires instead of running.
 ARGUMENTS_AS_SENT = 1
@@ -175,12 +176,14 @@ def pending_approval_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
 
 def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], bool] | None:
     """Stored approval authority, separate from the provider replay view."""
-    decisions: dict[str, bool] = {}
+    # Which decision counts is read from the stored rows, first one standing;
+    # the view's fold is for replay to a provider, not for authority.
+    decisions = {
+        approval_id: decision["approved"] is True
+        for approval_id, decision in first_decisions(rows).items()
+    }
     for row in reversed(thread_view(rows)):
         if row.get("type") == "tool_result":
-            for response in row.get("tool_approval_responses", []):
-                if isinstance(response.get("approval_id"), str):
-                    decisions.setdefault(response["approval_id"], response.get("approved") is True)
             continue
         if row.get("type") == "user":
             return None
@@ -233,21 +236,105 @@ def unusable_stored_calls(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     Read from the rows as written, because the thread view has already replaced
     such arguments with none, and an approved call must not run on an empty set
     nobody sent.
+
+    Read from the one turn being resumed -- the last stored assistant row with
+    tool calls -- never the whole thread: providers that number calls per
+    response reuse ids, and an older turn's unusable call must not refuse a
+    newer call that carries the same id.
     """
-    return {
-        _text(call.get("id"))
-        for row in rows
-        if row.get("type") == "assistant"
-        for call in _dicts(row.get("tool_calls"))
-        if usable_arguments(call.get("arguments")) is None
-    }
+    for row in reversed(rows):
+        if row.get("type") == "assistant" and _dicts(row.get("tool_calls")):
+            return {
+                _text(call.get("id"))
+                for call in _dicts(row.get("tool_calls"))
+                if usable_arguments(call.get("arguments")) is None
+            }
+    return set()
+
+
+def first_decisions(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The decisions recorded for the turn being resumed, by approval id.
+
+    Read from the stored rows after the last assistant row with tool calls:
+    ``tool_approval_responses`` on tool result rows, and 0.3.0's single
+    ``tool_approval_response`` rows. The FIRST decision recorded for an id is
+    the one that counts, here and in every reader that decides what runs; a
+    later one for the same id is an answer to a question already answered.
+
+    The thread VIEW still folds a later decision over an earlier one in the
+    earlier one's position: that is what a provider is shown, pinned by the
+    cross-language thread rows corpus, and it decides nothing.
+    """
+    start = next(
+        (
+            index
+            for index in range(len(rows) - 1, -1, -1)
+            if rows[index].get("type") == "assistant" and _dicts(rows[index].get("tool_calls"))
+        ),
+        None,
+    )
+    decisions: dict[str, dict[str, Any]] = {}
+    if start is None:
+        return decisions
+    for row in rows[start + 1 :]:
+        kind = row.get("type")
+        if kind == "tool_result":
+            responses = _dicts(row.get("tool_approval_responses"))
+        elif kind == "tool_approval_response":
+            responses = [dict(row)]
+        else:
+            continue
+        for response in responses:
+            if isinstance(response.get("approval_id"), str):
+                decisions.setdefault(response["approval_id"], _decision(response))
+    return decisions
+
+
+def paused_approval_row(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The stored assistant row whose approvals the transcript tail is waiting
+    on, or None.
+
+    Newest first: results and decisions recorded since it are skipped; a user
+    turn, or an assistant step that asked nothing, ends the search.
+    """
+    for row in reversed(rows):
+        kind = row.get("type")
+        if kind == "user":
+            return None
+        if kind != "assistant":
+            continue
+        return row if _dicts(row.get("tool_approval_requests")) else None
+    return None
+
+
+def carried_agent_spend(value: object) -> tuple[float, int]:
+    """What a paused row's ``harness_agent_spend`` says its agent had spent.
+
+    ``(cost_usd, unmetered_runs)``. A value that is not exactly a finite
+    non-negative cost and a non-negative whole count is carried as one
+    unmetered run, so a spend ceiling refuses (``budget_unpriced``) rather than
+    starting again from nothing.
+    """
+    if isinstance(value, Mapping):
+        cost, unmetered = value.get("cost_usd"), value.get("unmetered_runs")
+        if (
+            isinstance(cost, (int, float))
+            and not isinstance(cost, bool)
+            and math.isfinite(cost)
+            and cost >= 0
+            and isinstance(unmetered, int)
+            and not isinstance(unmetered, bool)
+            and unmetered >= 0
+        ):
+            return float(cost), unmetered
+    return 0.0, 1
 
 
 def ambiguous_calls(assistant: Mapping[str, Any]) -> set[str]:
     """The ids of the calls in one assistant turn whose approval expires rather than runs.
 
     A request for the call has no marker, and the call is stored as no
-    arguments, which is also how 0.5.1 and earlier stored a call an earlier
+    arguments, which is also how 0.5.2 and earlier stored a call an earlier
     core had parsed from a bare number or boolean.
 
     Read from the one turn being resumed, never the whole thread: providers that

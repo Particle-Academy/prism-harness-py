@@ -1027,3 +1027,73 @@ def test_a_forbidden_approval_pause_inserts_no_person_step() -> None:
     plan = rig.plan()
     assert [step["owner"] for step in plan["steps"]] == ["agent", "agent"]
     assert plan["steps"][0]["pauses"] == 0
+
+
+def test_a_plan_tool_the_offer_policy_withholds_writes_nothing_and_asks_no_one() -> None:
+    # The offer policy says whether planning exists for this session at all. A
+    # plan tool it withholds is like any tool the model was never offered.
+    rig = Rig(
+        authorizer=ToolAuthorizer(
+            enabled=True, offer=lambda _session, tool: not tool.name.startswith("plan_")
+        )
+    )
+    rig.calls(("plan_draft", draft()))
+    rig.text("Done.")
+
+    quietly(lambda: rig.send("Plan the trip"))
+
+    assert [tool.name for tool in rig.requests[0].tools] == ["weather"]
+    assert rig.runtime.plan(rig.session).current() is None
+    assert not any(event.type == "plan.updated" for event in rig.events)
+    assert '"tool_approval_requests": [{' not in rig.thread_text()
+
+
+def test_a_deny_recorded_before_an_approve_rejects_the_draft_and_nothing_applies() -> None:
+    # Two decisions for one draft, the deny first, as a race before the
+    # decision write was serialised could leave them. The first stands for the
+    # plan AND for the resume, so the plan's state and what ran agree.
+    from prism_harness.plans.thread_facts import approved_calls_awaiting_result
+    from prism_harness.thread_rows import tool_result_row
+
+    rig = Rig()
+    rig.calls(("plan_draft", draft()))
+    pending = rig.send("Plan the trip").pending_approvals[0]
+    run = rig.session.run()
+    for approved in (False, True):
+        rig.session.thread().record(
+            [
+                tool_result_row(
+                    [],
+                    [
+                        {
+                            "approval_id": pending.id,
+                            "approved": approved,
+                            "reason": None if approved else "no",
+                        }
+                    ],
+                )
+            ],
+            run["id"] if run else None,
+        )
+    rows = [entry.message for entry in rig.session.thread().messages()]
+    assert approved_calls_awaiting_result(rows, "plan_draft", plan_draft_digest(rows)) == 0
+
+    rig.text("Not drafted.")
+    rig.send("")
+
+    assert rig.plan()["status"] == "rejected"
+    assert "no" in rig.outputs()
+    assert not any("plan." in output for output in rig.outputs())
+
+
+def plan_draft_digest(rows: list[dict[str, Any]]) -> str:
+    from prism_harness.tool_policy import args_digest
+
+    call = next(
+        call
+        for row in rows
+        if row.get("type") == "assistant"
+        for call in row.get("tool_calls", [])
+        if call.get("name") == "plan_draft"
+    )
+    return args_digest(call["arguments"])

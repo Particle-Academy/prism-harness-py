@@ -30,7 +30,7 @@ from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.plans.service import Plans
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
-from prism_harness.subagents import RunBudget, RunContext
+from prism_harness.subagents import ChildBinding, RunBudget, RunContext
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     ToolCallInput,
@@ -38,6 +38,9 @@ from prism_harness.thread_rows import (
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
+    carried_agent_spend,
+    first_decisions,
+    paused_approval_row,
     pending_approval_ids,
     thread_view,
     tool_result_entry,
@@ -283,7 +286,15 @@ class AgentRuntime:
         Nothing runs until the next ``send()``. Who may decide is the
         application's decision: authorize before calling.
         """
-        record_approval(session, approval_id, approved, reason)
+        options = self._settings(session)
+        _record_decision(
+            session,
+            approval_id,
+            approved,
+            reason,
+            options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
+            options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
+        )
         self._plans.decided(session)
 
     def lock_ttl(self, session: Session) -> int:
@@ -545,9 +556,24 @@ class AgentRuntime:
         attachments = admit_attachments(prompt, additional_content)
         mode = self._modes.for_agent(session.agent).resolve(session.mode())
         run_id = str(uuid.uuid4())
-        run = self._bounded_run(
-            session, context or RunContext.root(run_id, RunBudget(mode.max_steps))
+        base = context or RunContext.root(run_id, RunBudget(mode.max_steps))
+        # A resume with no context continues the run that paused (G-321 E):
+        # a subagent child keeps the provider and model binding the runner gave
+        # it, and a named agent keeps what it had spent against its ceiling.
+        # Both are read from the paused row, which the harness wrote.
+        paused = (
+            paused_approval_row([entry.message for entry in session.thread().messages()])
+            if prompt == "" and context is None
+            else None
         )
+        stored_binding = ChildBinding.from_row(paused.get("harness_binding")) if paused else None
+        if stored_binding is not None:
+            base = base.with_binding(stored_binding)
+        run = self._bounded_run(session, base)
+        if paused is not None and run.agent is not None and "harness_agent_spend" in paused:
+            run.ledger.carry_agent_spend(
+                run.agent, *carried_agent_spend(paused["harness_agent_spend"])
+            )
         provider, model = self._binding(session, mode, run)
         thread = session.thread()
 
@@ -707,8 +733,12 @@ class AgentRuntime:
             if self._authorizer is not None
             else list(by_name.values())
         )
+        # Gates only for the plan tools the authorizer let through: one its
+        # offer policy withheld is a tool this run does not have, and a call to
+        # it is answered like a call to any tool that was never offered.
+        allowed = {tool.name for tool in added}
         return [tool for tool in offered if tool.name not in names] + added, {
-            tool.name: tool for tool in tools
+            tool.name: tool for tool in tools if tool.name in allowed
         }
 
     def _loop(
@@ -769,8 +799,13 @@ class AgentRuntime:
 
             # A client can hand back arguments it could not parse. Such a call is
             # recorded with none, asks nobody and runs nothing: the model is told.
+            # So are arguments whose digest cannot be computed: every decision
+            # about a call is recorded with that digest, and one that could not
+            # be would fail the call's approval on every later send().
             unusable = {
-                call.id for call in response.tool_calls if usable_arguments(call.arguments) is None
+                call.id
+                for call in response.tool_calls
+                if not _digestible(usable_arguments(call.arguments))
             }
             calls = [_call_input(call) for call in response.tool_calls]
             failed_finish = finish_reason in ("error", "unknown")
@@ -821,6 +856,14 @@ class AgentRuntime:
             row = assistant_row(response.text, calls, metadata, requests)
             if requests:
                 row["harness_tool_names"] = [tool.name for tool in offered]
+                # What a resume needs to continue this run as the same run.
+                if run.agent is not None:
+                    row["harness_agent_spend"] = {
+                        "cost_usd": run.ledger.agent_cost_usd(run.agent),
+                        "unmetered_runs": run.ledger.agent_unmetered_runs(run.agent),
+                    }
+                if run.binding is not None:
+                    row["harness_binding"] = run.binding.to_row()
             thread.record([row], run_id)
 
             if failed_finish:
@@ -981,7 +1024,9 @@ class AgentRuntime:
                 )
             bounded = [tool for tool in offered if scope is not None and tool.name in scope[0]]
             resolved: list[dict[str, Any]] = []
-            unusable = unusable_stored_calls([entry.message for entry in live.thread().messages()])
+            unusable = unusable_stored_calls(
+                [entry.message for entry in live.thread().messages()]
+            ) | {row["id"] for row in calls if not _digestible(row["arguments"])}
 
             for row in calls:
                 call = ToolCallInput(
@@ -1001,7 +1046,7 @@ class AgentRuntime:
                         )
                     )
                 elif decision is not None and decision["approved"] and call.id in ambiguous:
-                    # Stored by 0.5.1 or earlier with no marker. Not run, and
+                    # Stored by 0.5.2 or earlier with no marker. Not run, and
                     # recorded without arguments; the model is told to call
                     # again, and a new call is a new approval for the person.
                     cleared = ToolCallInput(
@@ -1069,9 +1114,9 @@ class AgentRuntime:
         assistant = view[index]
         answered = next((row for row in view[index + 1 :] if row["type"] == "tool_result"), None)
         results = {e["tool_call_id"]: e for e in (answered or {}).get("tool_results", [])}
-        decisions = {
-            d["approval_id"]: d for d in (answered or {}).get("tool_approval_responses", [])
-        }
+        # Which decision counts comes from the stored rows, the FIRST recorded
+        # for an approval id standing; the view folds later over earlier.
+        decisions = first_decisions(rows)
         approval_ids = {
             r["tool_call_id"]: r["approval_id"] for r in assistant["tool_approval_requests"]
         }
@@ -1232,20 +1277,59 @@ def record_approval(
     never issued, or one already answered, raises ``approval_not_pending``
     before anything is written.
     """
-    rows = [entry.message for entry in session.thread().messages()]
-    if approval_id not in pending_approval_ids(rows):
-        raise HarnessError.approval_not_pending(approval_id)
-
-    run = session.run()
-
-    session.thread().record(
-        [
-            tool_result_row(
-                [], [{"approval_id": approval_id, "approved": approved, "reason": reason}]
-            )
-        ],
-        run["id"] if run else None,
+    _record_decision(
+        session,
+        approval_id,
+        approved,
+        reason,
+        _RESOLUTION_LOCK_SECONDS,
+        _RESOLUTION_WAIT_SECONDS,
     )
+
+
+def _record_decision(
+    session: Session,
+    approval_id: str,
+    approved: bool,
+    reason: str | None,
+    ttl_seconds: float,
+    wait_seconds: float,
+) -> None:
+    """The pending check and the write, together under the session lock.
+
+    Apart, two decisions for one id (a double click, two reviewers, a retry
+    racing the original) would both pass the check and both be written. The
+    second now waits, finds the id answered, and is refused.
+    """
+
+    def write(live: Session) -> None:
+        rows = [entry.message for entry in live.thread().messages()]
+        if approval_id not in pending_approval_ids(rows):
+            raise HarnessError.approval_not_pending(approval_id)
+
+        run = live.run()
+
+        live.thread().record(
+            [
+                tool_result_row(
+                    [], [{"approval_id": approval_id, "approved": approved, "reason": reason}]
+                )
+            ],
+            run["id"] if run else None,
+        )
+
+    session.lock(write, ttl_seconds, wait_seconds)
+
+
+def _digestible(arguments: Mapping[str, Any] | None) -> bool:
+    """Whether a call's arguments can be digested for its decision events."""
+    if arguments is None:
+        return False
+    try:
+        args_digest(dict(arguments))
+    except (TypeError, ValueError, RecursionError, UnicodeError):
+        return False
+    return True
 
 
 def _call_input(call: LlmToolCall) -> ToolCallInput:
