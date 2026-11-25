@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import time
+import weakref
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -52,6 +53,32 @@ class RunTrees:
         self._runs: dict[str, dict[str, Any]] = {}
         #: The tree each runner-started child run belongs to, until it ends.
         self._children: dict[str, Tree] = {}
+        #: The child contexts the subagent runner built, held weakly and by
+        #: identity. Only these (and a context of a live tree here) may save a
+        #: child's binding.
+        self._child_contexts: weakref.WeakValueDictionary[int, RunContext] = (
+            weakref.WeakValueDictionary()
+        )
+
+    def starting_child(self, context: RunContext) -> RunContext:
+        """The subagent runner is starting a child under ``context``, which it
+        built. Marks it as the runner's own, so the child's binding is saved
+        with its session even under a run tree the host built.
+
+        Internal: called by the subagent runner only.
+        """
+        self._child_contexts[id(context)] = context
+        return context
+
+    def binding_context_kind(self, context: RunContext | None) -> str:
+        """The kind of context a turn was handed, for
+        :func:`~prism_harness.subagents.binding_route`: ``runner`` for the
+        context the subagent runner built to start a child, even under a run
+        tree the host built, otherwise :meth:`context_kind`. A context the host
+        builds and binds itself is never the runner's."""
+        if context is not None and self._child_contexts.get(id(context)) is context:
+            return "runner"
+        return self.context_kind(context)
 
     def context_kind(self, context: RunContext | None) -> str:
         """What kind of run context a turn was handed, for

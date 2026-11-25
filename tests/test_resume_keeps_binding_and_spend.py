@@ -240,11 +240,19 @@ def test_a_malformed_stored_binding_is_ignored() -> None:
     rows = [entry.message for entry in child.thread().messages()]
     paused = rows[-1]
     rows[-1] = {**paused, "harness_binding": {"declared": {"provider": 7, "model": "cheap"}}}
-    child.thread().clear()
-    child.thread().record(rows, None)
-    record_approval(child, paused["tool_approval_requests"][0]["approval_id"], True)
+    # A child paused before its binding was kept with the session: the
+    # runner's child saves its binding now, so the legacy rows are replayed on
+    # a session the runner never saved anything to.
+    legacy = (
+        world.harness.for_agent("planner")
+        .for_(parent.participant)
+        .session("binding::sub::legacy")
+        .using_mode("research")
+    )
+    legacy.thread().record(rows, None)
+    record_approval(legacy, paused["tool_approval_requests"][0]["approval_id"], True)
 
-    world.runtime.send(child, "")
+    world.runtime.send(legacy, "")
 
     resumed = world.child_requests()[-1]
     assert (resumed.provider, resumed.model) == ("anthropic", "opus-like")

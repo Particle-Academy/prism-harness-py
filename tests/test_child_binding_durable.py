@@ -241,3 +241,74 @@ def test_a_child_with_no_saved_binding_is_refused_before_any_request() -> None:
 
     assert caught.value.code == "child_binding_missing"
     assert rig.requests == []
+
+
+# The runner starts a child under a run tree the HOST built: the parent's turn
+# was handed a RunContext the host made. The child's context is still the
+# runner's own (it derived and bound it), so its binding is saved with the
+# child session exactly as under a tree this runtime opened. Without that, the
+# child's next turn would run on the default provider. The PHP reference does
+# this (RunTrees::startingChild); the parity row is harness-plans hpl-0059.
+
+
+def host_tree_child(pause: bool) -> tuple[Rig, Session]:
+    rig = Rig()
+    rig.calls(("research", {"task": "Find the weather."}))
+    if pause:
+        rig.calls(("weather", {"city": "Paris"}))
+    else:
+        rig.text("Child answer.")
+    rig.text("Parent answer.")
+    rig.runtime.send(rig.session(), "Go", context=RunContext.root("host_root", RunBudget(100)))
+    assert rig.sent(1)[0] == CHEAP
+    return rig, rig.session("chat::sub::research")
+
+
+def test_a_child_started_under_a_host_tree_saves_its_binding() -> None:
+    rig, child = host_tree_child(False)
+    assert child.child_binding() is not None
+    before = len(rig.requests)
+
+    rig.text("Again.")
+    rig.runtime.send(child, "New question")
+
+    assert rig.sent(before) == [CHEAP]
+
+
+def test_a_child_paused_under_a_host_tree_resumes_on_its_binding() -> None:
+    rig, child = host_tree_child(True)
+    before = len(rig.requests)
+
+    rig.text("Again.")
+    rig.runtime.send(child, "New question")
+
+    assert rig.sent(before) == [CHEAP]
+
+
+def test_a_host_tree_child_keeps_its_binding_after_the_ephemeral_half() -> None:
+    rig, child = host_tree_child(False)
+    before = len(rig.requests)
+    store = rig.harness.ephemeral_store()
+    assert isinstance(store, ExpiringStore)
+    store.expire_all()
+
+    rig.text("Again.")
+    rig.runtime.send(child, "New question")
+
+    assert rig.sent(before) == [CHEAP]
+
+
+def test_a_binding_the_host_put_on_its_own_context_is_never_saved() -> None:
+    rig = Rig()
+    session = rig.session("plain")
+    hosted = RunContext.root("host_root", RunBudget(100)).with_binding(
+        ChildBinding(declared_provider=CHEAP[0], declared_model=CHEAP[1])
+    )
+
+    rig.text("Hosted.")
+    rig.runtime.send(session, "Go", context=hosted)
+    rig.text("Plain.")
+    rig.runtime.send(session, "Again")
+
+    assert rig.sent(0) == [CHEAP, ("openai", "root-model")]
+    assert session.child_binding() is None

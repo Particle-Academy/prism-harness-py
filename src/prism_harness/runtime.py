@@ -386,6 +386,11 @@ class AgentRuntime:
             **(self._agents.get(session.agent, {}) if session.agent is not None else {}),
         }
 
+    def _starting_child(self, context: RunContext) -> RunContext:
+        """Internal: the subagent runner marks the context it starts a child
+        under as its own, so only that context saves the child's binding."""
+        return self._trees.starting_child(context)
+
     def mode_for(self, session: Session) -> AgentMode:
         """The mode a session's next run resolves, refusing a malformed one."""
         return self._modes.for_agent(session.agent).resolve(session.mode())
@@ -594,9 +599,11 @@ class AgentRuntime:
             else None
         )
         # The binding: from the runner's own context when the runner starts
-        # the child; otherwise the one SAVED with the child session, which a
-        # context the host supplies never replaces. A child paused before the
-        # binding was saved there carries it on its paused row. A session the
+        # the child, even under a run tree the host built
+        # (RunTrees.binding_context_kind); otherwise the one SAVED with the
+        # child session, which a context the host supplies never replaces. A
+        # child paused before the binding was saved there carries it on its
+        # paused row. A session the
         # runner started as a child (it has saved run tree references) with no
         # binding anywhere is refused rather than run on the root rules, which
         # would send its conversation to a provider nobody chose for it.
@@ -609,7 +616,7 @@ class AgentRuntime:
             tail = paused_approval_row([entry.message for entry in session.thread().messages()])
             saved_binding = ChildBinding.from_row(tail.get("harness_binding")) if tail else None
         route = binding_route(
-            kind,
+            self._trees.binding_context_kind(context),
             context is not None and context.binding is not None,
             saved_binding is not None,
             session.child_refs() is not None,

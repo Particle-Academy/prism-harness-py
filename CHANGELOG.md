@@ -68,6 +68,15 @@
 
 ### Fixed
 
+- A subagent child the runner starts under a run tree the HOST built (the
+  parent's turn was handed a `RunContext` the host made) now saves its
+  provider/model binding with the child session, as the PHP reference does.
+  Before, only a child under a tree this runtime opened was saved, so the
+  child's next turn outside the runner ran on the default provider. Only the
+  context the runner itself builds and marks counts as the runner's; a
+  context the host builds, or binds again, never saves a binding. Pinned by
+  harness-plans hpl-0059 and hpl-0060.
+
 - A subagent child's provider and model binding is now kept with the child
   session's durable data, as prism-harness keeps it, not only on the row a
   paused run stopped on. A new message to a child session, a resume, and a
