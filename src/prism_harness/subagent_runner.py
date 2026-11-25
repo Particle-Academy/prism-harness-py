@@ -119,14 +119,19 @@ class SubagentRunner:
         # The child's provider and model come from declarations, never from a
         # write onto the child's session: that slot belongs to the runner's
         # address, and a copied override there would outlive this call.
-        child_context = context.for_child(subagent, parent_run_id).with_binding(
-            ChildBinding(
-                session_provider=parent.provider() if subagent.inherit_session_model else None,
-                session_model=parent.model() if subagent.inherit_session_model else None,
-                declared_provider=subagent.provider,
-                declared_model=subagent.model,
-                parent_mode_provider=parent_mode.provider if same_agent and parent_mode else None,
-                parent_mode_model=parent_mode.model if same_agent and parent_mode else None,
+        # Marked as the runner's own: only this context saves the child's binding.
+        child_context = self._runtime._starting_child(
+            context.for_child(subagent, parent_run_id).with_binding(
+                ChildBinding(
+                    session_provider=parent.provider() if subagent.inherit_session_model else None,
+                    session_model=parent.model() if subagent.inherit_session_model else None,
+                    declared_provider=subagent.provider,
+                    declared_model=subagent.model,
+                    parent_mode_provider=parent_mode.provider
+                    if same_agent and parent_mode
+                    else None,
+                    parent_mode_model=parent_mode.model if same_agent and parent_mode else None,
+                )
             )
         )
 
