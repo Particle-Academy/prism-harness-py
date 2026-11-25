@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
+
+Includes every fix released on the 0.5 line in 0.5.1, 0.5.2 and 0.5.3.
 
 ### Added
 
