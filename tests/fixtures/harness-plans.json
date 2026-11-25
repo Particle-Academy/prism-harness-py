@@ -24795,9 +24795,85 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 2,
+                "route": "open"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 2,
+                "route": "open"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0062",
@@ -24933,9 +25009,85 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 1,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 2,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 4,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 1,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 2,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_root",
+                "depth": 4,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0063",
@@ -25032,9 +25184,67 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 0,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 2,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 3,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 0,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 2,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 3,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0064",
@@ -25193,9 +25403,107 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 2,
+                "route": "continue"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 2,
+                "route": "continue"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 2,
+                "route": "continue"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 3,
+                "route": "continue"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 2,
+                "route": "continue"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 2,
+                "route": "continue"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 2,
+                "route": "continue"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 3,
+                "route": "continue"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0065",
@@ -25253,9 +25561,41 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 2,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_c",
+                "depth": 2,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0066",
@@ -25364,9 +25704,67 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 2,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 3,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "none",
+                "spends": null,
+                "depth": 2,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 2,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 3,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "none",
+                "spends": null,
+                "depth": 2,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0067",
@@ -25440,9 +25838,51 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "membership": {
+                "tree": "none",
+                "spends": null,
+                "depth": 1,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "none",
+                "spends": null,
+                "depth": 0,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "membership": {
+                "tree": "none",
+                "spends": null,
+                "depth": 1,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": "none",
+                "spends": null,
+                "depth": 0,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0068",
@@ -25503,9 +25943,41 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root2"
+                },
+                "spends": "run_root2",
+                "depth": 1,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root2"
+                },
+                "spends": "run_root2",
+                "depth": 1,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0069",
@@ -25563,9 +26035,31 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0070",
@@ -25766,9 +26260,109 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "refs": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "plan_ledger": {
+                  "session": "chat",
+                  "plan": "plan_1"
+                }
+              }
+            },
+            {
+              "refs": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "plan_ledger": {
+                  "session": "chat",
+                  "plan": "plan_1"
+                }
+              }
+            },
+            {
+              "refs": {
+                "tree": null,
+                "plan_ledger": null
+              }
+            },
+            {
+              "refs": {
+                "tree": null,
+                "plan_ledger": null
+              }
+            },
+            {
+              "refs": {
+                "tree": null,
+                "plan_ledger": {
+                  "session": "chat",
+                  "plan": "plan_1"
+                }
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "refs": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "plan_ledger": {
+                  "session": "chat",
+                  "plan": "plan_1"
+                }
+              }
+            },
+            {
+              "refs": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "plan_ledger": {
+                  "session": "chat",
+                  "plan": "plan_1"
+                }
+              }
+            },
+            {
+              "refs": {
+                "tree": null,
+                "plan_ledger": null
+              }
+            },
+            {
+              "refs": {
+                "tree": null,
+                "plan_ledger": null
+              }
+            },
+            {
+              "refs": {
+                "tree": null,
+                "plan_ledger": {
+                  "session": "chat",
+                  "plan": "plan_1"
+                }
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     }
   ]
 }
