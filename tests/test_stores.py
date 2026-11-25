@@ -267,15 +267,25 @@ def plant_owner(store: FileSessionStore, pid: int, released: bool) -> None:
     )
 
 
-def steals(store: FileSessionStore, key: str) -> bool:
+#: How long a waiter that is EXPECTED to reclaim may take. Reclaiming returns as
+#: soon as it succeeds, so this only bounds a failure. It covers the whole
+#: acquire: publishing the candidate, reading the lock identity, inspecting and
+#: cleaning the released owner, and the rename. A waiter past its deadline after
+#: its own cleanup reports session_locked, so 50 ms read as "refused" on a slow
+#: CI machine (python 3.10/3.11 on ubuntu) although nothing held the lock.
+RECLAIM_WAIT = 10.0
+
+
+def steals(store: FileSessionStore, key: str, wait: float = 0.05) -> bool:
     """Did a waiter take a lock that is planted on the key?
 
     True means the lockfile was reclaimed and the callback ran; False means the
     waiter respected it and timed out, which is the safe answer for every
-    expiry it cannot read completely.
+    expiry it cannot read completely. A test that expects a reclaim passes
+    ``RECLAIM_WAIT``; one that expects a refusal keeps the short wait.
     """
     try:
-        store.with_lock(key, lambda: "stolen", wait_seconds=0.05)
+        store.with_lock(key, lambda: "stolen", wait_seconds=wait)
     except HarnessError as error:
         assert error.code == "session_locked"
         return False
@@ -343,7 +353,7 @@ def test_file_real_release_marks_owner_released_and_reports_cleanup_failure(
         paths = list(a_lock_path(store, "k").iterdir())
         assert len(paths) == 1
         assert json.loads(paths[0].read_bytes())["released"] is True
-    assert steals(store, "k") is True
+    assert steals(store, "k", RECLAIM_WAIT) is True
 
 
 def test_file_publishes_complete_owner_before_callback() -> None:
@@ -381,7 +391,7 @@ def test_real_writer_reader_roundtrip_refuses_live_and_reclaims_released() -> No
     released = json.loads(data)
     released["released"] = True
     (path / filename).write_text(json.dumps(released) + "\n", encoding="utf-8")
-    assert steals(store, "k") is True
+    assert steals(store, "k", RECLAIM_WAIT) is True
 
 
 def test_two_threads_never_hold_one_key_at_once() -> None:
