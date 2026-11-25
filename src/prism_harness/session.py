@@ -19,6 +19,9 @@ from prism_harness.thread import Thread
 
 __all__ = ["Participant", "Session"]
 
+#: How many runs' trees a session keeps in its durable half (G-381).
+_RUN_TREE_HISTORY = 20
+
 R = TypeVar("R")
 
 
@@ -371,7 +374,23 @@ class Session:
     ) -> Session:
         """``tree`` and ``depth`` are the run's membership (G-381): the run tree
         it belongs to (``{session, run}``, ``host`` or ``none``) and how deep it
-        is, decided once when the run begins."""
+        is, decided once when the run begins. Also kept, by run id, in the
+        durable half for the last few runs, so the root that resumes a run
+        parked on approvals stays in the tree that run began in, whatever
+        became of the ephemeral half (:meth:`resumed_run_tree`)."""
+        self._assert_writable()
+        stored = self._durable.get(self._durable_key()) or {}
+        trees = stored.get("run_trees")
+        kept = {
+            key: value
+            for key, value in (trees.items() if isinstance(trees, dict) else ())
+            if key != run_id
+        }
+        kept[run_id] = {"tree": dict(tree) if isinstance(tree, dict) else tree, "depth": depth}
+        self._durable.put(
+            self._durable_key(),
+            {**stored, "run_trees": dict(list(kept.items())[-_RUN_TREE_HISTORY:])},
+        )
         return self._write(
             "run",
             {
@@ -385,6 +404,37 @@ class Session:
                 "started_at": datetime.now(timezone.utc).isoformat(),
             },
         )
+
+    def resumed_run_tree(self, prompt: str) -> dict[str, str] | None:
+        """The durable run tree the run parked on this session's approvals
+        began in (G-381), for a turn with no new message that resumes it; None
+        for a new message, a session parked on nothing, or a run in the host's
+        tree, in none, or no longer remembered.
+
+        Internal: read by the runtime when a run begins."""
+        if prompt != "":
+            return None
+        for entry in reversed(self.thread().messages()):
+            row = entry.message
+            kind = row.get("type")
+            if kind == "user":
+                return None
+            if kind != "assistant":
+                continue
+            requests = row.get("tool_approval_requests")
+            if not isinstance(requests, list) or not any(
+                isinstance(request, dict) for request in requests
+            ):
+                return None
+            return self._run_tree(entry.run_id) if entry.run_id else None
+        return None
+
+    def _run_tree(self, run_id: str) -> dict[str, str] | None:
+        stored = self._durable.get(self._durable_key()) or {}
+        trees = stored.get("run_trees")
+        recorded = trees.get(run_id) if isinstance(trees, dict) else None
+        tree = recorded.get("tree") if isinstance(recorded, dict) else None
+        return _stored_pair(tree, "session", "run")
 
     def complete_run(
         self, run_id: str, finish_reason: str, tool_calls: Sequence[str] = ()

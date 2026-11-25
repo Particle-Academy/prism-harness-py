@@ -649,7 +649,7 @@ class AgentRuntime:
         run = self._bounded_run(session, base)
         # Which run tree this run belongs to, and how deep it is, decided ONCE
         # (G-381): every consumer below reads this record and nothing else.
-        member = self._trees.membership_of(session, run_id, context)
+        member = self._trees.membership_of(session, run_id, context, prompt)
         run = replace(run, depth=member["depth"])
         if paused is not None and run.agent is not None and "harness_agent_spend" in paused:
             run.ledger.carry_agent_spend(
@@ -994,18 +994,23 @@ class AgentRuntime:
                     row["harness_binding"] = run.binding.to_row()
                     # The shared plan budget the tree spends from, so the child
                     # resumed outside the runner spends from it too (G-366).
+                    # Only for a run that belongs to a tree it did not open
+                    # (a runner-started child, or a turn continuing a saved
+                    # tree): a run that opened its own would otherwise read it
+                    # back on its next turn as a tree it was saved with.
                     member = self._trees.member(run_id)
-                    spends = None if member is None else member["spends"]
-                    plan_ledger = self._plans.ledger_of(run_id) or (
-                        self._plans.ledger_of(spends) if isinstance(spends, str) else None
-                    )
-                    if plan_ledger is not None:
-                        row["harness_plan_ledger"] = plan_ledger
-                    # And the run tree whose budget a resumed child continues:
-                    # the one its membership names.
-                    tree = None if member is None else member["tree"]
-                    if isinstance(tree, dict):
-                        row["harness_tree"] = {"session": tree["session"], "run": tree["run"]}
+                    if member is not None and member["route"] != "open":
+                        spends = member["spends"]
+                        plan_ledger = self._plans.ledger_of(run_id) or (
+                            self._plans.ledger_of(spends) if isinstance(spends, str) else None
+                        )
+                        if plan_ledger is not None:
+                            row["harness_plan_ledger"] = plan_ledger
+                        # And the run tree whose budget a resumed child
+                        # continues: the one its membership names.
+                        tree = member["tree"]
+                        if isinstance(tree, dict):
+                            row["harness_tree"] = {"session": tree["session"], "run": tree["run"]}
             thread.record([row], run_id)
 
             if failed_finish:

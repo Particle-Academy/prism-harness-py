@@ -65,6 +65,7 @@ def membership(
     saved_tree: Mapping[str, str] | None,
     saved_depth: int,
     context_depth: int,
+    resumed_tree: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Which run tree a run belongs to (G-381): decided ONCE, when the run
     begins, and the one record every consumer reads. Pure, so every language
@@ -79,7 +80,10 @@ def membership(
     - Any other turn on a session that saved a tree continues that tree,
       spending from a hold of its own, at least as deep as it was started.
     - A host context on a session that saved none is in the host's tree.
-    - No context, or a metadata-only one, opens a tree of its own.
+    - No context, or a metadata-only one, opens a tree: its own, or, for a
+      root resuming a run parked on approvals (``resumed_tree``), the tree
+      that parked run began in, so a child it starts after the resume belongs
+      to the same tree as the children it started before.
 
     A host context's own root and parent run ids are deliberately not inputs:
     they are the host's statement, not a fact this runtime holds.
@@ -115,7 +119,9 @@ def membership(
             "route": "none",
         }
     return {
-        "tree": {"session": session, "run": run},
+        "tree": {"session": session, "run": run}
+        if resumed_tree is None
+        else {"session": resumed_tree["session"], "run": resumed_tree["run"]},
         "spends": run,
         "depth": saved_depth,
         "route": "open",
@@ -203,11 +209,13 @@ class RunTrees:
         return "runner" if self._child_contexts.get(id(context)) is context else "host"
 
     def membership_of(
-        self, session: Session, run_id: str, context: RunContext | None
+        self, session: Session, run_id: str, context: RunContext | None, prompt: str = ""
     ) -> dict[str, Any]:
         """The membership a run on ``session`` under ``context`` has:
-        :func:`membership`, with the verified parent of a runner context."""
+        :func:`membership`, with the verified parent of a runner context and,
+        for a bare turn resuming a parked run, the tree that run began in."""
         kind = self.context_kind(context)
+        bare = kind in ("none", "metadata")
         tree, _ = saved_refs(session)
         return membership(
             kind,
@@ -216,7 +224,8 @@ class RunTrees:
             self._verified_parent(context) if kind == "runner" else None,
             tree,
             session.child_depth(),
-            0 if context is None else context.depth,
+            0 if bare or context is None else context.depth,
+            session.resumed_run_tree(prompt) if bare else None,
         )
 
     def _verified_parent(self, context: RunContext | None) -> dict[str, Any] | None:
@@ -339,9 +348,12 @@ class RunTrees:
             }
             now = int(time.time())
             holder: str = spends
+            # The record is the tree's: named by the tree's run, which differs
+            # from the run that holds from it for a resumed root.
+            plan_id: str = tree["run"]
 
             def open_and_hold(state: dict[str, Any] | None) -> tuple[dict[str, Any] | None, Any]:
-                current = state if state is not None else budget.open_ledger(holder, settings)
+                current = state if state is not None else budget.open_ledger(plan_id, settings)
                 return budget.reserve(
                     current,
                     holder,

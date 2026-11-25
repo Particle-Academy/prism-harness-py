@@ -3,7 +3,7 @@
   "schema_version": 1,
   "corpus_version": "0.1.8",
   "generated_by": "tools/generate-harness-plans.mjs writes the inputs. `expected` is the PHP reference's recording; every security row was checked by hand against the G-360 design before TypeScript or Python ran. `result` records what each language measured, merged with --merge.",
-  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. binding_route runs the pure ChildBinding.route; whether a binding is saved starts false and carries from op to op, set when a route saves. binding_context builds a real RunContext (none, or RunContext.root(\"host_root\") with a 10-step budget; bound when supplied_binding; marked through the runtime RunTrees.startingChild when runner_started; bound again by the host after the mark when rebound), records the kind RunTrees.bindingContextKind gives it and the binding_route of that kind, and carries whether a binding is saved like binding_route; marking no context, or a context kind other than none or host, is invalid. tree_membership runs the pure RunTrees.membership (G-381): from a context kind, the run and its session, the recorded membership of the live parent run the runner verified (null when there is none), the run tree and depth the session saved and the depth the context states, it records the run's one membership: tree (a {session, run} tree, \"host\" or \"none\"), spends (the live run whose hold it spends from, or null), depth, and route (open, continue or none). kept_refs runs the pure RunTrees.keptRefs: the run tree and plan ledger the runner saves with a child, from its membership, the plan ledger of the run it spends from, what the session saved and whether that saved tree was cancelled. A setting or context kind that is invalid records {invalid: true}.",
+  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. binding_route runs the pure ChildBinding.route; whether a binding is saved starts false and carries from op to op, set when a route saves. binding_context builds a real RunContext (none, or RunContext.root(\"host_root\") with a 10-step budget; bound when supplied_binding; marked through the runtime RunTrees.startingChild when runner_started; bound again by the host after the mark when rebound), records the kind RunTrees.bindingContextKind gives it and the binding_route of that kind, and carries whether a binding is saved like binding_route; marking no context, or a context kind other than none or host, is invalid. tree_membership runs the pure RunTrees.membership (G-381): from a context kind, the run and its session, the recorded membership of the live parent run the runner verified (null when there is none), the run tree and depth the session saved, the depth the context states and, for a root turn resuming its parked run, the tree that run began in (resumed_tree), it records the run's one membership: tree (a {session, run} tree, \"host\" or \"none\"), spends (the live run whose hold it spends from, or null), depth, and route (open, continue or none). kept_refs runs the pure RunTrees.keptRefs: the run tree and plan ledger the runner saves with a child, from its membership, the plan ledger of the run it spends from, what the session saved and whether that saved tree was cancelled. A setting or context kind that is invalid records {invalid: true}.",
   "cases": [
     {
       "id": "hpl-0001",
@@ -24696,7 +24696,8 @@
           "parent": null,
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -24706,7 +24707,8 @@
           "parent": null,
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -24716,7 +24718,8 @@
           "parent": null,
           "saved_tree": null,
           "saved_depth": 2,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         }
       ],
       "expected": {
@@ -24896,7 +24899,8 @@
           },
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -24913,7 +24917,8 @@
           },
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -24930,7 +24935,8 @@
           },
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         }
       ],
       "expected": {
@@ -25103,7 +25109,8 @@
           "parent": null,
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -25113,7 +25120,8 @@
           "parent": null,
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 2
+          "context_depth": 2,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -25123,7 +25131,8 @@
           "parent": null,
           "saved_tree": null,
           "saved_depth": 3,
-          "context_depth": 1
+          "context_depth": 1,
+          "resumed_tree": null
         }
       ],
       "expected": {
@@ -25263,7 +25272,8 @@
             "run": "run_root"
           },
           "saved_depth": 2,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -25276,7 +25286,8 @@
             "run": "run_root"
           },
           "saved_depth": 2,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -25289,7 +25300,8 @@
             "run": "run_root"
           },
           "saved_depth": 2,
-          "context_depth": 1
+          "context_depth": 1,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -25302,7 +25314,8 @@
             "run": "run_root"
           },
           "saved_depth": 2,
-          "context_depth": 3
+          "context_depth": 3,
+          "resumed_tree": null
         }
       ],
       "expected": {
@@ -25526,7 +25539,8 @@
           },
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         }
       ],
       "expected": {
@@ -25615,7 +25629,8 @@
           },
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -25629,7 +25644,8 @@
           },
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -25643,7 +25659,8 @@
           },
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         }
       ],
       "expected": {
@@ -25783,7 +25800,8 @@
             "run": "run_root"
           },
           "saved_depth": 3,
-          "context_depth": 1
+          "context_depth": 1,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -25793,7 +25811,8 @@
           "parent": null,
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         }
       ],
       "expected": {
@@ -25908,7 +25927,8 @@
             "run": "run_root"
           },
           "saved_depth": 3,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         }
       ],
       "expected": {
@@ -25993,7 +26013,8 @@
           "parent": null,
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         },
         {
           "op": "tree_membership",
@@ -26010,7 +26031,8 @@
           },
           "saved_tree": null,
           "saved_depth": 0,
-          "context_depth": 0
+          "context_depth": 0,
+          "resumed_tree": null
         }
       ],
       "expected": {
@@ -26363,6 +26385,211 @@
         }
       },
       "agrees": true
+    },
+    {
+      "id": "hpl-0071",
+      "title": "a root that resumes its parked run stays in the tree that run began in",
+      "since": "0.1.8",
+      "notes": "A person approves a root's call and the root resumes under a new run id. Its subagents delegated before the approval are in the tree the parked run began in, so the resumed root is too (resumed_tree: the tree recorded for the run its paused approvals were issued in), still spending from a budget entry of its own. A host context, a session that saved a tree, and the runner's own context never read it (a cancel of the resumed root that misses the subagents parked under it, or a cancel of one of them that misses the root).",
+      "ops": [
+        {
+          "op": "tree_membership",
+          "context": "none",
+          "session": "chat",
+          "run": "run_r2",
+          "parent": null,
+          "saved_tree": null,
+          "saved_depth": 0,
+          "context_depth": 0,
+          "resumed_tree": {
+            "session": "chat",
+            "run": "run_root"
+          }
+        },
+        {
+          "op": "tree_membership",
+          "context": "metadata",
+          "session": "chat",
+          "run": "run_r2",
+          "parent": null,
+          "saved_tree": null,
+          "saved_depth": 0,
+          "context_depth": 0,
+          "resumed_tree": {
+            "session": "chat",
+            "run": "run_root"
+          }
+        },
+        {
+          "op": "tree_membership",
+          "context": "host",
+          "session": "chat",
+          "run": "run_r2",
+          "parent": null,
+          "saved_tree": null,
+          "saved_depth": 0,
+          "context_depth": 0,
+          "resumed_tree": {
+            "session": "chat",
+            "run": "run_root"
+          }
+        },
+        {
+          "op": "tree_membership",
+          "context": "none",
+          "session": "chat::sub::op",
+          "run": "run_r2",
+          "parent": null,
+          "saved_tree": {
+            "session": "chat",
+            "run": "run_other"
+          },
+          "saved_depth": 1,
+          "context_depth": 0,
+          "resumed_tree": {
+            "session": "chat",
+            "run": "run_root"
+          }
+        },
+        {
+          "op": "tree_membership",
+          "context": "runner",
+          "session": "chat::sub::op",
+          "run": "run_r2",
+          "parent": {
+            "tree": {
+              "session": "chat",
+              "run": "run_root2"
+            },
+            "spends": "run_root2",
+            "depth": 0
+          },
+          "saved_tree": null,
+          "saved_depth": 0,
+          "context_depth": 0,
+          "resumed_tree": {
+            "session": "chat",
+            "run": "run_root"
+          }
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "membership": {
+              "tree": {
+                "session": "chat",
+                "run": "run_root"
+              },
+              "spends": "run_r2",
+              "depth": 0,
+              "route": "open"
+            }
+          },
+          {
+            "membership": {
+              "tree": {
+                "session": "chat",
+                "run": "run_root"
+              },
+              "spends": "run_r2",
+              "depth": 0,
+              "route": "open"
+            }
+          },
+          {
+            "membership": {
+              "tree": "host",
+              "spends": null,
+              "depth": 0,
+              "route": "none"
+            }
+          },
+          {
+            "membership": {
+              "tree": {
+                "session": "chat",
+                "run": "run_other"
+              },
+              "spends": "run_r2",
+              "depth": 1,
+              "route": "continue"
+            }
+          },
+          {
+            "membership": {
+              "tree": {
+                "session": "chat",
+                "run": "run_root2"
+              },
+              "spends": "run_root2",
+              "depth": 1,
+              "route": "none"
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_r2",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root"
+                },
+                "spends": "run_r2",
+                "depth": 0,
+                "route": "open"
+              }
+            },
+            {
+              "membership": {
+                "tree": "host",
+                "spends": null,
+                "depth": 0,
+                "route": "none"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_other"
+                },
+                "spends": "run_r2",
+                "depth": 1,
+                "route": "continue"
+              }
+            },
+            {
+              "membership": {
+                "tree": {
+                  "session": "chat",
+                  "run": "run_root2"
+                },
+                "spends": "run_root2",
+                "depth": 1,
+                "route": "none"
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": false
     }
   ]
 }

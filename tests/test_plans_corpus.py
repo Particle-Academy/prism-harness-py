@@ -163,6 +163,7 @@ def plans_tree_op(op: dict[str, Any]) -> dict[str, Any]:
                     op["saved_tree"],
                     op["saved_depth"],
                     op["context_depth"],
+                    op.get("resumed_tree"),
                 )
             }
         return {
@@ -407,7 +408,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 70
+        assert len(CASES) == 71
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:

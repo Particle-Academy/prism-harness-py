@@ -102,10 +102,11 @@ class Rig:
         modes: dict[str, Any] = {
             "chat": {
                 "system_prompt": "You delegate.",
-                "tools": ["research", "relay", "forge", "lookup"],
+                "tools": ["research", "survey", "relay", "forge", "lookup", "weather"],
+                "requires_approval": ["weather"],
                 "max_steps": 20,
                 "plans": plans is not None,
-                "subagents": {"research": {"mode": "research"}},
+                "subagents": {"research": {"mode": "research"}, "survey": {"mode": "research"}},
             },
             "research": {
                 "system_prompt": "Research.",
@@ -137,6 +138,7 @@ class Rig:
 
         tools.register_factory("research", delegate("research"))
         tools.register_factory("dig", delegate("dig"))
+        tools.register_factory("survey", delegate("survey"))
         self.runtime = AgentRuntime(
             client=self._client,
             modes=ModeRegistry({"default": "chat", "modes": modes}),
@@ -389,3 +391,51 @@ def test_a_host_context_deeper_than_the_saved_depth_runs_deeper() -> None:
     rig.runtime.send(child, "Q", context=deeper)
 
     assert rig.depths == [(child.key(), 2)]
+
+
+# -- a resumed root and a root that parks --------------------------------------
+
+
+def test_a_resumed_root_delegates_in_the_tree_its_parked_run_began() -> None:
+    rig = Rig()
+    ada = rig.session("ada")
+    rig.calls(("research", {"task": "Look."}))  # ada
+    rig.calls(("weather", {"city": "Paris"}))  # her child: parks
+    rig.calls(("weather", {"city": "Rome"}))  # ada: parks on her own approval
+    parked = rig.runtime.send(ada, "Go")
+    assert len(parked.pending_approvals) == 1
+    first = parked.run_id
+    child = rig.session("ada", "chat::sub::research").child_refs()
+    assert child is not None and child["tree"] == {"session": ada.key(), "run": first}
+
+    rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+    rig.calls(("survey", {"task": "Survey."}))  # ada, resumed under a new run id
+    rig.text("Survey answer.")  # the new child
+    rig.text("Ada done.")  # ada
+    resumed = rig.runtime.send(ada, "")
+    assert resumed.run_id != first
+
+    assert rig.session("ada", "chat::sub::survey").child_refs() == {
+        "tree": {"session": ada.key(), "run": first},
+        "plan_ledger": None,
+    }
+
+
+def test_a_top_level_session_bound_by_its_host_keeps_resuming_after_it_parks() -> None:
+    rig = Rig()
+    ada = rig.session("ada")
+    hosted = RunContext.root("host", RunBudget(100)).with_binding(CHEAP)
+    rig.calls(("weather", {"city": "Paris"}))
+    approval = rig.runtime.send(ada, "Go", context=hosted).pending_approvals[0].id
+
+    for city in ("Rome", "Oslo"):
+        rig.runtime.decide(ada, approval, True)
+        rig.calls(("weather", {"city": city}))  # resumed: parks again
+        approval = rig.runtime.send(ada, "").pending_approvals[0].id
+
+    rig.runtime.decide(ada, approval, True)
+    rig.text("Resumed.")
+    assert rig.runtime.send(ada, "").stopped_because is None
+    rig.text("Again.")
+    assert rig.runtime.send(ada, "New question").stopped_because is None
+    assert rig.ran.count("weather") == 3
