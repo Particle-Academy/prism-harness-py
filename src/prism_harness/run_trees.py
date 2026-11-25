@@ -269,6 +269,7 @@ class RunTrees:
         run: RunContext,
         member: Mapping[str, Any],
         hold_ttl: int,
+        steps_left: int | None = None,
     ) -> RunContext:
         """A run is starting, in the tree its membership names. ``open``
         registers a budget entry of its own, kept in memory until it starts a
@@ -296,10 +297,20 @@ class RunTrees:
         # is left as it was: it still acts on the person's decisions, then
         # stops on its own budget, with the same outcome and message as
         # before.
+        # "Own steps left" is ONE measure, the one the decision check read:
+        # what the paused row says the parked run had left of its own budget
+        # (its ledger, a runner child's steps included), when it says so.
         resumed = route == "open" and tree["run"] != run_id
         own_left = run.budget.max_steps - run.ledger.steps
-        if route == "open" and own_left >= 1 and (resumed or _record_of(session, tree) is not None):
-            route = "continue"
+        if route == "open" and steps_left is not None:
+            own_left = min(own_left, steps_left)
+        if route == "open" and (resumed or _record_of(session, tree) is not None):
+            if own_left >= 1:
+                route = "continue"
+            elif run.budget.max_steps > run.ledger.steps:
+                # Spent by that measure: it acts on the decisions and takes
+                # no further step.
+                run = replace(run, budget=replace(run.budget, max_steps=run.ledger.steps))
         ledger = run.ledger
         entry: dict[str, Any] = {
             "session": session.key(),
@@ -336,8 +347,6 @@ class RunTrees:
                     tree["run"],
                     {"mode": "shared", "max_steps": left, "max_cost_micros": turn_cost},
                 )
-            return budget.reserve(state, run_id, left, turn_cost, now, hold_ttl)
-
             return budget.reserve(state, run_id, left, turn_cost, now, hold_ttl)
 
         grant = _write(session.plan_store(), tree, hold)

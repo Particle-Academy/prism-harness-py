@@ -744,7 +744,17 @@ class AgentRuntime:
             # did not start (an answer, a new message, or a host context,
             # narrowed to what is left) continues the run tree it was saved
             # with. The runner's own context is left alone.
-            run = self._trees.root_run(session, run_id, run, member, self.lock_ttl(session))
+            # What the paused row says the parked run had left of its own step
+            # budget: the measure the decision check read (G-381).
+            steps_left = paused.get("harness_steps_left") if paused is not None else None
+            run = self._trees.root_run(
+                session,
+                run_id,
+                run,
+                member,
+                self.lock_ttl(session),
+                steps_left if type(steps_left) is int else None,
+            )
             run = self._plans.plan_turn(
                 session, run_id, run, context, self.lock_ttl(session), prompt, kind
             )
