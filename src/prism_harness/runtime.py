@@ -30,7 +30,7 @@ from prism_harness.events import (
 )
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.plans.service import Plans, refuse_unfunded_decision
-from prism_harness.run_trees import RunTrees, refuse_spent_tree, saved_refs
+from prism_harness.run_trees import RunTrees, kept_refs, refuse_spent_tree, saved_refs
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import ChildBinding, RunBudget, RunContext, binding_route
@@ -188,11 +188,22 @@ class StructuredAgentResponse(AgentResponse):
 #: How long resolving approvals may hold the session lock: long enough for a tool to run.
 _RESOLUTION_LOCK_SECONDS = 300
 
-#: The run context of the turn whose tools are running in this context. A
-#: subagent child started by one of those tools spends from it.
-_TURN_RUN: ContextVar[tuple[str, RunContext] | None] = ContextVar(
+#: The session key, run context and run id of the turn whose tools are running
+#: in this context. A subagent child started by one of those tools spends from
+#: it, and joins the run tree that run is recorded in (G-381).
+_TURN_RUN: ContextVar[tuple[str, RunContext, str] | None] = ContextVar(
     "prism_harness_turn_run", default=None
 )
+
+
+def current_turn_run_id(session_key: str) -> str | None:
+    """The run id of the turn on that session whose tools are running now, or
+    None outside one. Internal: the subagent runner marks the context it starts
+    a child under with it, so the child joins that run's tree and no other."""
+    turn = _TURN_RUN.get()
+    if turn is None or turn[0] != session_key:
+        return None
+    return turn[2]
 
 
 def current_turn_run(session_key: str | None = None) -> RunContext | None:
@@ -386,10 +397,17 @@ class AgentRuntime:
             **(self._agents.get(session.agent, {}) if session.agent is not None else {}),
         }
 
-    def _starting_child(self, context: RunContext) -> RunContext:
+    def _starting_child(
+        self,
+        context: RunContext,
+        parent_run_id: str | None = None,
+        parent_session_key: str | None = None,
+    ) -> RunContext:
         """Internal: the subagent runner marks the context it starts a child
-        under as its own, so only that context saves the child's binding."""
-        return self._trees.starting_child(context)
+        under as its own, so only that context saves the child's binding, with
+        the run and session of the ACTIVE turn starting it (None outside one):
+        the child joins that run's tree once the run is verified live."""
+        return self._trees.starting_child(context, parent_run_id, parent_session_key)
 
     def mode_for(self, session: Session) -> AgentMode:
         """The mode a session's next run resolves, refusing a malformed one."""
@@ -629,16 +647,10 @@ class AgentRuntime:
         if route["binding"] == "saved" and saved_binding is not None:
             base = base.with_binding(saved_binding)
         run = self._bounded_run(session, base)
-        # A turn on a child session runs at least as deep as the runner started
-        # the child, as in the reference (atSavedChildDepth): a resumed child,
-        # or one handed a host context, delegates under the same depth ceiling
-        # as it would inside its tree. A context may put it deeper, never
-        # shallower.
-        # The runner's own context is at the depth it starts the child at, and
-        # that is the depth it saves: it is never raised to an older one.
-        saved_depth = session.child_depth()
-        if runner_binding is None and saved_depth > run.depth:
-            run = replace(run, depth=saved_depth)
+        # Which run tree this run belongs to, and how deep it is, decided ONCE
+        # (G-381): every consumer below reads this record and nothing else.
+        member = self._trees.membership_of(session, run_id, context)
+        run = replace(run, depth=member["depth"])
         if paused is not None and run.agent is not None and "harness_agent_spend" in paused:
             run.ledger.carry_agent_spend(
                 run.agent, *carried_agent_spend(paused["harness_agent_spend"])
@@ -653,7 +665,12 @@ class AgentRuntime:
                 "reporting rather than executing."
             )
 
-        session.begin_run(run_id, mode.name, provider, model)
+        session.begin_run(
+            run_id, mode.name, provider, model, tree=member["tree"], depth=member["depth"]
+        )
+        # Recorded before any tool can run, so a child started from this turn
+        # finds it; dropped when the run finishes.
+        self._trees.record(session, run_id, member, run)
         self._emit(
             RunStarted(
                 run_id=run_id,
@@ -705,31 +722,35 @@ class AgentRuntime:
                 # tree and plan budget it belongs to, so every later turn on
                 # the child the runner did not start continues them. Only the
                 # runner's own context writes them.
-                session.remember_child_binding(runner_binding.to_row(), context.depth)
-                started = self._trees.child_started(
-                    session, run_id, context, self.lock_ttl(session)
+                session.remember_child_binding(runner_binding.to_row(), member["depth"])
+                self._trees.child_started(session, member, self.lock_ttl(session))
+                # The tree it is in, with the plan ledger of the run it spends
+                # from. Under a run tree the host built, or none, there is no
+                # durable tree to name: the references the child saved before
+                # are kept, never replaced with nothing, so a later turn the
+                # runner does not start still continues the tree it last had
+                # rather than a fresh root budget.
+                saved_tree, saved_plan_ledger = saved_refs(session)
+                spends = member["spends"]
+                refs = kept_refs(
+                    member,
+                    self._plans.ledger_of(spends) if isinstance(spends, str) else None,
+                    saved_tree,
+                    saved_plan_ledger,
+                    False,
                 )
-                # Under a run tree the host built there is no durable tree to
-                # name: the references the child saved before are kept, never
-                # replaced with nothing, so a later turn the runner does not
-                # start still continues the tree it last had rather than a
-                # fresh root budget.
-                if started is not None:
-                    session.remember_child_refs(started, self._plans.active_ledger())
-                elif session.child_refs() is None:
-                    session.remember_child_refs(None, None)
+                session.remember_child_refs(refs["tree"], refs["plan_ledger"])
             # A root run opens a tree; any turn on a child session the runner
             # did not start (an answer, a new message, or a host context,
-            # narrowed to what is left) continues the run tree and plan budget
-            # it was saved with. The runner's own context is left alone.
-            tree, _ = saved_refs(session)
-            run = self._trees.root_run(session, run_id, run, context, tree, self.lock_ttl(session))
+            # narrowed to what is left) continues the run tree it was saved
+            # with. The runner's own context is left alone.
+            run = self._trees.root_run(session, run_id, run, member, self.lock_ttl(session))
             run = self._plans.plan_turn(
                 session, run_id, run, context, self.lock_ttl(session), prompt, kind
             )
             # From here every tool the turn runs, a subagent included, runs
             # under this run context (G-366).
-            turn_token = _TURN_RUN.set((session.key(), run))
+            turn_token = _TURN_RUN.set((session.key(), run, run_id))
             if scope is not None:
                 names, legacy = scope
                 if legacy:
@@ -973,13 +994,18 @@ class AgentRuntime:
                     row["harness_binding"] = run.binding.to_row()
                     # The shared plan budget the tree spends from, so the child
                     # resumed outside the runner spends from it too (G-366).
-                    plan_ledger = self._plans.ledger_of(run_id) or self._plans.active_ledger()
+                    member = self._trees.member(run_id)
+                    spends = None if member is None else member["spends"]
+                    plan_ledger = self._plans.ledger_of(run_id) or (
+                        self._plans.ledger_of(spends) if isinstance(spends, str) else None
+                    )
                     if plan_ledger is not None:
                         row["harness_plan_ledger"] = plan_ledger
-                    # And the run tree whose budget a resumed child continues.
-                    tree = self._trees.tree_of(run_id)
-                    if tree is not None:
-                        row["harness_tree"] = tree
+                    # And the run tree whose budget a resumed child continues:
+                    # the one its membership names.
+                    tree = None if member is None else member["tree"]
+                    if isinstance(tree, dict):
+                        row["harness_tree"] = {"session": tree["session"], "run": tree["run"]}
             thread.record([row], run_id)
 
             if failed_finish:

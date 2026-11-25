@@ -25,6 +25,7 @@ from prism_harness import (
     RunContext,
     ToolPolicy,
     binding_route,
+    run_trees,
 )
 from prism_harness.plans import (
     PlanBudgetInvalid,
@@ -83,6 +84,8 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
                 results.append(plans_binding_op(op, state))
             elif op["op"] == "binding_context":
                 results.append(plans_binding_context_op(op, state))
+            elif op["op"] in ("tree_membership", "kept_refs"):
+                results.append(plans_tree_op(op))
             elif str(op["op"]).startswith("budget_"):
                 results.append(plans_budget_op(op, state, now))
             else:
@@ -144,6 +147,35 @@ def plans_binding_context_op(op: dict[str, Any], state: dict[str, Any]) -> dict[
     )
     state["saved_binding"] = state["saved_binding"] or route["save"]
     return {"kind": kind, "route": route}
+
+
+def plans_tree_op(op: dict[str, Any]) -> dict[str, Any]:
+    """Which run tree a run belongs to, and what a child saves (G-381): the
+    pure run_trees.membership and run_trees.kept_refs the runtime asks."""
+    try:
+        if op["op"] == "tree_membership":
+            return {
+                "membership": run_trees.membership(
+                    op["context"],
+                    op["session"],
+                    op["run"],
+                    op["parent"],
+                    op["saved_tree"],
+                    op["saved_depth"],
+                    op["context_depth"],
+                )
+            }
+        return {
+            "refs": run_trees.kept_refs(
+                op["membership"],
+                op["plan_ledger"],
+                op["saved_tree"],
+                op["saved_plan_ledger"],
+                op["saved_tree_cancelled"],
+            )
+        }
+    except ValueError:
+        return {"invalid": True}
 
 
 def plans_budget_op(op: dict[str, Any], state: dict[str, Any], now: int) -> dict[str, Any]:
@@ -375,7 +407,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 60
+        assert len(CASES) == 70
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:

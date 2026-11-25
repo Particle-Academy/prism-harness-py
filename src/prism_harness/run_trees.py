@@ -39,111 +39,248 @@ from prism_harness.thread_rows import paused_approval_row
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from prism_harness.session import Session
 
-__all__ = ["RunTrees", "refuse_spent_tree", "saved_refs", "saved_tree"]
+__all__ = [
+    "CONTEXT_KINDS",
+    "RunTrees",
+    "kept_refs",
+    "membership",
+    "refuse_spent_tree",
+    "saved_refs",
+    "saved_tree",
+]
 
 _log = logging.getLogger("prism_harness.run_trees")
 
 Tree = dict[str, str]
 
+#: The kinds of run context a turn can be handed.
+CONTEXT_KINDS = ("none", "metadata", "runner", "host")
+
+
+def membership(
+    kind: str,
+    session: str,
+    run: str,
+    parent: Mapping[str, Any] | None,
+    saved_tree: Mapping[str, str] | None,
+    saved_depth: int,
+    context_depth: int,
+) -> dict[str, Any]:
+    """Which run tree a run belongs to (G-381): decided ONCE, when the run
+    begins, and the one record every consumer reads. Pure, so every language
+    answers it the same way (prism-parity harness-plans).
+
+    - The runner's own context (``runner``) takes the recorded membership of
+      the live parent run it was started from, verified by the runtime: the
+      same tree, the same run it spends from, one level deeper. With no
+      verified parent it is in no tree, at the depth the context states. The
+      tree its session saved is never read: that is for turns the runner did
+      not start.
+    - Any other turn on a session that saved a tree continues that tree,
+      spending from a hold of its own, at least as deep as it was started.
+    - A host context on a session that saved none is in the host's tree.
+    - No context, or a metadata-only one, opens a tree of its own.
+
+    A host context's own root and parent run ids are deliberately not inputs:
+    they are the host's statement, not a fact this runtime holds.
+
+    :raises ValueError: for an unknown context kind.
+    """
+    if kind not in CONTEXT_KINDS:
+        raise ValueError(f"Unknown run context kind [{kind}].")
+    saved_depth = max(0, saved_depth)
+    context_depth = max(0, context_depth)
+    if kind == "runner":
+        if parent is None:
+            return {"tree": "none", "spends": None, "depth": context_depth, "route": "none"}
+        tree = parent["tree"]
+        return {
+            "tree": dict(tree) if isinstance(tree, Mapping) else tree,
+            "spends": parent["spends"],
+            "depth": max(0, parent["depth"]) + 1,
+            "route": "none",
+        }
+    if saved_tree is not None:
+        return {
+            "tree": {"session": saved_tree["session"], "run": saved_tree["run"]},
+            "spends": run,
+            "depth": max(saved_depth, context_depth) if kind == "host" else saved_depth,
+            "route": "continue",
+        }
+    if kind == "host":
+        return {
+            "tree": "host",
+            "spends": None,
+            "depth": max(saved_depth, context_depth),
+            "route": "none",
+        }
+    return {
+        "tree": {"session": session, "run": run},
+        "spends": run,
+        "depth": saved_depth,
+        "route": "open",
+    }
+
+
+def kept_refs(
+    membership: Mapping[str, Any],
+    plan_ledger: Mapping[str, str] | None,
+    saved_tree: Mapping[str, str] | None,
+    saved_plan_ledger: Mapping[str, str] | None,
+    saved_tree_cancelled: bool,
+) -> dict[str, Any]:
+    """The run tree and plan ledger the runner saves with a child (G-381): the
+    tree it is in, with the plan ledger of the run it spends from. A child in
+    the host's tree, or in none, has no durable tree to name, so what it saved
+    before is kept, never replaced with nothing, unless a person cancelled that
+    tree: starting the child again is then a new delegation."""
+    tree = membership["tree"]
+    if isinstance(tree, Mapping):
+        return {
+            "tree": {"session": tree["session"], "run": tree["run"]},
+            "plan_ledger": None if plan_ledger is None else dict(plan_ledger),
+        }
+    if saved_tree_cancelled:
+        return {"tree": None, "plan_ledger": None}
+    return {
+        "tree": None if saved_tree is None else dict(saved_tree),
+        "plan_ledger": None if saved_plan_ledger is None else dict(saved_plan_ledger),
+    }
+
 
 class RunTrees:
-    """The root runs of one runtime, by run id, until they end."""
+    """The root runs of one runtime, by run id, until they end, and the run
+    tree every live run belongs to."""
 
     def __init__(self) -> None:
+        #: The budget entries of the runs that open or continue a tree.
         self._runs: dict[str, dict[str, Any]] = {}
-        #: The tree each runner-started child run belongs to, until it ends.
-        self._children: dict[str, Tree] = {}
+        #: The membership of every live run, by run id, with its session key
+        #: and its run ledger, recorded once when it begins (G-381).
+        self.members: dict[str, dict[str, Any]] = {}
         #: The child contexts the subagent runner built, held weakly and by
-        #: identity. Only these (and a context of a live tree here) may save a
-        #: child's binding.
+        #: identity, and the run and session of the turn that started each.
         self._child_contexts: weakref.WeakValueDictionary[int, RunContext] = (
             weakref.WeakValueDictionary()
         )
+        self._parents: dict[int, tuple[str | None, str | None]] = {}
 
-    def starting_child(self, context: RunContext) -> RunContext:
+    def starting_child(
+        self,
+        context: RunContext,
+        parent_run_id: str | None = None,
+        parent_session_key: str | None = None,
+    ) -> RunContext:
         """The subagent runner is starting a child under ``context``, which it
-        built. Marks it as the runner's own, so the child's binding is saved
-        with its session even under a run tree the host built.
+        built, from the ACTIVE turn ``parent_run_id`` on the session
+        ``parent_session_key`` (both None outside a turn). Marks it as the
+        runner's own, so the child's binding is saved with its session even
+        under a run tree the host built.
 
         Internal: called by the subagent runner only.
         """
-        self._child_contexts[id(context)] = context
+        key = id(context)
+        if self._child_contexts.get(key) is not context:
+            self._child_contexts[key] = context
+            weakref.finalize(context, self._parents.pop, key, None)
+        self._parents[key] = (parent_run_id, parent_session_key)
         return context
 
     def binding_context_kind(self, context: RunContext | None) -> str:
         """The kind of context a turn was handed, for
-        :func:`~prism_harness.subagents.binding_route`: ``runner`` for the
-        context the subagent runner built to start a child, even under a run
-        tree the host built, otherwise :meth:`context_kind`. A context the host
-        builds and binds itself is never the runner's."""
+        :func:`~prism_harness.subagents.binding_route`: the same kind as
+        :meth:`context_kind`, so the binding and the budget routes read one
+        context the same way."""
         return self.context_kind(context)
 
-    def _entry_of(self, context: RunContext) -> dict[str, Any] | None:
-        """The live run of this runtime a context spends from: the root run its
-        ledger names, or the run that holds that ledger. A child resumed under a
-        context the host built continues its saved tree under its OWN run id
-        while its ledger is the host's, so the children it starts are found by
-        the ledger."""
-        named = self._runs.get(context.root_run_id)
-        if named is not None:
-            return named
-        for entry in self._runs.values():
-            if entry["ledger"] is context.ledger:
-                return entry
-        return None
-
     def context_kind(self, context: RunContext | None) -> str:
-        """What kind of run context a turn was handed, for
-        :func:`~prism_harness.plans.budget.route`: ``runner`` when it is a
-        context of a run this runtime is running (its ledger is that run's),
-        ``host`` for any other context."""
+        """What kind of run context a turn was handed: ``none`` without one,
+        ``runner`` for the context the subagent runner built to start a child,
+        ``host`` for any other. A context the host built is the host's,
+        whatever ledger it carries."""
         if context is None:
             return "none"
-        # The context the subagent runner built to start a child is the
-        # runner's, even under a run tree the host built: it spends from the
-        # tree it was derived from and never from a tree its session saved.
-        if self._child_contexts.get(id(context)) is context:
-            return "runner"
-        entry = self._runs.get(context.root_run_id)
-        return "runner" if entry is not None and entry["ledger"] is context.ledger else "host"
+        return "runner" if self._child_contexts.get(id(context)) is context else "host"
+
+    def membership_of(
+        self, session: Session, run_id: str, context: RunContext | None
+    ) -> dict[str, Any]:
+        """The membership a run on ``session`` under ``context`` has:
+        :func:`membership`, with the verified parent of a runner context."""
+        kind = self.context_kind(context)
+        tree, _ = saved_refs(session)
+        return membership(
+            kind,
+            session.key(),
+            run_id,
+            self._verified_parent(context) if kind == "runner" else None,
+            tree,
+            session.child_depth(),
+            0 if context is None else context.depth,
+        )
+
+    def _verified_parent(self, context: RunContext | None) -> dict[str, Any] | None:
+        """The recorded membership of the run a runner context was started
+        from, accepted only when that live run is on the session the mark names
+        and its run ledger is the context's very ledger: proof the context came
+        from that run's active turn."""
+        if context is None or self._child_contexts.get(id(context)) is not context:
+            return None
+        parent_run, parent_session = self._parents.get(id(context), (None, None))
+        member = None if parent_run is None else self.members.get(parent_run)
+        if (
+            member is None
+            or member["session"] != parent_session
+            or member["ledger"] is not context.ledger
+        ):
+            return None
+        return {"tree": member["tree"], "spends": member["spends"], "depth": member["depth"]}
+
+    def record(
+        self, session: Session, run_id: str, member: Mapping[str, Any], run: RunContext
+    ) -> None:
+        """Record a live run's membership, until :meth:`finished`."""
+        self.members[run_id] = {**member, "session": session.key(), "ledger": run.ledger}
+
+    def member(self, run_id: str) -> dict[str, Any] | None:
+        """The recorded membership of a live run, or None."""
+        found = self.members.get(run_id)
+        return None if found is None else dict(found)
 
     def root_run(
         self,
         session: Session,
         run_id: str,
         run: RunContext,
-        context: RunContext | None,
-        tree: Tree | None,
+        member: Mapping[str, Any],
         hold_ttl: int,
     ) -> RunContext:
-        """A run is starting. A turn on a child session the runner did not
-        start (an answer to its approval, a new message, or a run context the
-        host built) continues the tree it was saved with (``tree``): it holds
-        what that tree has left, and its run is narrowed to the hold, so a host
-        context can only lower what the tree allows. Any other root run opens a
-        tree of its own, kept in memory until it starts a child. A run on the
-        runner's own context already spends from its tree and is left alone.
+        """A run is starting, in the tree its membership names. ``open``
+        registers a budget entry of its own, kept in memory until it starts a
+        child. ``continue`` (a turn on a child session the runner did not
+        start: an answer, a new message, or a host context) holds what the
+        saved tree has left, and its run is narrowed to the hold, so a host
+        context can only lower what the tree allows. Any other run is left
+        alone.
 
         :raises HarnessError: ``run_not_permitted`` when that tree is spent.
         """
-        kind = budget.route(self.context_kind(context), "", False, False, tree is not None, False)
-        if kind["tree"] == "none":
+        route = member["route"]
+        if route not in ("open", "continue"):
             return run
-        if kind["tree"] == "open":
-            tree = None
+        tree: Tree = {"session": member["tree"]["session"], "run": member["tree"]["run"]}
         ledger = run.ledger
         entry: dict[str, Any] = {
             "session": session.key(),
-            "tree": tree if tree is not None else {"session": session.key(), "run": run_id},
+            "tree": tree,
             "budget": run.budget,
             "ledger": ledger,
             "steps": ledger.steps,
             "cost": ledger.cost_usd,
             "unmetered": ledger.unmetered_runs,
             "held": False,
-            "resumed": tree is not None,
         }
-        if tree is None:
+        if route == "open":
             self._runs[run_id] = entry
             return run
 
@@ -180,17 +317,18 @@ class RunTrees:
         return narrowed
 
     def child_started(
-        self, session: Session, run_id: str, context: RunContext, hold_ttl: int
+        self, session: Session, member: Mapping[str, Any], hold_ttl: int
     ) -> Tree | None:
-        """A runner-started child is starting under a run tree: the tree it
-        belongs to, opened in the durable store the first time its root starts
-        a child. None when the tree's root is not a run of this runtime (a
-        context the host built itself)."""
-        root_run_id = context.root_run_id
-        entry = self._entry_of(context)
-        if entry is None:
+        """A runner-started child is starting: the tree its membership names,
+        opened in the durable store, for the budget entry of the run it spends
+        from, the first time that run starts a child. None when it is in the
+        host's tree or in none."""
+        tree = member["tree"]
+        if not isinstance(tree, Mapping):
             return None
-        if not entry["held"]:
+        spends = member["spends"]
+        entry = self._runs.get(spends) if isinstance(spends, str) else None
+        if isinstance(spends, str) and entry is not None and not entry["held"]:
             own = entry["budget"]
             settings = {
                 "mode": "shared",
@@ -200,12 +338,13 @@ class RunTrees:
                 else budget.micros(max(0.0, own.max_cost_usd - entry["cost"])),
             }
             now = int(time.time())
+            holder: str = spends
 
             def open_and_hold(state: dict[str, Any] | None) -> tuple[dict[str, Any] | None, Any]:
-                current = state if state is not None else budget.open_ledger(root_run_id, settings)
+                current = state if state is not None else budget.open_ledger(holder, settings)
                 return budget.reserve(
                     current,
-                    root_run_id,
+                    holder,
                     max(1, int(settings["max_steps"])),
                     settings["max_cost_micros"],
                     now,
@@ -214,17 +353,7 @@ class RunTrees:
 
             _write(session.plan_store(), entry["tree"], open_and_hold)
             entry["held"] = True
-        tree: Tree = dict(entry["tree"])
-        self._children[run_id] = tree
-        return tree
-
-    def tree_of(self, run_id: str) -> Tree | None:
-        """The tree a child run's paused row carries: the one the runner started
-        it in, or the one a resumed child continues."""
-        if run_id in self._children:
-            return dict(self._children[run_id])
-        entry = self._runs.get(run_id)
-        return dict(entry["tree"]) if entry is not None and entry["resumed"] else None
+        return {"session": tree["session"], "run": tree["run"]}
 
     def holds(self, run_id: str) -> bool:
         """Whether this run spends from a durable run tree record."""
@@ -232,9 +361,11 @@ class RunTrees:
         return entry is not None and entry["held"] is True
 
     def finished(self, session: Session, run_id: str) -> None:
-        """A run is over: a root run that holds part of a tree settles what the
-        tree spent under it."""
-        self._children.pop(run_id, None)
+        """A run is over: its membership is dropped, and a root run that holds
+        part of a tree settles what the tree spent under it."""
+        member = self.members.get(run_id)
+        if member is not None and member["session"] == session.key():
+            del self.members[run_id]
         entry = self._runs.get(run_id)
         if entry is None or entry["session"] != session.key():
             return
@@ -302,8 +433,10 @@ def refuse_spent_tree(session: Session, now: int, hold_ttl: int) -> None:
     :raises HarnessError: ``run_not_permitted``.
     """
     tree, _ = saved_refs(session)
-    # A decision takes no context: it resumes as a turn with none.
-    if tree is None or budget.route("none", "", False, False, True, False)["tree"] != "continue":
+    # A decision takes no context: it resumes as a turn with none, and that
+    # turn's would-be membership says whether it continues a tree.
+    would_be = membership("none", session.key(), "decision", None, tree, session.child_depth(), 0)
+    if tree is None or would_be["route"] != "continue":
         return
     state = session.plan_store().get(_key(tree))
     if not isinstance(state, dict) or state.get("planId") != tree["run"]:

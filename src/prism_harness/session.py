@@ -360,7 +360,18 @@ class Session:
         run = self.state().get("run")
         return run if isinstance(run, dict) and isinstance(run.get("id"), str) else None
 
-    def begin_run(self, run_id: str, mode: str, provider: str, model: str) -> Session:
+    def begin_run(
+        self,
+        run_id: str,
+        mode: str,
+        provider: str,
+        model: str,
+        tree: dict[str, str] | str = "none",
+        depth: int = 0,
+    ) -> Session:
+        """``tree`` and ``depth`` are the run's membership (G-381): the run tree
+        it belongs to (``{session, run}``, ``host`` or ``none``) and how deep it
+        is, decided once when the run begins."""
         return self._write(
             "run",
             {
@@ -369,6 +380,8 @@ class Session:
                 "mode": mode,
                 "provider": provider,
                 "model": model,
+                "tree": dict(tree) if isinstance(tree, dict) else tree,
+                "depth": depth,
                 "started_at": datetime.now(timezone.utc).isoformat(),
             },
         )

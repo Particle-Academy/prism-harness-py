@@ -9,7 +9,7 @@ from typing import Any
 from prism_harness.errors import HarnessError
 from prism_harness.harness import PrismHarness
 from prism_harness.modes import AgentMode
-from prism_harness.runtime import AgentRuntime, current_turn_run
+from prism_harness.runtime import AgentRuntime, current_turn_run, current_turn_run_id
 from prism_harness.session import Session
 from prism_harness.subagents import MAX_DEPTH, ChildBinding, RunBudget, RunContext, Subagent
 from prism_harness.tools import HarnessTool
@@ -119,7 +119,11 @@ class SubagentRunner:
         # The child's provider and model come from declarations, never from a
         # write onto the child's session: that slot belongs to the runner's
         # address, and a copied override there would outlive this call.
-        # Marked as the runner's own: only this context saves the child's binding.
+        # Marked as the runner's own: only this context saves the child's
+        # binding. Marked with the ACTIVE turn on the parent session, never the
+        # run id this tool was built with nor one a caller passes: the child
+        # joins that turn's run tree only once the runtime has verified it is
+        # live and its ledger is this context's (G-381).
         child_context = self._runtime._starting_child(
             context.for_child(subagent, parent_run_id).with_binding(
                 ChildBinding(
@@ -132,7 +136,9 @@ class SubagentRunner:
                     else None,
                     parent_mode_model=parent_mode.model if same_agent and parent_mode else None,
                 )
-            )
+            ),
+            current_turn_run_id(parent.key()),
+            parent.key(),
         )
 
         # Refused BEFORE the child's address is built. Two modes naming each
