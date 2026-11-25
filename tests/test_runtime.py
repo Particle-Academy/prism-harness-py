@@ -164,7 +164,7 @@ def a_session(mode: str = "chat") -> Session:
         stores={"ephemeral": "memory", "durable": "files"},
     )
     session = harness.for_(Participant("User", 1)).session("support")
-    session.using_mode(mode).using_provider("anthropic").using_model("claude-sonnet-4-5")
+    session.using_mode(mode).using_provider("anthropic").using_model("claude-sonnet-5-5")
     return session
 
 

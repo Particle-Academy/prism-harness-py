@@ -21,11 +21,11 @@ harness = PrismHarness(
 )
 
 session = harness.for_(Participant("User", 7)).session("support")
-session.using_mode("plan").using_model("claude-sonnet-4-5")
+session.using_mode("plan").using_model("claude-sonnet-5-5")
 
 
 def advance(live):
-    live.begin_run("run-1", "plan", "anthropic", "claude-sonnet-4-5")
+    live.begin_run("run-1", "plan", "anthropic", "claude-sonnet-5-5")
 
 
 session.lock(advance)  # whatever must not happen twice
