@@ -345,11 +345,14 @@ def test_two_turns_are_never_granted_the_same_remainder() -> None:
             rig.session, run_id, RunContext.root(run_id, RunBudget(8)), None, 300
         )
 
+    # Each as the step's own turn, as advance() runs it.
+    serving = plans.serving_step(rig.session)
     assert turn("run_a").budget.max_steps == 8
     assert turn("run_b").budget.max_steps == 2
     with pytest.raises(HarnessError) as caught:
         turn("run_c")
     assert caught.value.code == "plan_budget_exhausted"
+    serving()
 
 
 def test_model_budget_fields_and_a_per_call_run_tree_cannot_change_the_budget() -> None:

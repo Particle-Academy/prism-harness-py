@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -27,7 +28,7 @@ from prism_harness.events import (
     ToolDenied,
 )
 from prism_harness.modes import AgentMode, ModeRegistry
-from prism_harness.plans.service import Plans
+from prism_harness.plans.service import Plans, refuse_unfunded_decision
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import ChildBinding, RunBudget, RunContext
@@ -294,6 +295,7 @@ class AgentRuntime:
             reason,
             options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
             options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
+            self._plans.now,
         )
         self._plans.decided(session)
 
@@ -627,9 +629,12 @@ class AgentRuntime:
             # the tree ledger its caller hands back in.
             if prompt == "" and context is None:
                 run.ledger.record_steps(approval_run_steps(stored) or 0)
-            # G-366: a turn serving a plan step with a shared budget holds what
-            # the plan has left, after the paused steps it continues are counted.
-            run = self._plans.plan_turn(session, run_id, run, context, self.lock_ttl(session))
+            # G-366: one of the plan's own turns, with a shared budget, holds
+            # what the plan has left, after the paused steps it continues are
+            # counted. Any other turn is unchanged.
+            run = self._plans.plan_turn(
+                session, run_id, run, context, self.lock_ttl(session), prompt
+            )
             if scope is not None:
                 names, legacy = scope
                 if legacy:
@@ -867,6 +872,11 @@ class AgentRuntime:
                     }
                 if run.binding is not None:
                     row["harness_binding"] = run.binding.to_row()
+                    # The shared plan budget the tree spends from, so the child
+                    # resumed outside the runner spends from it too (G-366).
+                    plan_ledger = self._plans.ledger_of(run_id) or self._plans.active_ledger()
+                    if plan_ledger is not None:
+                        row["harness_plan_ledger"] = plan_ledger
             thread.record([row], run_id)
 
             if failed_finish:
@@ -1297,6 +1307,7 @@ def _record_decision(
     reason: str | None,
     ttl_seconds: float,
     wait_seconds: float,
+    clock: Callable[[], int] | None = None,
 ) -> None:
     """The pending check and the write, together under the session lock.
 
@@ -1309,6 +1320,15 @@ def _record_decision(
         rows = [entry.message for entry in live.thread().messages()]
         if approval_id not in pending_approval_ids(rows):
             raise HarnessError.approval_not_pending(approval_id)
+        # A decision a spent shared plan budget could not run is refused here,
+        # with nothing recorded, rather than consumed by a resume that is then
+        # refused (G-366).
+        refuse_unfunded_decision(
+            live,
+            approval_id,
+            clock() if clock is not None else int(time.time()),
+            int(ttl_seconds),
+        )
 
         run = live.run()
 

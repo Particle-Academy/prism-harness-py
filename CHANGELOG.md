@@ -6,12 +6,19 @@
 
 - Plan budgets (G-366): the `Plans` config's `budget.mode` is `per_step` (the
   default, unchanged behaviour), `shared` (one ledger of `max_steps` model
-  steps and optionally `max_cost_usd` across every turn that serves the plan,
+  steps and optionally `max_cost_usd` across the plan's own turns,
   kept in the plan store) or `none`. Host code can choose it per plan with
   `PlanHandle.use_budget()`; `PlanHandle.budget()` reports it. A spent shared
   budget blocks the plan with `plan_budget_exhausted`, emits
   `PlanBudgetExhausted` once, and cannot be resumed. See "Plan budgets" in the
   README.
+- A shared plan budget charges only the plan's own turns: the turn
+  `advance()` runs for the step it claimed, the resume of an approval that step
+  asked for, and a subagent child those turns started, resumed outside the
+  runner. A person chatting while a step waits is no longer charged to the plan
+  or refused for it. A decision on the step's approval is refused with
+  `plan_budget_exhausted`, recording nothing, once the shared budget is spent,
+  and the next `advance()` blocks the plan.
 
 - Agent plans (G-360). An agent proposes a plan, a person approves it, and
   `runtime.plan(session).advance()` works through it one step per turn. Off

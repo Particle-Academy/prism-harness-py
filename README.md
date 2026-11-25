@@ -505,7 +505,7 @@ The model and per-call options cannot choose it or widen it.
 | mode | what it means |
 |---|---|
 | `per_step` (default) | Each step's turn gets the per-turn budget, as before. |
-| `shared` | Every turn that serves the plan also spends from one ledger: `max_steps` model steps in total (required) and optionally `max_cost_usd`. Per-turn limits still apply to each turn. When the ledger is spent, the plan is blocked with `plan_budget_exhausted` and a `PlanBudgetExhausted` event (`plan.budget_exhausted`) is emitted once. |
+| `shared` | The plan's own turns also spend from one ledger: `max_steps` model steps in total (required) and optionally `max_cost_usd`. Per-turn limits still apply to each turn. When the ledger is spent, the plan is blocked with `plan_budget_exhausted` and a `PlanBudgetExhausted` event (`plan.budget_exhausted`) is emitted once. |
 | `none` | No plan-level budget. Per-turn limits, the plan's own limits and agent spend ceilings still apply. |
 
 ```python
@@ -527,6 +527,19 @@ handed a run tree of its own is refused (`plan.budget_context`) rather than run
 outside the ledger. An invalid mode or limit raises `PlanBudgetInvalid` when
 `Plans` is built. A turn the ledger refuses raises `HarnessError` with code
 `plan_budget_exhausted`.
+
+The plan's own turns are the turn `advance()` runs for the step it claimed, the
+resume of an approval that step asked for, and a subagent child those turns
+started when it is resumed outside the runner. Any other turn on the session,
+such as the person chatting while a step waits on their approval, spends
+nothing from the plan's budget and is never refused for it. A decision
+(`record_approval()` or `runtime.decide()`) on an approval the step asked for
+is refused with `plan_budget_exhausted`, recording nothing, when the shared
+budget is already spent, and the next `advance()` blocks the plan, so an
+approval is never consumed by a resume that cannot run. A subagent child paused
+inside a plan's turn carries the plan's ledger on its paused row
+(`harness_plan_ledger`), so its resume spends from that budget and a decision
+on it is refused the same way once the budget is spent.
 
 ## Task lists
 
