@@ -23142,9 +23142,79 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "none"
+              }
+            },
+            {
+              "route": {
+                "tree": "open",
+                "plan": "none"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "none"
+              }
+            },
+            {
+              "route": {
+                "tree": "open",
+                "plan": "none"
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0054",
@@ -23354,9 +23424,137 @@
             "holds": [],
             "exhaustion": "steps"
           }
+        },
+        "ts": {
+          "results": [
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "none"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "none"
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 5,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 1,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "refused": "plan_budget_exhausted",
+              "limit": "steps"
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 5,
+            "max_cost_micros": null,
+            "steps": 5,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": "steps"
+          }
+        },
+        "py": {
+          "results": [
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "continue",
+                "plan": "child"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "none"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "none"
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 5,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 1,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "refused": "plan_budget_exhausted",
+              "limit": "steps"
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 5,
+            "max_cost_micros": null,
+            "steps": 5,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": "steps"
+          }
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0055",
@@ -23495,9 +23693,85 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "route": {
+                "tree": "open",
+                "plan": "own"
+              }
+            },
+            {
+              "route": {
+                "tree": "open",
+                "plan": "own"
+              }
+            },
+            {
+              "route": {
+                "tree": "open",
+                "plan": "none"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "refused"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "refused"
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "route": {
+                "tree": "open",
+                "plan": "own"
+              }
+            },
+            {
+              "route": {
+                "tree": "open",
+                "plan": "own"
+              }
+            },
+            {
+              "route": {
+                "tree": "open",
+                "plan": "none"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "refused"
+              }
+            },
+            {
+              "route": {
+                "tree": "none",
+                "plan": "refused"
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     }
   ]
 }
