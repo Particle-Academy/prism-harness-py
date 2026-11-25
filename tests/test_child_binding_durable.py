@@ -25,6 +25,7 @@ from prism_harness import (
     ChildBinding,
     Durability,
     HarnessError,
+    HarnessEvents,
     LlmRequest,
     LlmResponse,
     LlmToolCall,
@@ -34,6 +35,7 @@ from prism_harness import (
     PrismHarness,
     RunBudget,
     RunContext,
+    RunStarted,
     Session,
     SubagentRunner,
     ToolRegistry,
@@ -82,7 +84,12 @@ CHEAP = ("custom-cheap", "cheap-model")
 
 
 class Rig:
-    def __init__(self) -> None:
+    def __init__(self, chat_steps: int = 20) -> None:
+        self.events = HarnessEvents()
+        self.depths: list[int] = []
+        self.events.listen(
+            lambda event: self.depths.append(event.depth) if isinstance(event, RunStarted) else None
+        )
         self.queue: list[LlmResponse] = []
         self.requests: list[LlmRequest] = []
         self._call = 0
@@ -95,7 +102,7 @@ class Rig:
             "chat": {
                 "system_prompt": "You delegate.",
                 "tools": ["research"],
-                "max_steps": 20,
+                "max_steps": chat_steps,
                 "subagents": {
                     "research": {
                         "mode": "research",
@@ -125,6 +132,7 @@ class Rig:
             modes=ModeRegistry({"default": "chat", "modes": modes}),
             tools=tools,
             config={"provider": "openai", "model": "root-model"},
+            events=self.events,
         )
 
     def _client(self, request: LlmRequest) -> LlmResponse:
@@ -312,3 +320,44 @@ def test_a_binding_the_host_put_on_its_own_context_is_never_saved() -> None:
 
     assert rig.sent(0) == [CHEAP, ("openai", "root-model")]
     assert session.child_binding() is None
+
+
+# A child the runner starts again, now under a run tree the host built, keeps
+# the run tree reference it saved under an earlier tree: the runner's own
+# context spends from the host's tree and is never held against the saved one,
+# and the saved one is never replaced with nothing, so a later turn the runner
+# does not start still continues it rather than a fresh root budget. A child's
+# depth is saved with it, so a later turn on the child cannot reset its nesting.
+
+
+def test_a_child_started_again_under_a_host_tree_keeps_its_saved_tree() -> None:
+    rig = Rig(chat_steps=3)
+    rig.calls(("research", {"task": "Find the weather."}))
+    rig.calls(("weather", {"city": "Paris"}))
+    rig.text("Parent answer.")
+    rig.runtime.send(rig.session(), "Go")
+    child = rig.session("chat::sub::research")
+    refs = child.child_refs()
+    assert refs is not None and refs["tree"] is not None
+    before = len(rig.requests)
+
+    rig.calls(("research", {"task": "Again."}))
+    rig.text("Child again.")
+    rig.text("Parent again.")
+    rig.runtime.send(rig.session(), "Again", context=RunContext.root("host_root", RunBudget(100)))
+
+    assert CHEAP in rig.sent(before)
+    assert child.child_refs() == refs
+
+
+def test_a_child_keeps_the_depth_the_runner_started_it_at() -> None:
+    rig, child = started_child(False)
+    assert child.child_depth() == 1
+    start = len(rig.depths)
+
+    rig.text("Again.")
+    rig.runtime.send(child, "New question")
+    rig.text("Hosted.")
+    rig.runtime.send(child, "Hosted question", context=RunContext.root("host_root", RunBudget(100)))
+
+    assert rig.depths[start:] == [1, 1]

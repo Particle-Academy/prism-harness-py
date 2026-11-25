@@ -76,8 +76,6 @@ class RunTrees:
         context the subagent runner built to start a child, even under a run
         tree the host built, otherwise :meth:`context_kind`. A context the host
         builds and binds itself is never the runner's."""
-        if context is not None and self._child_contexts.get(id(context)) is context:
-            return "runner"
         return self.context_kind(context)
 
     def context_kind(self, context: RunContext | None) -> str:
@@ -87,6 +85,11 @@ class RunTrees:
         ``host`` for any other context."""
         if context is None:
             return "none"
+        # The context the subagent runner built to start a child is the
+        # runner's, even under a run tree the host built: it spends from the
+        # tree it was derived from and never from a tree its session saved.
+        if self._child_contexts.get(id(context)) is context:
+            return "runner"
         entry = self._runs.get(context.root_run_id)
         return "runner" if entry is not None and entry["ledger"] is context.ledger else "host"
 

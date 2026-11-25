@@ -68,6 +68,17 @@
 
 ### Fixed
 
+- A subagent child the runner starts again under a run tree the host built
+  is no longer held against the run tree its session saved before (which
+  refused it once that tree was spent, or charged it to that tree), and that
+  saved tree is kept rather than replaced with nothing, so a later turn the
+  runner does not start still continues it instead of a fresh root budget.
+  The runner's own context is the runner's for the budget routes too, as in
+  the PHP reference.
+- A subagent child's depth is saved with its binding, and every later turn on
+  the child runs at least that deep, a host context included, as in the PHP
+  reference: a resumed child can no longer reset its nesting depth.
+
 - A subagent child the runner starts under a run tree the HOST built (the
   parent's turn was handed a `RunContext` the host made) now saves its
   provider/model binding with the child session, as the PHP reference does.
