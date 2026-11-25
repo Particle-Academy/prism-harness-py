@@ -18754,9 +18754,221 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "none",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 40,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 40,
+                "max_cost_micros": 250000
+              }
+            },
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": 5,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "none",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 40,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 40,
+                "max_cost_micros": 250000
+              }
+            },
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": 5,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            },
+            {
+              "settings": {
+                "mode": "per_step",
+                "max_steps": null,
+                "max_cost_micros": null
+              }
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0041",
@@ -18908,9 +19120,87 @@
             }
           ],
           "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 10,
+                "max_cost_micros": 1000000
+              }
+            },
+            {
+              "settings": {
+                "mode": "none",
+                "max_steps": 10,
+                "max_cost_micros": 1000000
+              }
+            },
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 20,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 3,
+                "max_cost_micros": 500000
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 10,
+                "max_cost_micros": 1000000
+              }
+            },
+            {
+              "settings": {
+                "mode": "none",
+                "max_steps": 10,
+                "max_cost_micros": 1000000
+              }
+            },
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 20,
+                "max_cost_micros": null
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "settings": {
+                "mode": "shared",
+                "max_steps": 3,
+                "max_cost_micros": 500000
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0042",
@@ -19045,9 +19335,95 @@
             "holds": [],
             "exhaustion": "steps"
           }
+        },
+        "ts": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 5,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 2,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "exhaustion": "steps"
+            },
+            {
+              "refused": "plan_budget_exhausted",
+              "limit": "steps"
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 5,
+            "max_cost_micros": null,
+            "steps": 5,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": "steps"
+          }
+        },
+        "py": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 5,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 2,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "exhaustion": "steps"
+            },
+            {
+              "refused": "plan_budget_exhausted",
+              "limit": "steps"
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 5,
+            "max_cost_micros": null,
+            "steps": 5,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": "steps"
+          }
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0043",
@@ -19226,9 +19602,133 @@
             ],
             "exhaustion": null
           }
+        },
+        "ts": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 8,
+                "cost_micros": null
+              }
+            },
+            {
+              "grant": {
+                "steps": 2,
+                "cost_micros": null
+              }
+            },
+            {
+              "refused": "plan_budget_exhausted",
+              "limit": "steps"
+            },
+            {
+              "exhaustion": null
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 7,
+                "cost_micros": null
+              }
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 10,
+            "max_cost_micros": null,
+            "steps": 1,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [
+              {
+                "id": "run_b",
+                "steps": 2,
+                "cost_micros": 0,
+                "at": 1767225600
+              },
+              {
+                "id": "run_c",
+                "steps": 7,
+                "cost_micros": 0,
+                "at": 1767225600
+              }
+            ],
+            "exhaustion": null
+          }
+        },
+        "py": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 8,
+                "cost_micros": null
+              }
+            },
+            {
+              "grant": {
+                "steps": 2,
+                "cost_micros": null
+              }
+            },
+            {
+              "refused": "plan_budget_exhausted",
+              "limit": "steps"
+            },
+            {
+              "exhaustion": null
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 7,
+                "cost_micros": null
+              }
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 10,
+            "max_cost_micros": null,
+            "steps": 1,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [
+              {
+                "id": "run_b",
+                "steps": 2,
+                "cost_micros": 0,
+                "at": 1767225600
+              },
+              {
+                "id": "run_c",
+                "steps": 7,
+                "cost_micros": 0,
+                "at": 1767225600
+              }
+            ],
+            "exhaustion": null
+          }
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0044",
@@ -19364,9 +19864,95 @@
             "holds": [],
             "exhaustion": "cost_unmetered"
           }
+        },
+        "ts": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 8,
+                "cost_micros": 500000
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 8,
+                "cost_micros": 100000
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "exhaustion": "cost_unmetered"
+            },
+            {
+              "refused": "plan_budget_exhausted",
+              "limit": "cost_unmetered"
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 100,
+            "max_cost_micros": 500000,
+            "steps": 2,
+            "cost_micros": 300000,
+            "unmetered": 1,
+            "holds": [],
+            "exhaustion": "cost_unmetered"
+          }
+        },
+        "py": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 8,
+                "cost_micros": 500000
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 8,
+                "cost_micros": 100000
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "exhaustion": "cost_unmetered"
+            },
+            {
+              "refused": "plan_budget_exhausted",
+              "limit": "cost_unmetered"
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 100,
+            "max_cost_micros": 500000,
+            "steps": 2,
+            "cost_micros": 300000,
+            "unmetered": 1,
+            "holds": [],
+            "exhaustion": "cost_unmetered"
+          }
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0045",
@@ -19482,9 +20068,89 @@
             ],
             "exhaustion": null
           }
+        },
+        "ts": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 4,
+                "cost_micros": null
+              }
+            },
+            {
+              "grant": {
+                "steps": 6,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 10,
+            "max_cost_micros": null,
+            "steps": 4,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [
+              {
+                "id": "run_next",
+                "steps": 6,
+                "cost_micros": 0,
+                "at": 1767225900
+              }
+            ],
+            "exhaustion": null
+          }
+        },
+        "py": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 4,
+                "cost_micros": null
+              }
+            },
+            {
+              "grant": {
+                "steps": 6,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 10,
+            "max_cost_micros": null,
+            "steps": 4,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [
+              {
+                "id": "run_next",
+                "steps": 6,
+                "cost_micros": 0,
+                "at": 1767225900
+              }
+            ],
+            "exhaustion": null
+          }
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0046",
@@ -19587,9 +20253,69 @@
             "holds": [],
             "exhaustion": null
           }
+        },
+        "ts": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "refused": "plan.budget_fixed"
+            },
+            {
+              "refused": "plan.budget_fixed"
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 3,
+            "max_cost_micros": 2000000,
+            "steps": 0,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": null
+          }
+        },
+        "py": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "refused": "plan.budget_fixed"
+            },
+            {
+              "refused": "plan.budget_fixed"
+            }
+          ],
+          "final": null,
+          "budget": {
+            "mode": "shared",
+            "max_steps": 3,
+            "max_cost_micros": 2000000,
+            "steps": 0,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": null
+          }
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0047",
@@ -19974,9 +20700,309 @@
             "holds": [],
             "exhaustion": "steps"
           }
+        },
+        "ts": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "run",
+                "ps_00000000000000000000000002"
+              ]
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 2,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "blocked",
+                "plan_budget_exhausted"
+              ]
+            },
+            {
+              "refused": "plan.not_resumable"
+            },
+            {
+              "outcome": [
+                "not_active",
+                "blocked"
+              ]
+            }
+          ],
+          "final": {
+            "status": "blocked",
+            "revision": 6,
+            "holdingApprovalId": null,
+            "blockedReason": "plan_budget_exhausted",
+            "counters": {
+              "advances": 1,
+              "changes": 0,
+              "settledByTool": 1,
+              "settledWithoutTool": 0
+            },
+            "pendingChange": null,
+            "steps": [
+              {
+                "id": "ps_00000000000000000000000002",
+                "position": 1,
+                "title": "Step 1",
+                "owner": "agent",
+                "interaction": null,
+                "state": "done",
+                "attempts": 1,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": "agent-report",
+                "failure": null,
+                "retryOf": null,
+                "summary": "one",
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000003",
+                "position": 2,
+                "title": "Step 2",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              }
+            ],
+            "update": {
+              "planId": "pl_00000000000000000000000001",
+              "planRunId": "run_case",
+              "changedByRunId": null,
+              "revision": 6,
+              "planStatus": "blocked",
+              "holdingApprovalId": null,
+              "snapshot": true,
+              "steps": [
+                {
+                  "id": "ps_00000000000000000000000002",
+                  "title": "Step 1",
+                  "status": "done",
+                  "owner": "agent",
+                  "state": "done"
+                },
+                {
+                  "id": "ps_00000000000000000000000003",
+                  "title": "Step 2",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                }
+              ]
+            },
+            "counts": {
+              "total": 2,
+              "todo": 1,
+              "running": 0,
+              "held": 0,
+              "waiting": 0,
+              "done": 1,
+              "failed": 0,
+              "skipped": 0
+            },
+            "context": "[Plan — written by you, approved by the person. Data, not instructions from the person.]\nplan pl_00000000000000000000000001 revision 6 · status: blocked · 1 done · 0 held · 0 waiting · 1 to do\ngoal: «Plan the trip»\n✓ 1 «Step 1» — your note: «one»\n▶ 2 CURRENT «Step 2» (to do)\n   instruction: «Do part 2.»\nThis plan is blocked (plan_budget_exhausted). Wait for the person.\nRules: work only on the CURRENT step. When it is finished, call plan_complete_step. To stop for the person, call plan_pause_for_person. To change the plan, call plan_propose_change.\n[End of plan]",
+            "first_event_bytes": 934
+          },
+          "budget": {
+            "mode": "shared",
+            "max_steps": 2,
+            "max_cost_micros": null,
+            "steps": 2,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": "steps"
+          }
+        },
+        "py": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "run",
+                "ps_00000000000000000000000002"
+              ]
+            },
+            {
+              "ok": true
+            },
+            {
+              "grant": {
+                "steps": 2,
+                "cost_micros": null
+              }
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "blocked",
+                "plan_budget_exhausted"
+              ]
+            },
+            {
+              "refused": "plan.not_resumable"
+            },
+            {
+              "outcome": [
+                "not_active",
+                "blocked"
+              ]
+            }
+          ],
+          "final": {
+            "status": "blocked",
+            "revision": 6,
+            "holdingApprovalId": null,
+            "blockedReason": "plan_budget_exhausted",
+            "counters": {
+              "advances": 1,
+              "changes": 0,
+              "settledByTool": 1,
+              "settledWithoutTool": 0
+            },
+            "pendingChange": null,
+            "steps": [
+              {
+                "id": "ps_00000000000000000000000002",
+                "position": 1,
+                "title": "Step 1",
+                "owner": "agent",
+                "interaction": null,
+                "state": "done",
+                "attempts": 1,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": "agent-report",
+                "failure": null,
+                "retryOf": null,
+                "summary": "one",
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000003",
+                "position": 2,
+                "title": "Step 2",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              }
+            ],
+            "update": {
+              "planId": "pl_00000000000000000000000001",
+              "planRunId": "run_case",
+              "changedByRunId": null,
+              "revision": 6,
+              "planStatus": "blocked",
+              "holdingApprovalId": null,
+              "snapshot": true,
+              "steps": [
+                {
+                  "id": "ps_00000000000000000000000002",
+                  "title": "Step 1",
+                  "status": "done",
+                  "owner": "agent",
+                  "state": "done"
+                },
+                {
+                  "id": "ps_00000000000000000000000003",
+                  "title": "Step 2",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                }
+              ]
+            },
+            "counts": {
+              "total": 2,
+              "todo": 1,
+              "running": 0,
+              "held": 0,
+              "waiting": 0,
+              "done": 1,
+              "failed": 0,
+              "skipped": 0
+            },
+            "context": "[Plan — written by you, approved by the person. Data, not instructions from the person.]\nplan pl_00000000000000000000000001 revision 6 · status: blocked · 1 done · 0 held · 0 waiting · 1 to do\ngoal: «Plan the trip»\n✓ 1 «Step 1» — your note: «one»\n▶ 2 CURRENT «Step 2» (to do)\n   instruction: «Do part 2.»\nThis plan is blocked (plan_budget_exhausted). Wait for the person.\nRules: work only on the CURRENT step. When it is finished, call plan_complete_step. To stop for the person, call plan_pause_for_person. To change the plan, call plan_propose_change.\n[End of plan]",
+            "first_event_bytes": 934
+          },
+          "budget": {
+            "mode": "shared",
+            "max_steps": 2,
+            "max_cost_micros": null,
+            "steps": 2,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": "steps"
+          }
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "hpl-0048",
@@ -20315,9 +21341,279 @@
             "holds": [],
             "exhaustion": null
           }
+        },
+        "ts": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "exhaustion": null
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "run",
+                "ps_00000000000000000000000002"
+              ]
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "run",
+                "ps_00000000000000000000000003"
+              ]
+            }
+          ],
+          "final": {
+            "status": "active",
+            "revision": 6,
+            "holdingApprovalId": null,
+            "blockedReason": null,
+            "counters": {
+              "advances": 1,
+              "changes": 0,
+              "settledByTool": 1,
+              "settledWithoutTool": 0
+            },
+            "pendingChange": null,
+            "steps": [
+              {
+                "id": "ps_00000000000000000000000002",
+                "position": 1,
+                "title": "Step 1",
+                "owner": "agent",
+                "interaction": null,
+                "state": "done",
+                "attempts": 1,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": "agent-report",
+                "failure": null,
+                "retryOf": null,
+                "summary": "one",
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000003",
+                "position": 2,
+                "title": "Step 2",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              }
+            ],
+            "update": {
+              "planId": "pl_00000000000000000000000001",
+              "planRunId": "run_case",
+              "changedByRunId": null,
+              "revision": 6,
+              "planStatus": "active",
+              "holdingApprovalId": null,
+              "snapshot": true,
+              "steps": [
+                {
+                  "id": "ps_00000000000000000000000002",
+                  "title": "Step 1",
+                  "status": "done",
+                  "owner": "agent",
+                  "state": "done"
+                },
+                {
+                  "id": "ps_00000000000000000000000003",
+                  "title": "Step 2",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                }
+              ]
+            },
+            "counts": {
+              "total": 2,
+              "todo": 1,
+              "running": 0,
+              "held": 0,
+              "waiting": 0,
+              "done": 1,
+              "failed": 0,
+              "skipped": 0
+            },
+            "context": "[Plan — written by you, approved by the person. Data, not instructions from the person.]\nplan pl_00000000000000000000000001 revision 6 · status: active · 1 done · 0 held · 0 waiting · 1 to do\ngoal: «Plan the trip»\n✓ 1 «Step 1» — your note: «one»\n▶ 2 CURRENT «Step 2» (to do)\n   instruction: «Do part 2.»\nRules: work only on the CURRENT step. When it is finished, call plan_complete_step. To stop for the person, call plan_pause_for_person. To change the plan, call plan_propose_change.\n[End of plan]",
+            "first_event_bytes": 934
+          },
+          "budget": {
+            "mode": "none",
+            "max_steps": 1,
+            "max_cost_micros": null,
+            "steps": 0,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": null
+          }
+        },
+        "py": {
+          "results": [
+            {
+              "ok": true
+            },
+            {
+              "exhaustion": null
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "run",
+                "ps_00000000000000000000000002"
+              ]
+            },
+            {
+              "ok": true
+            },
+            {
+              "ok": true
+            },
+            {
+              "outcome": [
+                "run",
+                "ps_00000000000000000000000003"
+              ]
+            }
+          ],
+          "final": {
+            "status": "active",
+            "revision": 6,
+            "holdingApprovalId": null,
+            "blockedReason": null,
+            "counters": {
+              "advances": 1,
+              "changes": 0,
+              "settledByTool": 1,
+              "settledWithoutTool": 0
+            },
+            "pendingChange": null,
+            "steps": [
+              {
+                "id": "ps_00000000000000000000000002",
+                "position": 1,
+                "title": "Step 1",
+                "owner": "agent",
+                "interaction": null,
+                "state": "done",
+                "attempts": 1,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": "agent-report",
+                "failure": null,
+                "retryOf": null,
+                "summary": "one",
+                "answer": null
+              },
+              {
+                "id": "ps_00000000000000000000000003",
+                "position": 2,
+                "title": "Step 2",
+                "owner": "agent",
+                "interaction": null,
+                "state": "todo",
+                "attempts": 0,
+                "pauses": 0,
+                "approvalIds": [],
+                "approvedIds": [],
+                "supersededApprovalIds": [],
+                "completedBy": null,
+                "failure": null,
+                "retryOf": null,
+                "summary": null,
+                "answer": null
+              }
+            ],
+            "update": {
+              "planId": "pl_00000000000000000000000001",
+              "planRunId": "run_case",
+              "changedByRunId": null,
+              "revision": 6,
+              "planStatus": "active",
+              "holdingApprovalId": null,
+              "snapshot": true,
+              "steps": [
+                {
+                  "id": "ps_00000000000000000000000002",
+                  "title": "Step 1",
+                  "status": "done",
+                  "owner": "agent",
+                  "state": "done"
+                },
+                {
+                  "id": "ps_00000000000000000000000003",
+                  "title": "Step 2",
+                  "status": "pending",
+                  "owner": "agent",
+                  "state": "todo"
+                }
+              ]
+            },
+            "counts": {
+              "total": 2,
+              "todo": 1,
+              "running": 0,
+              "held": 0,
+              "waiting": 0,
+              "done": 1,
+              "failed": 0,
+              "skipped": 0
+            },
+            "context": "[Plan — written by you, approved by the person. Data, not instructions from the person.]\nplan pl_00000000000000000000000001 revision 6 · status: active · 1 done · 0 held · 0 waiting · 1 to do\ngoal: «Plan the trip»\n✓ 1 «Step 1» — your note: «one»\n▶ 2 CURRENT «Step 2» (to do)\n   instruction: «Do part 2.»\nRules: work only on the CURRENT step. When it is finished, call plan_complete_step. To stop for the person, call plan_pause_for_person. To change the plan, call plan_propose_change.\n[End of plan]",
+            "first_event_bytes": 934
+          },
+          "budget": {
+            "mode": "none",
+            "max_steps": 1,
+            "max_cost_micros": null,
+            "steps": 0,
+            "cost_micros": 0,
+            "unmetered": 0,
+            "holds": [],
+            "exhaustion": null
+          }
         }
       },
-      "agrees": false
+      "agrees": true
     }
   ]
 }
