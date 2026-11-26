@@ -510,23 +510,24 @@ def test_a_resumed_root_is_held_to_its_tree_record_so_the_tree_never_overspends(
     assert record["steps"] == record["max_steps"]
     ran, requests = rig.ran.count("weather"), len(rig.requests)
 
-    # Spent, the tree refuses the parked child before anything is recorded.
-    with pytest.raises(HarnessError) as caught:
-        rig.runtime.decide(child, approval, True)
-    assert caught.value.code == "run_not_permitted"
-    assert pending_approval_ids([entry.message for entry in child.thread().messages()]) == [
-        approval
-    ]
-    assert rig.ran.count("weather") == ran
+    # Spent, the tree grants the parked child no model step (G-387): its
+    # decision is accepted and acted on, and the tree is never overspent.
+    rig.runtime.decide(child, approval, True)
+    resumed = rig.runtime.send(child, "")
+    assert resumed.finish_reason == "budget_exhausted"
+    assert pending_approval_ids([entry.message for entry in child.thread().messages()]) == []
+    assert rig.ran.count("weather") == ran + 1
     assert len(rig.requests) == requests
+    after = tree_record(ada, {"session": ada.key(), "run": first})
+    assert isinstance(after, dict) and after["steps"] <= after["max_steps"]
 
 
 # A root resumed into a tree its sibling spent while the root waited still has
-# steps of its own, so its resume is refused by the tree, before anything is
-# recorded. A refused resume still begins a run, and the session keeps the
-# trees of its newest runs only. The run the thread is parked on is never
-# dropped, so retrying the refused resume never escapes the tree.
-def test_a_resume_of_a_tree_its_sibling_spent_is_refused_however_often_it_is_retried() -> None:
+# steps of its own, but the tree grants it none (G-387): its decision is acted
+# on with no model step. Every resume still begins a run, and the session keeps
+# the trees of its newest runs only. The run the thread is parked on is never
+# dropped, so retrying the resume never escapes the tree.
+def test_a_resume_of_a_tree_its_sibling_spent_takes_no_step_however_often_it_is_retried() -> None:
     rig = Rig(chat_steps=6)
     ada = rig.session("ada")
     rig.calls(("research", {"task": "Look."}))  # ada
@@ -544,20 +545,18 @@ def test_a_resume_of_a_tree_its_sibling_spent_is_refused_however_often_it_is_ret
     assert isinstance(record, dict) and record["steps"] == record["max_steps"]
     ran, requests = len(rig.ran), len(rig.requests)
 
-    with pytest.raises(HarnessError) as caught:
-        rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
-    assert caught.value.code == "run_not_permitted"
-    refusals = 0
+    rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+    spent = 0
     for _ in range(23):
-        try:
-            rig.runtime.send(ada, "")
-        except HarnessError as error:
-            assert error.code == "run_not_permitted"
-            refusals += 1
+        if rig.runtime.send(ada, "").finish_reason == "budget_exhausted":
+            spent += 1
 
-    assert refusals == 23
-    assert len(rig.ran) == ran
+    assert spent == 23
+    # The approved call ran once; no model step was taken.
+    assert len(rig.ran) == ran + 1
     assert len(rig.requests) == requests
+    record = tree_record(ada, {"session": ada.key(), "run": parked.run_id})
+    assert isinstance(record, dict) and record["steps"] == record["max_steps"]
 
 
 class RecordingStore(DurableMemoryStore):
@@ -693,7 +692,10 @@ def test_two_concurrent_resumes_of_a_parked_root_never_overspend_its_tree() -> N
     record = tree_record(ada, {"session": ada.key(), "run": parked.run_id})
     assert isinstance(record, dict)
     assert record["steps"] <= record["max_steps"]
-    assert seen["second"] == "run_not_permitted"
+    # The second resume found the tree held by the first: it was granted no
+    # model step and ended on its step budget, never past the tree (G-387).
+    assert isinstance(seen["second"], str)
+    assert seen["second"].startswith("step budget exhausted")
 
 
 class HookedStore(DurableMemoryStore):
@@ -775,7 +777,7 @@ def test_child_started_refuses_the_delegation_when_the_tree_cannot_fund_it() -> 
     trees = RunTrees()
     member = membership("none", ada.key(), "run_root", None, None, 0, 0)
     assert member["route"] == "open"
-    trees.root_run(ada, "run_root", RunContext.root("run_root", RunBudget(5)), member, 300)
+    trees.root_run(ada, "run_root", RunContext.root("run_root", RunBudget(5)), member, 300, 5)
     spent = budget.open_ledger(
         "run_root", {"mode": "shared", "max_steps": 1, "max_cost_micros": None}
     )
@@ -827,10 +829,11 @@ def test_a_root_whose_hold_a_sibling_limited_keeps_its_own_steps_left_when_it_pa
     assert isinstance(record, dict) and record["steps"] <= record["max_steps"]
 
 
-# A paused row written before the field existed carries no steps left: the
-# decision is checked against the tree's record as before, and a spent tree
-# refuses it before anything is recorded.
-def test_a_legacy_paused_row_without_steps_left_is_checked_against_the_tree() -> None:
+# A paused row written before the field existed carries no steps used: a
+# root falls back to counting its own transcript, which misses its child's
+# step, and the tree's record still bounds it. The decision is accepted and
+# acted on with no model step (G-387), never refused for a spent tree.
+def test_a_legacy_paused_row_without_steps_used_is_still_bounded_by_its_tree() -> None:
     rig = Rig(chat_steps=3)
     ada = rig.session("ada")
     rig.calls(("survey", {"task": "S"}))  # ada
@@ -843,12 +846,13 @@ def test_a_legacy_paused_row_without_steps_left_is_checked_against_the_tree() ->
     assert isinstance(stored, dict)
     for entry in stored["messages"]:
         entry["message"].pop("harness_steps_left", None)
+        entry["message"].pop("harness_steps_used", None)
     store.put(key, stored)
-    rows = len(ada.thread().messages())
+    requests = len(rig.requests)
 
-    with pytest.raises(HarnessError) as caught:
-        rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+    rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+    resumed = rig.runtime.send(ada, "")
 
-    assert caught.value.code == "run_not_permitted"
-    assert len(ada.thread().messages()) == rows
-    assert rig.ran.count("weather") == 0
+    assert resumed.finish_reason == "budget_exhausted"
+    assert rig.ran.count("weather") == 1
+    assert len(rig.requests) == requests

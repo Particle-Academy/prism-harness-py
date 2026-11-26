@@ -37,6 +37,7 @@ from prism_harness.plans import (
     view,
 )
 from prism_harness.plans import text as plan_text
+from prism_harness.run_budgets import RunBudgets
 from prism_harness.run_trees import RunTrees
 
 CORPUS: dict[str, Any] = json.loads(
@@ -86,6 +87,8 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
                 results.append(plans_binding_context_op(op, state))
             elif op["op"] in ("tree_membership", "kept_refs"):
                 results.append(plans_tree_op(op))
+            elif op["op"] == "step_allowance":
+                results.append(plans_allowance_op(op))
             elif str(op["op"]).startswith("budget_"):
                 results.append(plans_budget_op(op, state, now))
             else:
@@ -177,6 +180,12 @@ def plans_tree_op(op: dict[str, Any]) -> dict[str, Any]:
         }
     except ValueError:
         return {"invalid": True}
+
+
+def plans_allowance_op(op: dict[str, Any]) -> dict[str, Any]:
+    """How many model steps a run may take (G-387): the pure
+    RunBudgets.allowance the runtime asks once when a run begins."""
+    return RunBudgets.allowance(op)
 
 
 def plans_budget_op(op: dict[str, Any], state: dict[str, Any], now: int) -> dict[str, Any]:
@@ -408,7 +417,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 71
+        assert len(CASES) == 83
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:
