@@ -44,6 +44,8 @@ from prism_harness import (
     SubagentRunner,
     ToolRegistry,
 )
+from prism_harness.plans import budget
+from prism_harness.run_trees import RunTrees, membership
 from prism_harness.runtime import current_turn_run
 from prism_harness.thread_rows import pending_approval_ids
 
@@ -690,3 +692,51 @@ def test_a_capability_revoked_while_the_runner_saves_a_child_stays_revoked() -> 
 
     assert HookedStore.hook is None
     assert rig.session("ada", "chat::sub::research").capability("grant") is None
+
+
+# A root that delegates and then parks on its last step: its own budget, the
+# tree's ledger with its child's steps on it, is spent. The decision check and
+# the resume read that one measure, so the decision is never accepted and then
+# refused on every resume: the resume acts on it and stops on its own budget.
+def test_a_root_that_delegated_and_parked_on_its_last_step_acts_on_its_decision() -> None:
+    rig = Rig(chat_steps=3)
+    ada = rig.session("ada")
+    rig.calls(("survey", {"task": "S"}))  # ada
+    rig.text("Child answer.")  # her child
+    rig.calls(("weather", {"city": "Paris"}))  # ada parks on her last step
+    parked = rig.runtime.send(ada, "Go")
+    assert len(parked.pending_approvals) == 1
+    requests = len(rig.requests)
+
+    rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+    resumed = rig.runtime.send(ada, "")
+
+    assert rig.ran.count("weather") == 1
+    assert resumed.stopped_because is not None
+    assert len(rig.requests) == requests
+    record = tree_record(ada, {"session": ada.key(), "run": parked.run_id})
+    assert isinstance(record, dict)
+    assert record["steps"] <= record["max_steps"]
+
+
+# No public seam reaches a refused grant in child_started: a fresh root's tree
+# is named by its own new run id, so it has no record before its first
+# delegation, and a root with no step left is stopped by the runner's own
+# exhaustion check before a child is spawned. Pinned one level down: an open
+# root whose tree record appears, already spent, before it delegates.
+def test_child_started_refuses_the_delegation_when_the_tree_cannot_fund_it() -> None:
+    rig = Rig()
+    ada = rig.session("ada")
+    trees = RunTrees()
+    member = membership("none", ada.key(), "run_root", None, None, 0, 0)
+    assert member["route"] == "open"
+    trees.root_run(ada, "run_root", RunContext.root("run_root", RunBudget(5)), member, 300)
+    spent = budget.open_ledger(
+        "run_root", {"mode": "shared", "max_steps": 1, "max_cost_micros": None}
+    )
+    ada.plan_store().put(f"{ada.key()}:run-tree:run_root", {**spent, "steps": 1})
+
+    with pytest.raises(HarnessError) as caught:
+        trees.child_started(ada, member, 300)
+
+    assert caught.value.code == "run_not_permitted"
