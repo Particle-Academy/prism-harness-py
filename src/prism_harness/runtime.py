@@ -672,6 +672,15 @@ class AgentRuntime:
                 "reporting rather than executing."
             )
 
+        if kind == "runner" and (run.ledger.cancelled or _time_spent(run)):
+            # A runner start whose run was cancelled, or ran out of time,
+            # after the runner's own pre-check is refused before anything is
+            # written: no run state, no tree hold, no binding, ceiling, count
+            # or references on the child.
+            raise HarnessError.run_not_permitted(
+                "This run may not proceed: its run tree is cancelled or out of time."
+            )
+
         session.begin_run(
             run_id, mode.name, provider, model, tree=member["tree"], depth=member["depth"]
         )

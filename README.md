@@ -317,8 +317,8 @@ What one run tree is:
   (`child_binding_missing`) or one too deep (`run_not_permitted`). Recording
   a denial runs nothing. A resume whose context's ledger is cancelled, or
   whose context's time limit is spent, acts on NO recorded decision, approval
-  or denial: nothing runs and nothing is written, and the decisions stay
-  recorded for a later resume that can act on them.
+  or denial: no decision is acted on and the thread is unchanged, and the
+  decisions stay recorded for a later resume that can act on them.
 - Every other `send()` starts a new run tree, with nothing spent.
 - So does every `runtime.plan(session).advance()` that is not handed a
   `RunContext`: each step of a plan gets the full ceiling. To hold a whole plan
