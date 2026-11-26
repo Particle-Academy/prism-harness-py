@@ -37,7 +37,7 @@ from prism_harness import (
     ToolRegistry,
     record_approval,
 )
-from prism_harness.plans import PlanRefused, Plans, machine
+from prism_harness.plans import PlanRefused, Plans, budget, machine
 from prism_harness.thread_rows import paused_approval_row, pending_approval_ids
 
 
@@ -517,15 +517,43 @@ def test_a_paused_step_row_reports_the_plan_narrowed_steps_left() -> None:
     assert row["harness_steps_left"] == 2
 
 
-def test_an_approval_on_a_step_whose_shared_cost_is_spent_is_still_refused() -> None:
+def test_an_approval_on_a_step_whose_shared_cost_is_spent_is_acted_on_with_no_step() -> None:
     rig = Rig({"budget": {"mode": "shared", "max_steps": 5, "max_cost_usd": 1.0}})
     approval = held(rig)
+    before = len(rig.requests)
     # The fake model reports no cost: a cost cap it cannot be held to is spent.
+    # Acting on the approved call makes no provider call, so it is not refused.
+    rig.runtime.decide(rig.session, approval, True)
+    resumed = rig.runtime.send(rig.session, "")
+
+    assert resumed.finish_reason == "budget_exhausted"
+    assert pending(rig) == []
+    assert rig.ran.count("weather") == 1
+    assert len(rig.requests) == before
+
+
+def test_a_plan_turn_whose_remainder_another_turn_holds_is_refused_recording_nothing() -> None:
+    rig = Rig({"budget": {"mode": "shared", "max_steps": 3}})
+    rig.active(1)
+    plans = rig.runtime.plans
+    plan_id = rig.plan()["id"]
+    # Another worker's live turn holds all three steps, as plan_turn would.
+    plans._budget_write(
+        rig.session,
+        plan_id,
+        plans.budget_for(rig.session, plan_id),
+        lambda state: budget.reserve(state, "other_turn", 3, None, plans.now(), 300),
+    )
+    rows = len(rig.session.thread().messages())
+    before = len(rig.requests)
+    rig.text("unused")
+
     with pytest.raises(HarnessError) as caught:
-        rig.runtime.decide(rig.session, approval, True)
+        rig.advance()
+
     assert caught.value.code == "plan_budget_exhausted"
-    assert pending(rig) == [approval]
-    assert rig.ran.count("weather") == 0
+    assert len(rig.session.thread().messages()) == rows
+    assert len(rig.requests) == before
 
 
 def test_a_failed_plan_budget_write_closes_the_run() -> None:
@@ -644,16 +672,20 @@ def test_a_new_message_to_a_child_session_is_charged_to_the_shared_plan_budget()
     assert rig.budget()["steps"] == spent + 1
 
 
-def test_a_host_context_on_a_child_whose_shared_plan_budget_is_spent_takes_no_step() -> None:
+def test_a_host_context_on_a_child_whose_shared_plan_budget_is_spent_is_refused() -> None:
     rig = Rig({"budget": {"mode": "shared", "max_steps": 3}}, subagents=True)
     child, _ = paused_child(rig)
     before = len(rig.requests)
+    rows = len(child.thread().messages())
 
-    response = rig.runtime.send(
-        child, "New question", context=RunContext.root("host_root", RunBudget(100))
-    )
-    assert response.finish_reason == "budget_exhausted"
+    # A new message resumes no decision: with nothing left it is refused
+    # before anything is recorded.
+    with pytest.raises(HarnessError):
+        rig.runtime.send(
+            child, "New question", context=RunContext.root("host_root", RunBudget(100))
+        )
     assert len(rig.requests) == before
+    assert len(child.thread().messages()) == rows
     assert rig.budget()["steps"] == 3
 
 

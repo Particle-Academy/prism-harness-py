@@ -20,6 +20,7 @@ import pytest
 from test_plan_budget import Rig, pending
 
 from prism_harness import (
+    HarnessError,
     Participant,
     RunBudget,
     RunContext,
@@ -126,15 +127,18 @@ def test_a_new_message_to_a_child_session_runs_on_what_its_tree_has_left() -> No
     assert len(rig.requests) - before == 1
 
 
-def test_a_new_message_to_a_child_session_whose_tree_is_spent_takes_no_model_step() -> None:
+def test_a_new_message_to_a_child_session_whose_tree_is_spent_is_refused() -> None:
     rig, child, _ = paused_child(3)
     before = len(rig.requests)
+    rows = len(child.thread().messages())
 
-    # A spent tree grants 0 steps (G-387), not a refusal.
-    response = rig.runtime.send(child, "New question")
-
-    assert response.finish_reason == "budget_exhausted"
+    # A new message resumes no decision: with nothing left it is refused
+    # before anything is recorded. Only a resume acts without a model step.
+    with pytest.raises(HarnessError) as caught:
+        rig.runtime.send(child, "New question")
+    assert caught.value.code == "run_not_permitted"
     assert len(rig.requests) == before
+    assert len(child.thread().messages()) == rows
 
 
 def test_a_host_context_on_a_resumed_child_is_narrowed_to_what_its_tree_has_left() -> None:
@@ -151,13 +155,15 @@ def test_a_host_context_on_a_resumed_child_is_narrowed_to_what_its_tree_has_left
     assert len(rig.requests) - before == 1
 
 
-def test_a_host_context_on_a_child_whose_tree_is_spent_takes_no_model_step() -> None:
+def test_a_host_context_on_a_child_whose_tree_is_spent_is_refused() -> None:
     rig, child, _ = paused_child(3)
     before = len(rig.requests)
+    rows = len(child.thread().messages())
 
-    response = rig.runtime.send(
-        child, "New question", context=RunContext.root("host_root", RunBudget(100))
-    )
-
-    assert response.finish_reason == "budget_exhausted"
+    with pytest.raises(HarnessError) as caught:
+        rig.runtime.send(
+            child, "New question", context=RunContext.root("host_root", RunBudget(100))
+        )
+    assert caught.value.code == "run_not_permitted"
     assert len(rig.requests) == before
+    assert len(child.thread().messages()) == rows

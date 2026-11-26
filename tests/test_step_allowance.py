@@ -337,7 +337,7 @@ def test_a_child_whose_sibling_spent_the_tree_acts_on_its_approved_call(path: st
     assert world.pending(world.child("beta")) == []
 
 
-def test_a_decision_on_a_child_whose_tree_cost_is_spent_is_still_refused() -> None:
+def test_a_decision_on_a_child_whose_tree_cost_is_spent_is_acted_on_with_no_step() -> None:
     world = World(lead_steps=5)
     world.calls(("alpha", {"task": "A"}))
     world.calls(("echo", {"who": "alpha"}))
@@ -352,12 +352,16 @@ def test_a_decision_on_a_child_whose_tree_cost_is_spent_is_still_refused() -> No
     state = store.get(key)
     assert isinstance(state, dict)
     store.put(key, {**state, "max_cost_micros": 10, "cost_micros": 10})
+    requests = len(world.requests)
 
-    with pytest.raises(HarnessError) as caught:
-        record_approval(world.fresh().child("alpha"), world.pending(alpha)[0], True)
+    # Acting on an approved call makes no provider call: a spent COST budget
+    # never refuses the decision either; the resume takes no model step.
+    record_approval(world.fresh().child("alpha"), world.pending(alpha)[0], True)
+    response = world.fresh().runtime.send(world.child("alpha"), "")
 
-    assert caught.value.code == "run_not_permitted"
-    assert world.ran.count("echo") == 0
+    assert response.finish_reason == "budget_exhausted"
+    assert world.ran.count("echo") == 1
+    assert len(world.requests) == requests
 
 
 # -- re-park: the ceiling holds in total across many approvals
@@ -548,3 +552,53 @@ def test_an_approved_subagent_call_on_a_spent_run_starts_no_model_step() -> None
     assert response.finish_reason == "budget_exhausted"
     assert len(world.requests) == 1
     assert world.ran == []
+
+
+def _thread_length(session: Session) -> int:
+    return len(session.thread().messages())
+
+
+def test_a_root_row_forged_to_zero_steps_used_gains_nothing() -> None:
+    world = World(lead_steps=8)
+    world.runtime.send(world.root(), "Go")  # 1 of 8 used, parked
+    rewrite_paused_row(world.root(), lambda row: row.update(harness_steps_used=0))
+
+    approve_and_resume(world, world.root, 10)
+
+    # used is the larger of the row's count and the transcript's: 7 more at most.
+    assert len(world.requests) == 8
+
+
+def test_a_new_message_to_a_child_whose_saved_ceiling_is_spent_is_refused() -> None:
+    world = World()
+    world.run_child_in_runner("big")
+    child = world.child("big")
+    # The saved ceiling says nothing is left (as a store writer could set it).
+    child._write_child({"child_ceiling": 0})  # a test standing in for a store writer
+    rows = _thread_length(child)
+
+    with pytest.raises(HarnessError) as caught:
+        world.fresh().runtime.send(world.child("big"), "New question")
+
+    assert caught.value.code == "run_not_permitted"
+    assert _thread_length(world.child("big")) == rows
+    assert len(world.requests) == 1
+
+
+def test_a_new_message_to_a_child_whose_sibling_spent_the_tree_is_refused() -> None:
+    world = World(lead_steps=5)
+    world.calls(("alpha", {"task": "A"}), ("beta", {"task": "B"}))
+    world.calls(("echo", {"who": "alpha"}))
+    world.calls(("echo", {"who": "beta"}))
+    world.text("Root done.")  # 4 of 5
+    world.runtime.send(world.root(), "Go")
+    approve_and_resume(world, lambda: world.child("alpha"), 1)  # 5 of 5
+    rows = _thread_length(world.child("beta"))
+    requests = len(world.requests)
+
+    with pytest.raises(HarnessError) as caught:
+        world.fresh().runtime.send(world.child("beta"), "New question")
+
+    assert caught.value.code == "run_not_permitted"
+    assert _thread_length(world.child("beta")) == rows
+    assert len(world.requests) == requests
