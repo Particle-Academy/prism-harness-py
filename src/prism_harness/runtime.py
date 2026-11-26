@@ -778,8 +778,13 @@ class AgentRuntime:
                 # belongs to, so every later turn on the child the runner did
                 # not start continues them. Only the runner's own context
                 # writes them, and a runner start always overwrites them.
+                # The tree hold FIRST: a tree that cannot fund the delegation
+                # refuses it before anything is written on the child. The hold
+                # is the spending run's, settled when that run ends, so a write
+                # failing after it leaves no hold behind.
+                self._trees.child_started(session, member, self.lock_ttl(session))
                 # A new delegation: its count starts again at 0, and this run
-                # holds what it may take, settled when it ends. Claimed FIRST:
+                # holds what it may take, settled when it ends. Claimed next:
                 # refused while a turn on the child holds steps, and then
                 # nothing (binding, ceiling, refs) is saved.
                 session.claim_child_steps(
@@ -793,7 +798,6 @@ class AgentRuntime:
                 session.remember_child_binding(
                     runner_binding.to_row(), member["depth"], first["ceiling"]
                 )
-                self._trees.child_started(session, member, self.lock_ttl(session))
                 # The tree it is in, with the plan ledger of the run it spends
                 # from. Under a run tree the host built, or none, there is no
                 # durable tree to name: the references the child saved before
