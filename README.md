@@ -267,9 +267,11 @@ What one run tree is:
   with the root run holding all of it, and the root run settles what the whole
   tree spent when it ends. The resumed child holds what the tree has left
   before it calls a model and settles what it spent when it ends. Once the
-  allowance is spent it takes no further model step; a decision on its approval
-  is still accepted and acted on, because acting on a decision costs no model
-  step. The tree and the shared
+  allowance is spent (steps or cost) it takes no further model step; a
+  decision on its approval is still accepted and acted on, because acting on a
+  decision makes no provider call. A new message to it with nothing left is
+  refused (`run_not_permitted`) before anything is recorded. The tree and the
+  shared
   plan budget a child belongs to are also saved with the child session when
   the runner starts it, so EVERY turn on the child the runner did not start
   continues them: a new message instead of an answer as much as the answer,
@@ -556,11 +558,11 @@ refused for having one). Any other turn on the session,
 such as the person chatting while a step waits on their approval, spends
 nothing from the plan's budget and is never refused for it. A decision
 (`record_approval()` or `runtime.decide()`) on an approval the step asked for
-is accepted and acted on even when the shared budget's steps are spent: acting
-on a decision costs no model step, so the resume runs the approved call and
-takes none, and the next `advance()` blocks the plan. A decision is refused
-with `plan_budget_exhausted`, recording nothing, only when the budget's COST is
-spent, which the resume would refuse too. A subagent child paused inside a
+is accepted and acted on even when the shared budget is spent: acting on a
+decision makes no provider call, so the resume runs the approved call and
+takes no model step, and the next `advance()` blocks the plan. A plan turn with
+a new prompt and nothing left (another turn holds the remainder) is refused
+with `plan_budget_exhausted` before anything is recorded. A subagent child paused inside a
 plan's turn carries the plan's ledger on its paused row
 (`harness_plan_ledger`), so its resume spends from that budget, under the same
 rule.

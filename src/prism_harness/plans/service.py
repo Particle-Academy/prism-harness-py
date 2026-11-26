@@ -20,7 +20,6 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from prism_harness.errors import HarnessError
 from prism_harness.events import HarnessEvents, PlanBudgetExhausted, PlanUpdated
 from prism_harness.plans import budget, machine, view
 from prism_harness.plans.ids import PlanIds
@@ -39,7 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from prism_harness.session import Session
     from prism_harness.subagents import RunContext
 
-__all__ = ["HEARTBEAT_KEY", "INDEX_KEY", "Plans", "refuse_unfunded_decision"]
+__all__ = ["HEARTBEAT_KEY", "INDEX_KEY", "Plans"]
 
 INDEX_KEY = "prism-harness:plans:live"
 HEARTBEAT_KEY = "prism-harness:plans:heartbeat"
@@ -376,12 +375,6 @@ class Plans:
         ledger = _ACTIVE_LEDGER.get()
         return None if ledger is None else dict(ledger)
 
-    def assert_decision_funded(self, session: Session, approval_id: str, hold_ttl: int) -> None:
-        """Refuse, before it is recorded, a decision whose resume would spend
-        from a shared plan budget that is already spent. See
-        :func:`refuse_unfunded_decision`."""
-        refuse_unfunded_decision(session, approval_id, self.now(), hold_ttl)
-
     def _ledger_for(
         self, session: Session, prompt: str, context: RunContext | None, kind: str = "none"
     ) -> dict[str, Any] | None:
@@ -421,9 +414,10 @@ class Plans:
         what the run's own budget has left). Any other run is returned
         unchanged, with None.
 
-        A ledger whose STEPS are spent grants 0 steps; it does not refuse the
-        turn: acting on recorded decisions costs no model step (G-387). A
-        ledger whose COST is spent still refuses, as the decision check does.
+        A ledger whose steps or cost are spent grants 0 steps; it does not
+        refuse the turn here: acting on recorded decisions makes no provider
+        call (G-387). The runtime refuses a turn with a new prompt and nothing
+        left, with ``plan_budget_exhausted`` when this grant is what is 0.
 
         The plan's own turns are the one advance() runs for the step it
         claimed, the resume of an approval that step asked for, and any turn on
@@ -459,26 +453,17 @@ class Plans:
         now = self.now()
 
         def hold(state: dict[str, Any]) -> tuple[dict[str, Any], Any]:
-            limit = budget.cost_refusal(state, now, hold_ttl)
-            if limit is not None:
-                return state, {"refused": budget.EXHAUSTED, "limit": limit}
             if asked < 1:
                 return state, {"steps": 0, "cost_micros": None}
             following, grant = budget.reserve(state, run_id, asked, turn_cost, now, hold_ttl)
             if "refused" in grant:
-                # Spent on steps: 0 steps and no hold (cost was asked above).
+                # Spent, on steps or on cost: 0 steps and no hold.
                 return state, {"steps": 0, "cost_micros": None}
             return following, grant
 
         _, grant = self._budget_write_at(
             session.plan_store(), target["session"], target["plan"], self._budget, hold
         )
-        if "refused" in grant:
-            raise HarnessError(
-                budget.EXHAUSTED,
-                "This plan step may not proceed (plan_budget_exhausted): the plan's shared "
-                f"{grant['limit']} budget is spent.",
-            )
         narrowed = (
             run
             if grant["cost_micros"] is None
@@ -694,44 +679,6 @@ def _routed_ledger(
         return None
     child = _child_ledger(session)
     return None if child is None else {**child, "refused": False}
-
-
-def refuse_unfunded_decision(session: Session, approval_id: str, now: int, hold_ttl: int) -> None:
-    """Refuse, before anything is recorded, a decision on an approval whose
-    resume would spend from a shared plan budget whose cost is already spent.
-
-    Recorded, the decision would be consumed by a resume the budget then
-    refuses, and the approved call would never run. Read from the stored plan
-    and its budget record only (G-366): the approval the plan's head step asked
-    for, or the paused row of a subagent child started by a plan turn.
-    """
-    store = session.plan_store()
-    payload = store.get(_key(session.key()))
-    plan = payload.get("plan") if isinstance(payload, dict) else None
-    step = _active_agent_step(plan if isinstance(plan, dict) else None)
-    # A decision takes no context and resumes as a turn with no new message.
-    if isinstance(plan, dict) and step is not None and approval_id in step["approvalIds"]:
-        target: dict[str, Any] | None = {"session": session.key(), "plan": plan["id"]}
-    else:
-        tree, plan_ledger = saved_refs(session)
-        route = budget.route("none", "", False, False, tree is not None, plan_ledger is not None)
-        target = _child_ledger(session) if route["plan"] == "child" else None
-    if target is None:
-        return
-    record = _shared_record(store, target["session"], target["plan"])
-    if record is None:
-        return
-    # The one decision rule (G-387): a spent STEP budget never refuses a
-    # decision, since acting on it costs no model step; the resume acts on it
-    # and takes none. Only a spent COST budget refuses, asked as plan_turn asks
-    # it, live holds counted.
-    limit = budget.cost_refusal(record, now, hold_ttl)
-    if limit is not None:
-        raise HarnessError(
-            budget.EXHAUSTED,
-            "This plan step may not proceed (plan_budget_exhausted): the plan's shared "
-            f"{limit} budget is spent.",
-        )
 
 
 def _report_quietly(failure: BaseException) -> None:

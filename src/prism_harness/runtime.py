@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
@@ -29,9 +28,10 @@ from prism_harness.events import (
     ToolDenied,
 )
 from prism_harness.modes import AgentMode, ModeRegistry
-from prism_harness.plans.service import Plans, refuse_unfunded_decision
+from prism_harness.plans import budget as plan_budget
+from prism_harness.plans.service import Plans
 from prism_harness.run_budgets import allowance, fail_closed, steps_used
-from prism_harness.run_trees import RunTrees, kept_refs, refuse_spent_tree, saved_refs
+from prism_harness.run_trees import RunTrees, kept_refs, saved_refs
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import ChildBinding, RunBudget, RunContext, binding_route
@@ -332,7 +332,6 @@ class AgentRuntime:
             reason,
             options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
             options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
-            self._plans.now,
         )
         self._plans.decided(session)
 
@@ -773,6 +772,22 @@ class AgentRuntime:
             )
             facts = {**facts, "tree_left": tree_left, "plan_left": plan_left}
             allowed = _allowance(facts, forged)
+            if prompt != "" and allowed["allowance"] == 0:
+                # A NEW prompt resumes no recorded decision, so with nothing
+                # left it is refused before anything is recorded. Only a resume
+                # acts on its decisions with no model step (G-387).
+                asked = (
+                    first["own_left"] if tree_left is None else min(first["own_left"], tree_left)
+                )
+                if plan_left == 0 and asked > 0:
+                    raise HarnessError(
+                        plan_budget.EXHAUSTED,
+                        "This plan step may not proceed (plan_budget_exhausted): the plan's "
+                        "shared budget has nothing left.",
+                    )
+                raise HarnessError.run_not_permitted(
+                    "This run may not proceed: its step allowance is spent."
+                )
             # Narrowed ONCE, and recorded beside the membership: the loop's
             # step gate, the paused row, a subagent's pre-check and a child's
             # tree hold all read this and nothing else.
@@ -883,11 +898,10 @@ class AgentRuntime:
 
         ``used`` is read for any turn that resumes a parked run (no new
         message, a row waiting on approvals) except a runner start, which is
-        a new run: from the row's ``harness_steps_used``. A row written before
-        that field existed falls back, for a root only, to counting the
-        transcript's model steps; a legacy child has no such count to trust
-        (its tree still bounds it), and a child with a saved ceiling, which
-        always parks with its count, fails closed without one."""
+        a new run: the larger of the row's ``harness_steps_used`` and the
+        transcript's count of the run's own model steps. A row written before
+        that field existed uses the transcript's count; a child with a saved
+        ceiling, which always parks with its count, fails closed without one."""
         used = 0
         forged = False
         if kind != "runner":
@@ -903,11 +917,12 @@ class AgentRuntime:
                 # never read as a laxer, legacy measure.
                 forged = True
             elif found == "absent":
-                root = session.child_refs() is None and saved_binding is None
-                used = (approval_run_steps(stored) or 0) if root else 0
+                used = approval_run_steps(stored) or 0
             else:
+                # The larger of the row's count and the transcript's, so a row
+                # forged lower than the steps it shows gains nothing.
                 assert isinstance(found, int)
-                used = found
+                used = max(found, approval_run_steps(stored) or 0)
         steps_ceiling = self._settings(session).get("max_steps_ceiling")
         return {
             "context": kind,
@@ -1575,7 +1590,6 @@ def _record_decision(
     reason: str | None,
     ttl_seconds: float,
     wait_seconds: float,
-    clock: Callable[[], int] | None = None,
 ) -> None:
     """The pending check and the write, together under the session lock.
 
@@ -1588,13 +1602,11 @@ def _record_decision(
         rows = [entry.message for entry in live.thread().messages()]
         if approval_id not in pending_approval_ids(rows):
             raise HarnessError.approval_not_pending(approval_id)
-        # A decision a spent shared plan budget could not run is refused here,
-        # with nothing recorded, rather than consumed by a resume that is then
-        # refused (G-366).
-        now = clock() if clock is not None else int(time.time())
-        refuse_unfunded_decision(live, approval_id, now, int(ttl_seconds))
-        # The same for a subagent child whose run tree has nothing left.
-        refuse_spent_tree(live, int(time.time()), int(ttl_seconds))
+        # No budget refuses a decision (G-387): acting on an approved call
+        # makes no provider call, so a resume with no steps or cost left acts
+        # on it and takes no model step. Only what the call itself cannot
+        # pass (its binding, depth, a call-level limit) is refused, when the
+        # resume runs it.
 
         run = live.run()
 

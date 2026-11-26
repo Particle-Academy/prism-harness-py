@@ -45,7 +45,6 @@ __all__ = [
     "RunTrees",
     "kept_refs",
     "membership",
-    "refuse_spent_tree",
     "saved_refs",
     "saved_tree",
 ]
@@ -297,12 +296,10 @@ class RunTrees:
         is opened here, in the same locked change, so a second resume of the
         same parked run finds it and is bounded by it.
 
-        A spent tree, or a record that is gone, grants 0 steps; it is not a
-        refusal: the run still acts on the decisions recorded for it, which
-        costs no model step (G-387).
-
-        :raises HarnessError: ``run_not_permitted`` when the tree's COST budget
-            is spent (the same question :func:`refuse_spent_tree` asks).
+        A tree whose steps or cost are spent, or a record that is gone, grants
+        0 steps and is never a refusal here: a resume still acts on the
+        decisions recorded for it, which makes no provider call (G-387). The
+        runtime refuses a turn with a new prompt and nothing left.
         """
         route = member["route"]
         if route not in ("open", "continue"):
@@ -345,20 +342,15 @@ class RunTrees:
                     tree["run"],
                     {"mode": "shared", "max_steps": asked, "max_cost_micros": turn_cost},
                 )
-            limit = budget.cost_refusal(state, now, hold_ttl)
-            if limit is not None:
-                return None, {"refused": budget.EXHAUSTED, "limit": limit}
             if asked < 1:
                 return None, {"steps": 0, "cost_micros": None}
             following, grant = budget.reserve(state, run_id, asked, turn_cost, now, hold_ttl)
             if "refused" in grant:
-                # Spent on steps: 0 steps and no hold (cost was asked above).
+                # Spent, on steps or on cost: 0 steps and no hold.
                 return None, {"steps": 0, "cost_micros": None}
             return following, grant
 
         grant = _write(session.plan_store(), tree, hold)
-        if "refused" in grant:
-            raise HarnessError.run_not_permitted(f"This run may not proceed: {grant['limit']}.")
         narrowed = (
             run
             if grant["cost_micros"] is None
@@ -498,46 +490,6 @@ def _saved_plan_ledger(row: Mapping[str, Any] | None) -> dict[str, str] | None:
     ):
         return {"session": saved["session"], "plan": saved["plan"]}
     return None
-
-
-def refuse_spent_tree(session: Session, now: int, hold_ttl: int) -> None:
-    """Refuse, before anything is recorded, a decision on a session whose
-    resume the run tree's record would refuse: recorded, it would be consumed
-    by that resume, and the approved call would never run.
-
-    The one decision rule (G-387): acting on a recorded decision costs no model
-    step, so a spent STEP budget never refuses one (the resume acts on it and
-    takes no model step). Only what the resume itself would refuse is refused
-    here: a tree whose COST budget is spent, asked exactly as
-    :meth:`RunTrees.root_run` asks it.
-
-    :raises HarnessError: ``run_not_permitted``.
-    """
-    saved, _ = saved_refs(session)
-    # A decision takes no context: it resumes as a turn with none and no new
-    # message, and that turn's would-be membership says whether it is held to
-    # a tree's record.
-    would_be = membership(
-        "none",
-        session.key(),
-        "decision",
-        None,
-        saved,
-        session.child_depth(),
-        0,
-        session.resumed_run_tree(""),
-    )
-    tree = would_be["tree"]
-    if not isinstance(tree, dict) or would_be["route"] not in ("open", "continue"):
-        return
-    if would_be["route"] == "open" and tree["run"] == "decision":
-        return
-    state = _record_of(session, tree)
-    if state is None:
-        return
-    limit = budget.cost_refusal(state, now, hold_ttl)
-    if limit is not None:
-        raise HarnessError.run_not_permitted(f"This run may not proceed: {limit}.")
 
 
 def _record_of(session: Session, tree: Tree) -> dict[str, Any] | None:
