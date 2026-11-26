@@ -69,6 +69,20 @@ class SubagentTool:
         # whose ledger or budget raises comes back as a framed failure naming
         # the exception's class, never its message.
         try:
+            # The context the host wired this tool with is checked FIRST: a
+            # host that cancelled it (or whose budget on it is spent, or whose
+            # cost cap is unenforceable) stops the delegation inside a turn
+            # too, before it is narrowed to the turn.
+            host = self._context
+            stop = host.ledger.exhaustion(host.budget)
+            if stop is not None:
+                return _refused(
+                    self._subagent.name,
+                    "run_none",
+                    self._parent_run_id,
+                    "cancelled" if host.ledger.cancelled else "exhausted",
+                    stop,
+                ).to_tool_result()
             context = within_turn(self._context, current_turn_run(self._parent.key()))
         except Exception as error:  # noqa: BLE001 - framed, not propagated
             return _refused(
@@ -240,6 +254,20 @@ class SubagentRunner:
         except HarnessError as error:
             # Its agent's ceiling is spent, or cannot be enforced: a gate on the
             # tree, not the child's failure, and only that agent stops.
+            stopped = child_context.ledger.exhaustion(child_context.budget)
+            if stopped is not None and (
+                child_context.ledger.cancelled or stopped.startswith("time budget")
+            ):
+                # Cancelled or out of time after the pre-check: refused by the
+                # runtime before it wrote anything, and framed as the pre-check
+                # frames it.
+                return _refused(
+                    subagent.name,
+                    run_id,
+                    parent_run_id,
+                    "cancelled" if child_context.ledger.cancelled else "exhausted",
+                    stopped,
+                )
             if error.code == CHILD_TURN_LIVE:
                 # A turn on the child took a hold after the early check: the
                 # reset refused inside its own locked write, nothing saved.

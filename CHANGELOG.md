@@ -57,8 +57,12 @@
   `run_not_permitted` for one nested at or past the depth ceiling.
 - A turn whose run context's ledger is cancelled, or whose context's time
   limit is spent, acts on no recorded decision (an approval or a denial) and
-  records no new prompt: it ends on the cancellation or the time before any
-  model step, and the decisions stay recorded for a later resume.
+  leaves the thread unchanged: it ends on the cancellation or the time before
+  any model step, and the decisions stay recorded for a later resume.
+- The subagent tool checks the context the host wired it with first: when the
+  host cancelled it, or its budget on it is spent (including a cost cap it
+  cannot enforce), the tool returns the framed `cancelled` / `exhausted`
+  result inside a turn too, with no child model step.
 - The subagent runner refuses (`denied`, a framed result, nothing written to
   the child): a task that is not a string; a blank task, one made only of
   U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200D, U+2028,
@@ -68,7 +72,10 @@
   person's pending decision; and a delegation while a turn on the child holds
   steps from its count. A child stuck on an approval no decision could act on
   can be started again. The refusal for a turn still holding steps is part of the
-  reset's own locked write, and a refused start saves nothing on the child.
+  reset's own locked write, and a refused start leaves the child's saved
+  records (its binding, ceiling, references and count) unchanged. A runner
+  start whose run is cancelled or out of time by the time it reaches the
+  child is refused before anything is written for it.
 - Everything the runner does around a child (building its session, reading
   its thread, its count, the budget arithmetic) is framed: any exception comes
   back to the parent as a `failed` result naming the exception's class (and a
