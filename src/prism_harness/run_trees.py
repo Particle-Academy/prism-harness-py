@@ -413,6 +413,14 @@ class RunTrees:
             entry["held"] = True
         return {"session": tree["session"], "run": tree["run"]}
 
+    def held_max_steps(self, run_id: str) -> int | None:
+        """The step ceiling a run holding from its tree's record was narrowed
+        to, or None for a run that holds nothing."""
+        entry = self._runs.get(run_id)
+        if entry is None or entry["held"] is not True:
+            return None
+        return int(entry["budget"].max_steps)
+
     def holds(self, run_id: str) -> bool:
         """Whether this run spends from a durable run tree record."""
         entry = self._runs.get(run_id)
