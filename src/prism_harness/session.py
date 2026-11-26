@@ -374,6 +374,15 @@ class Session:
         def change() -> None:
             stored = self._durable.get(key)
             current = dict(stored) if isinstance(stored, dict) else {}
+            if reset:
+                # A new delegation never resets under a turn still spending on
+                # the child: refused here, in the same locked write, so no
+                # check-then-act window lets a reset wipe a live hold.
+                standing = _child_steps(current.get("child_steps"))
+                if standing is not None and any(
+                    now - hold["at"] < hold_ttl for hold in standing["holds"].values()
+                ):
+                    raise HarnessError(CHILD_TURN_LIVE, "A turn on this child is still running.")
             record: dict[str, Any] | None = (
                 {"steps": 0, "holds": {}, "charged": {}}
                 if reset
@@ -750,6 +759,10 @@ def _stored_pair(value: object, first: str, second: str) -> dict[str, str] | Non
 
 
 _MAX_SAFE_INTEGER = 2**53 - 1
+
+#: The code a runner start is refused with when a turn on the child still
+#: holds steps from its delegation count.
+CHILD_TURN_LIVE = "child_turn_live"
 
 
 def _whole(value: object) -> bool:

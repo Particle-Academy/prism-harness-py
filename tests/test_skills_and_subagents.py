@@ -214,7 +214,10 @@ def test_frames_a_child_failure_rather_than_tearing_down_the_parent_run() -> Non
     )
 
     assert result.outcome == "failed"
-    assert "provider is down" in result.to_tool_result()
+    # Named by its class only: a provider's or store's message never reaches
+    # the parent's model (G-387).
+    assert "RuntimeError" in result.to_tool_result()
+    assert "provider is down" not in result.to_tool_result()
 
 
 def test_draws_the_child_budget_from_what_the_tree_has_left() -> None:
