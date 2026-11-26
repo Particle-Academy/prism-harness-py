@@ -31,6 +31,7 @@ from prism_harness import (
     SubagentRunner,
     record_approval,
 )
+from prism_harness.plans import budget
 
 
 @pytest.fixture(autouse=True)
@@ -209,3 +210,78 @@ def test_a_host_context_with_an_unenforceable_cost_cap_stops_the_tool_in_a_meter
 
     assert child_requests(world) == 0
     assert "cost budget cannot be enforced" in str(world.requests[-1].messages)
+
+
+# -- the tree hold is taken before the child's records are written ---------
+
+
+def spent_tree_between(monkeypatch: pytest.MonkeyPatch, world: World) -> None:
+    """After the runner's pre-check, the parent turn's tree record appears
+    already spent (a sibling settled, or another worker wrote it)."""
+    original = AgentRuntime.send
+
+    def spent_then_send(self: AgentRuntime, session: Session, prompt: str, **kwargs: Any) -> Any:
+        if kwargs.get("context") is not None:
+            root = world.root()
+            run = root.run()
+            assert run is not None
+            key = f"{root.key()}:run-tree:{run['id']}"
+            root.plan_store().put(
+                key,
+                {
+                    **budget.open_ledger(
+                        run["id"], {"mode": "shared", "max_steps": 1, "max_cost_micros": None}
+                    ),
+                    "steps": 1,
+                },
+            )
+        return original(self, session, prompt, **kwargs)
+
+    monkeypatch.setattr(AgentRuntime, "send", spent_then_send)
+
+
+def test_a_tree_that_cannot_fund_the_start_refuses_it_with_records_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = World()
+    approval = dead_approval_child(world)
+    before = authority(world.child("worker"))
+    world.fresh()
+    spent_tree_between(monkeypatch, world)
+    world.calls(("worker", {"task": "Again."}))  # the root delegates in a turn
+    world.text("Root done.")
+
+    world.runtime.send(world.root(), "Go")
+
+    assert authority(world.child("worker")) == before
+    with pytest.raises(HarnessError) as caught:
+        record_approval(world.fresh().child("worker"), approval, True)
+    assert caught.value.code == "child_binding_missing"
+    assert child_requests(world) == 1
+
+
+def test_a_write_failing_after_the_tree_hold_leaves_no_hold_behind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = World()
+    original = Session.remember_child_binding
+
+    def failing(self: Session, *args: Any, **kwargs: Any) -> Any:
+        if "::sub::" in self.scope:
+            raise OSError("store down")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "remember_child_binding", failing)
+    world.calls(("worker", {"task": "Look."}))  # the root delegates: the tree hold is taken
+    world.text("Root done.")
+    response = world.runtime.send(world.root(), "Go")
+
+    # The child start failed after the hold; the root's run settled the tree,
+    # so no hold is left and only the steps actually taken are charged.
+    assert response.finish_reason == "stop"
+    root = world.root()
+    record = root.plan_store().get(f"{root.key()}:run-tree:{response.run_id}")
+    assert isinstance(record, dict)
+    assert record["holds"] == {}
+    assert record["steps"] == 2
+    assert child_requests(world) == 0
