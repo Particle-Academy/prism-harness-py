@@ -376,17 +376,24 @@ class Plans:
         return None if ledger is None else dict(ledger)
 
     def _ledger_for(
-        self, session: Session, prompt: str, context: RunContext | None, kind: str = "none"
+        self,
+        session: Session,
+        prompt: str,
+        context: RunContext | None,
+        kind: str = "none",
+        mode: str | None = None,
     ) -> dict[str, Any] | None:
         """The shared ledger a turn spends from, as :func:`budget.route`
         decides: its own plan's when the turn is the plan's own; else, for a
         turn on a subagent child the runner did not start (an answer, a new
         message, or a host context, which the ledger narrows), the ledger it was
         saved with. ``refused`` marks the plan's own turn handed a run tree of
-        its own. ``kind`` is the context's kind, from the runtime's run trees."""
+        its own. ``kind`` is the context's kind, from the runtime's run trees;
+        ``mode`` the mode the turn runs in, when the session does not say it
+        yet (a runner start, read before anything is written)."""
         if not self._enabled:
             return None
-        plan = self.load(session) if self.enabled_for(session) else None
+        plan = self.load(session) if self.enabled_for(session, mode) else None
         step = _active_agent_step(plan)
         advancing = step is not None and session.key() in self._advancing
         step_approval = step is not None and bool(

@@ -7,8 +7,8 @@
 - One authority for a run's step allowance (G-387). How many model steps a run
   may take is worked out once, when the run begins, by the pure
   `RunBudgets.allowance` (`prism_harness.run_budgets`), and every consumer
-  reads that one answer: the loop's step gate, the paused row, a subagent's
-  pre-check, a child's tree hold and the plan's hold.
+  reads that one answer: the loop's step gate, the paused row, a runner start's
+  gate, a child's tree hold and the plan's hold.
 - A subagent child's step ceiling is the runner's grant: the least of its
   declared `max_steps`, what its parent had left and `max_steps_ceiling`. It
   is saved with the child's binding and is the DELEGATION's lifetime budget.
@@ -59,28 +59,34 @@
   limit is spent, acts on no recorded decision (an approval or a denial) and
   leaves the thread unchanged: it ends on the cancellation or the time before
   any model step, and the decisions stay recorded for a later resume.
-- The subagent tool checks the context the host wired it with first: when the
-  host cancelled it, or its budget on it is spent (including a cost cap it
-  cannot enforce), the tool returns the framed `cancelled` / `exhausted`
-  result inside a turn too, with no child model step.
-- The subagent runner refuses (`denied`, a framed result, nothing written to
-  the child): a task that is not a string; a blank task, one made only of
+- A runner start (`SubagentRunner.run`, and the subagent tool that calls it)
+  is decided by ONE start gate, the pure `RunStarts.gate`
+  (`prism_harness.run_starts`). Every fact a start depends on is read first,
+  with no write of any kind, and the gate is asked once, in a fixed order: a
+  task that is not a string (`denied`); a blank task, one made only of
   U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200D, U+2028,
   U+2029, U+202F, U+205F, U+2060, U+3000 and U+FEFF (one explicit set, the
-  same in every language); a delegation into a child session with a pending
-  approval a person could still answer, so a delegation cannot dismiss a
-  person's pending decision; and a delegation while a turn on the child holds
-  steps from its count. A child stuck on an approval no decision could act on
-  can be started again. The refusal for a turn still holding steps is part of the
-  reset's own locked write, and a refused start leaves the child's saved
-  records (its binding, ceiling, references and count) unchanged. A runner
-  start whose run is stopped after the runner's pre-check (cancelled, or out
-  of steps, time or an enforceable cost) is refused at a gate immediately
-  before its first write on the child, so those records stay unchanged. Past
-  that gate the start is committed: a later cancel or time-out only stops its
-  model steps, and its task is recorded as any runner start's is. A run tree that
-  cannot fund the delegation refuses it the same way: the tree hold is taken
-  before anything is written on the child.
+  same in every language, `denied`); nesting at the depth ceiling (`denied`);
+  a cancel (`cancelled`); spent time, no steps left, a spent cost cap or
+  agent spend ceiling, or a cost cap that cannot be metered (`exhausted`); a
+  turn on the child still holding steps from its count, or a pending approval
+  on it a person could still answer (`denied`); and a run tree that cannot
+  fund the start (`exhausted`). The cancel, time, steps and cost of the
+  context the host wired a subagent tool with are facts of that gate too, so
+  they stop the tool inside a turn. The reason the parent model reads is
+  written by the harness, never the host's cancel text.
+- A refused start writes nothing: not the child's records (its binding,
+  ceiling, references and count), not a run state or run history entry, not
+  its mode, not the parent's tree record. A start the gate lets through
+  commits in one order: the tree hold, a conditional locked write that
+  refuses the start (`exhausted`) when the tree's grant shrank since the
+  read; then the child's records, in one locked write that refuses the start
+  (`denied`) when a turn claimed steps on the child since the read, releasing
+  the tree hold; then the run itself. Once committed, a later cancel or
+  time-out only stops its model steps, and its task is recorded as any runner
+  start's is. A read that raises refuses the start as `failed`, naming the
+  exception's class, with nothing written. A child stuck on an approval no
+  decision could act on can be started again.
 - Everything the runner does around a child (building its session, reading
   its thread, its count, the budget arithmetic) is framed: any exception comes
   back to the parent as a `failed` result naming the exception's class (and a
@@ -95,6 +101,8 @@
 
 - harness-plans 0.1.9: the `step_allowance` op (hpl-0072..hpl-0083) runs
   `RunBudgets.allowance`; all twelve rows agree with the reference.
+- harness-plans 0.1.10: the `start_gate` op (hpl-0084..hpl-0089) runs
+  `RunStarts.gate`; all six rows agree with the reference.
 
 ## 0.6.0
 

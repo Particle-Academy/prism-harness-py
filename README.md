@@ -292,8 +292,8 @@ What one run tree is:
   start, and every later turn on it the runner did not start (answers, new
   messages, host `RunContext`s, at once or in a row) claims from what is
   left, in one locked write. A host `RunContext` can lower it, never raise it.
-  A new runner start begins a new count; the runner refuses to start a child
-  while a turn on it still holds steps. A subagent child (its scope is
+  A new runner start begins a new count; a start is refused while a turn on
+  the child still holds steps. A subagent child (its scope is
   `...::sub::<name>`, or the runner saved something with it) with no saved
   ceiling or count, or one that is not a whole number, takes no model step:
   that includes a child parked by v0.5.x.
@@ -306,12 +306,19 @@ What one run tree is:
   absolute on the run's whole count.
 - An approved subagent call on a run with no steps left is acted on: its
   result is the runner's "did not run: ... exhausted" refusal, and the child
-  takes no model step. The runner also refuses a task that is not a string
-  or is blank (only the codepoints listed in the changelog), and a delegation
-  into a child session with a pending approval a person could still answer,
-  so a model cannot dismiss a person's pending decision by delegating again.
-  Anything that raises around a child comes back as a framed `failed` result
-  naming the exception's class, never its message.
+  takes no model step.
+- A runner start is decided once, by one start gate (`RunStarts.gate`), before
+  anything is written: a task that is not a string or is blank (only the
+  codepoints listed in the changelog), nesting too deep, a cancel, spent time,
+  steps or cost (of the runner's context and of the context a subagent tool
+  was wired with), a busy child, a child whose pending approval a person
+  could still answer (so a model cannot dismiss a person's pending decision
+  by delegating again), and a run tree that cannot fund it. A refused start
+  writes nothing at all and comes back as a framed result. A start the gate
+  lets through commits the tree hold, then the child's records, then the run;
+  after that a stop only stops model steps. Anything that raises around a
+  child comes back as a framed `failed` result naming the exception's class,
+  never its message.
 - A decision is refused before anything is recorded only when its resume could
   not act on it at all: a linked child with no saved binding
   (`child_binding_missing`) or one too deep (`run_not_permitted`). Recording

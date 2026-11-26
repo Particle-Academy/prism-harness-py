@@ -790,7 +790,9 @@ def test_child_started_refuses_the_delegation_when_the_tree_cannot_fund_it() -> 
     with pytest.raises(HarnessError) as caught:
         trees.child_started(ada, member, 300)
 
-    assert caught.value.code == "run_not_permitted"
+    # Refused as the start gate refuses it (G-387): the tree, exhausted.
+    assert caught.value.code == "run_start_refused"
+    assert getattr(caught.value, "refusal", None) == "tree"
 
 
 # The paused row's steps left is the run's OWN allowance, never what it could

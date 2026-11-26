@@ -405,7 +405,11 @@ class DirectWorld(World):
                 assert turn is not None
                 subagent = world.runtime.mode_for(self._session).subagents["alpha"]
                 result = SubagentRunner(world.harness, world.runtime).run(
-                    subagent, self._session, turn, current_turn_run_id(key) or "", args.get("task")
+                    subagent,
+                    self._session,
+                    turn,
+                    current_turn_run_id(key) or "",
+                    str(args.get("task")),
                 )
                 world.results.append(result)
                 return result.to_tool_result()

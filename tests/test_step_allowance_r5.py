@@ -119,7 +119,10 @@ def test_a_host_cancel_reaches_the_subagent_tool_inside_a_turn() -> None:
     following = delegate_in_a_turn(world)
 
     assert child_requests(world) == 0
-    assert "did not run: host stopped delegations" in following
+    # The reason is harness-written (G-387 start gate): the host's own cancel
+    # text never reaches the parent model.
+    assert "did not run: its run was cancelled" in following
+    assert "host stopped delegations" not in following
 
 
 # The unenforceable-cost-cap control is in test_step_allowance_r6.py, on a
