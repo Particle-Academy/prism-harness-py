@@ -132,7 +132,8 @@ def test_failed_model_step_never_dispatches_tools_or_continues_on_resume(
     stored_run = session.run()
     assert stored_run is not None
     assert stored_run["status"] == "failed"
-    assert stored_run["failure"] == f"Model step failed: {finish_reason}."
+    # The run state records the class and harness code, never a message.
+    assert stored_run["failure"] == "HarnessError (model_step_failed): the run failed."
     rows = [entry.message for entry in session.thread().messages()]
     assistant = next(row for row in rows if row["type"] == "assistant")
     assert assistant["tool_approval_requests"] == []

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -64,6 +65,13 @@ class RunBudget:
             isinstance(output, bool) or not isinstance(output, int) or output < 1
         ):
             raise ValueError("Output ceilings must be positive integers or null.")
+        # A time or cost cap that is not a finite number is no cap either: NaN
+        # compares false with everything, an infinity never runs out, and a
+        # negative one reads as spent by one path and as no limit by another.
+        # Refused where the host builds the budget, never coerced (G-387).
+        for name in ("max_cost_usd", "max_seconds"):
+            if not _limit_ok(getattr(self, name)):
+                raise ValueError(f"{name} must be a finite number, zero or more, or null.")
 
     @classmethod
     def from_config(cls, config: dict[str, Any], default_steps: int = 8) -> RunBudget:
@@ -79,6 +87,12 @@ class RunBudget:
             # A declaration that is not a whole number is refused, never read
             # as the default: a typo must not raise the cap it meant to set.
             raise ValueError("A subagent's max_steps must be a whole number, zero or more.")
+        for name in ("max_cost_usd", "max_seconds"):
+            # Checked before conversion: int() of an infinity raises an
+            # OverflowError, and a declaration that cannot be read is refused
+            # the same way however it fails.
+            if not _limit_ok(config.get(name)):
+                raise ValueError(f"A subagent's {name} must be a finite number, zero or more.")
         return cls(
             max_steps=steps,
             max_cost_usd=_float_or_none(config.get("max_cost_usd")),
@@ -263,11 +277,22 @@ class RunLedger:
         the collapse this ecosystem keeps finding. See prism-parity decision
         0020.
         """
-        if self._cancelled:
+        code = self.exhaustion_code(budget)
+        if code is None:
+            return None
+        if code == "cancelled":
+            # The host's own reason, for the host's own response and logs. The
+            # subagent runner never passes it on: it reads exhaustion_code().
             return self._cancel_reason or "cancelled"
 
-        if self._steps >= budget.max_steps:
+        if code == "steps":
             return f"step budget exhausted ({self._steps} of {budget.max_steps} used)"
+
+        if code == "cost_unenforceable" and not _finite_limit(budget.max_cost_usd):
+            return "cost budget cannot be enforced: its cap is not a finite number"
+
+        if code == "time" and not _finite_limit(budget.max_seconds):
+            return "time budget cannot be enforced: its limit is not a finite number"
 
         if budget.max_cost_usd is not None and self._unmetered_runs > 0:
             # Failing CLOSED. A cost cap the provider gives us no numbers to
@@ -290,6 +315,31 @@ class RunLedger:
                 f"{budget.max_seconds}s used)"
             )
 
+        return code
+
+    def exhaustion_code(self, budget: RunBudget) -> str | None:
+        """Why the tree may not spend again, as a fixed code (``cancelled``,
+        ``steps``, ``cost_unenforceable``, ``cost``, ``time``), or None when
+        it may. Never carries text a host chose: what a model is told about a
+        stop is chosen from this code (G-387).
+
+        A time or cost limit that is not a finite number (forged past the
+        constructor) is read as spent, never as no limit."""
+        if self._cancelled:
+            return "cancelled"
+        steps: Any = budget.max_steps
+        if not _finite_limit(steps) or self._steps >= steps:
+            return "steps"
+        cap: Any = budget.max_cost_usd
+        if cap is not None and not _finite_limit(cap):
+            return "cost_unenforceable"
+        if cap is not None and self._unmetered_runs > 0:
+            return "cost_unenforceable"
+        if cap is not None and self._cost_usd >= cap:
+            return "cost"
+        limit: Any = budget.max_seconds
+        if limit is not None and (not _finite_limit(limit) or self.elapsed_seconds() >= limit):
+            return "time"
         return None
 
 
@@ -529,6 +579,25 @@ def _lesser(a: float | None, b: float | None) -> float | None:
     if b is None:
         return a
     return min(a, b)
+
+
+def _limit_ok(value: Any) -> bool:
+    """Whether a time or cost limit is usable: absent, or a finite number of
+    zero or more. A value of another type is left to the caller's own reading
+    (``from_config`` reads it as absent, as it always has)."""
+    if value is None or isinstance(value, str):
+        return True
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return math.isfinite(value) and value >= 0
+    return True
+
+
+def _finite_limit(value: Any) -> bool:
+    """Whether a limit read at run time is a finite number. One forged past the
+    constructor (NaN, an infinity, a non-number) is read as spent."""
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
 
 
 def _int_or_none(value: Any) -> int | None:

@@ -432,6 +432,7 @@ class RunTrees:
         member: Mapping[str, Any],
         hold_ttl: int,
         expected: int | None = None,
+        run_id: str | None = None,
     ) -> Tree | None:
         """A runner-started child is starting: the tree its membership names,
         opened in the durable store, for the budget entry of the run it spends
@@ -443,6 +444,9 @@ class RunTrees:
         A conditional write: when the record grants fewer than ``expected``
         steps (what :meth:`start_grant` read), nothing is stored and the start
         is refused (:class:`~prism_harness.run_starts.StartRefused`, ``tree``).
+
+        The hold records ``run_id``, the start that took it: only that start
+        releases it (:meth:`release_start`) or hands it over (:meth:`committed`).
         """
         tree = member["tree"]
         if not isinstance(tree, Mapping):
@@ -474,18 +478,23 @@ class RunTrees:
             if grant is None:
                 raise StartRefused("tree", "exhausted")
             entry["held"] = True
-            entry["start_hold"] = {"created": created[0]}
+            entry["start_hold"] = {"created": created[0], "by": run_id}
         return {"session": tree["session"], "run": tree["run"]}
 
-    def release_start(self, session: Session, member: Mapping[str, Any]) -> None:
+    def release_start(
+        self, session: Session, member: Mapping[str, Any], run_id: str | None = None
+    ) -> None:
         """Undo the tree hold a runner start took in :meth:`child_started`,
         when a later part of its commit failed: the record goes back to what it
         was (removed, when the start opened it), and the spending run holds
         nothing, so the next child it starts takes the hold again. Only a hold
-        a start took is released, and only once."""
+        THIS start (``run_id``) took is released, and only once: a re-entrant
+        start that failed never releases the hold of the start it re-entered."""
         spends = member.get("spends")
         entry = self._runs.get(spends) if isinstance(spends, str) else None
         if entry is None or not isinstance(entry.get("start_hold"), dict):
+            return
+        if entry["start_hold"].get("by") != run_id:
             return
         taken = entry.pop("start_hold")
         entry["held"] = False
@@ -510,12 +519,14 @@ class RunTrees:
         except Exception as failure:  # noqa: BLE001 - the hold is charged in full once it expires
             _log.warning("A run tree hold release failed: %s.", type(failure).__name__)
 
-    def committed(self, member: Mapping[str, Any]) -> None:
-        """A runner start's commit finished: the tree hold it took is the
-        spending run's from now on, settled when that run ends."""
+    def committed(self, member: Mapping[str, Any], run_id: str | None = None) -> None:
+        """A runner start's commit finished (its task is recorded): the tree
+        hold it took is the spending run's from now on, settled when that run
+        ends. Only the start that took the hold (``run_id``) hands it over."""
         spends = member.get("spends")
         entry = self._runs.get(spends) if isinstance(spends, str) else None
-        if entry is not None:
+        taken = entry.get("start_hold") if entry is not None else None
+        if entry is not None and isinstance(taken, dict) and taken.get("by") == run_id:
             entry.pop("start_hold", None)
 
     def holds(self, run_id: str) -> bool:

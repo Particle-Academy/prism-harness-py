@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -488,14 +488,22 @@ class Session:
         depth: int,
         ceiling: int | None,
         refs: dict[str, dict[str, str] | None],
-    ) -> None:
+        mode: str | None = None,
+        recheck: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
         """A runner start's child records, in ONE locked write (G-387 start
         gate): a fresh delegation count with this run holding ``steps``, the
-        binding, the depth, the step ceiling and the run tree and plan budget
-        references. Refused (``child_turn_live``) with nothing written while a
-        turn on the child holds steps from its delegation, re-checked here, in
-        the same write, so a resume claiming since the gate read it is never
-        wiped.
+        binding, the depth, the step ceiling, the run tree and plan budget
+        references, and the session ``mode`` the child runs in. Refused
+        (``child_turn_live``) with nothing written while a turn on the child
+        holds steps from its delegation, re-checked here, in the same write, so
+        a resume claiming since the gate read it is never wiped. ``recheck``
+        runs inside the same lock before anything is written; whatever it
+        raises refuses the write (the runtime re-reads the child's pending
+        approvals there).
+
+        Returns what :meth:`undo_child_start` needs to put the child back: the
+        records as they were before this write, and what it wrote.
 
         Internal: called by the runtime once the start gate let a start through
         and its tree hold is taken."""
@@ -504,6 +512,7 @@ class Session:
         depth = depth if type(depth) is int and depth > 0 else 0
         ceiling = ceiling if type(ceiling) is int and ceiling >= 0 else None
         taken = max(0, steps)
+        handle: dict[str, Any] = {}
 
         def change() -> None:
             stored = self._durable.get(key)
@@ -513,30 +522,94 @@ class Session:
                 now - hold["at"] < hold_ttl for hold in standing["holds"].values()
             ):
                 raise HarnessError(CHILD_TURN_LIVE, "A turn on this child is still running.")
+            if recheck is not None:
+                recheck()
             legacy = self._durable.get(self._durable_key()) or {}
             for name in ("child_binding", "child_depth", "child_ceiling", "child_refs"):
                 if name not in current and name in legacy:
                     current[name] = deepcopy(legacy[name])
-            self._durable.put(
-                key,
-                {
-                    **current,
-                    "child_steps": {
-                        "steps": 0,
-                        "holds": {run_id: {"steps": taken, "at": now}} if taken > 0 else {},
-                        "charged": {},
-                    },
-                    "child_binding": deepcopy(binding),
-                    "child_depth": depth,
-                    "child_ceiling": ceiling,
-                    "child_refs": {
-                        "tree": None if refs.get("tree") is None else dict(refs["tree"] or {}),
-                        "plan_ledger": None
-                        if refs.get("plan_ledger") is None
-                        else dict(refs["plan_ledger"] or {}),
-                    },
+            written = {
+                **current,
+                "child_steps": {
+                    "steps": 0,
+                    "holds": {run_id: {"steps": taken, "at": now}} if taken > 0 else {},
+                    "charged": {},
                 },
+                "child_binding": deepcopy(binding),
+                "child_depth": depth,
+                "child_ceiling": ceiling,
+                "child_refs": {
+                    "tree": None if refs.get("tree") is None else dict(refs["tree"] or {}),
+                    "plan_ledger": None
+                    if refs.get("plan_ledger") is None
+                    else dict(refs["plan_ledger"] or {}),
+                },
+            }
+            state = self._ephemeral.get(self._ephemeral_key())
+            before = dict(state) if isinstance(state, dict) else {}
+            self._durable.put(key, written)
+            if mode is not None:
+                try:
+                    following = {**before, "mode": mode}
+                    self._ephemeral.put(self._ephemeral_key(), following, self._ttl_seconds)
+                    self._cached_state = following
+                except BaseException:
+                    # One write: the child's records go back with the mode.
+                    if isinstance(stored, dict):
+                        self._durable.put(key, stored)
+                    else:
+                        self._durable.forget(key)
+                    raise
+            handle.update(
+                {
+                    "prior": deepcopy(stored) if isinstance(stored, dict) else None,
+                    "written": deepcopy(written),
+                    "mode_present": "mode" in before,
+                    "mode_prior": before.get("mode"),
+                    "mode_written": mode,
+                }
             )
+
+        self._durable.with_lock(key, change, 10, 5)
+        return handle
+
+    def undo_child_start(self, run_id: str, handle: Mapping[str, Any]) -> None:
+        """Put a child back as it was before :meth:`start_child`, when the
+        start failed before its task was recorded (G-387): in ONE locked write,
+        and only what is still exactly what that write left. A record another
+        writer changed since is never clobbered; only this run's own hold is
+        removed from it. The same for the session mode.
+
+        Internal: called by the runtime."""
+        self._assert_writable()
+        key = self._child_key()
+
+        def change() -> None:
+            stored = self._durable.get(key)
+            if stored == handle.get("written"):
+                prior = handle.get("prior")
+                if isinstance(prior, dict):
+                    self._durable.put(key, deepcopy(prior))
+                else:
+                    self._durable.forget(key)
+            elif isinstance(stored, dict):
+                record = _child_steps(stored.get("child_steps"))
+                if record is not None and run_id in record["holds"]:
+                    del record["holds"][run_id]
+                    self._durable.put(key, {**stored, "child_steps": record})
+            written_mode = handle.get("mode_written")
+            if written_mode is None:
+                return
+            state = self._ephemeral.get(self._ephemeral_key())
+            current = dict(state) if isinstance(state, dict) else {}
+            if current.get("mode") != written_mode:
+                return
+            if handle.get("mode_present"):
+                current["mode"] = handle.get("mode_prior")
+            else:
+                current.pop("mode", None)
+            self._ephemeral.put(self._ephemeral_key(), current, self._ttl_seconds)
+            self._cached_state = current
 
         self._durable.with_lock(key, change, 10, 5)
 

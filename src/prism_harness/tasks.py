@@ -651,6 +651,10 @@ class StoreTaskSource:
         exhausted = ledger.exhaustion(budget)
 
         if exhausted is not None:
+            if ledger.exhaustion_code(budget) == "cancelled":
+                # A host's cancel reason is the host's, for its own logs: an
+                # exception message travels further than that (G-387).
+                exhausted = "its run was cancelled"
             raise HarnessError.run_not_permitted(
                 f"The lease on task [{task.id}] cannot be extended: {exhausted}. The lease is "
                 "bounded by the run, and a run that may not spend again may not keep holding "

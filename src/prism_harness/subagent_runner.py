@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from prism_harness.errors import HarnessError
+from prism_harness.failures import harness_code, named
 from prism_harness.harness import PrismHarness
 from prism_harness.modes import AgentMode
 from prism_harness.run_starts import BLANK_CODEPOINTS, REASONS, StartRefused, is_blank
@@ -16,6 +17,25 @@ from prism_harness.subagents import MAX_DEPTH, ChildBinding, RunBudget, RunConte
 from prism_harness.tools import HarnessTool
 
 __all__ = ["BLANK_CODEPOINTS", "SubagentResult", "SubagentRunner", "SubagentTool", "is_blank"]
+
+#: The outcomes a refusal may be framed with; anything else is ``failed``.
+OUTCOMES = frozenset({"denied", "cancelled", "exhausted"})
+
+#: What the parent model is told when a committed child stopped early, chosen
+#: by the stop's code: never the host's cancel reason or any other text.
+STOPS = {
+    "cancelled": "its run was cancelled",
+    "steps": "step budget exhausted",
+    "cost": "cost budget exhausted",
+    "cost_unenforceable": "cost budget cannot be enforced",
+    "time": "time budget exhausted",
+}
+
+#: The child agent's own spend ceiling, stopped while it ran.
+CEILINGS = {
+    "agent_spend_ceiling_exceeded": "its agent's spend ceiling is spent",
+    "budget_unpriced": "its agent's spend cannot be metered",
+}
 
 
 @dataclass(frozen=True)
@@ -70,7 +90,7 @@ class SubagentTool:
             context = within_turn(self._context, current_turn_run(self._parent.key()))
         except Exception as error:  # noqa: BLE001 - framed, not propagated
             return _refused(
-                self._subagent.name, "run_none", self._parent_run_id, "failed", _named(error)
+                self._subagent.name, "run_none", self._parent_run_id, "failed", named(error)
             ).to_tool_result()
         return self._runner._start(
             self._subagent,
@@ -129,27 +149,20 @@ class SubagentRunner:
         still answer, and the tree. A refused start writes nothing, and comes
         back framed with the gate's outcome and a harness-written reason.
 
-        Every way the start can end is framed inside here: whatever raises
-        (the store, a forged budget) names the exception's class only. Its
-        message may carry store or host text, and the result is read by a
-        model."""
+        Every way the start can end is framed inside here, with text the
+        harness wrote and chose by code (G-387): the gate's reasons, a fixed
+        sentence per stop, and for anything else the exception's class and
+        harness code. Never an exception's message, a host's cancel reason or
+        a code the harness does not raise: the result is read by a model."""
         run_id = f"run_{secrets.token_hex(6)}"
         try:
             return self._run(subagent, parent, context, parent_run_id, task, hosts, run_id)
-        except StartRefused as refused:
-            reason = REASONS.get(refused.refusal, "it was refused").format(depth=MAX_DEPTH)
-            return _refused(subagent.name, run_id, parent_run_id, refused.outcome, reason)
-        except HarnessError as error:
-            if error.code in ("agent_spend_ceiling_exceeded", "budget_unpriced"):
-                # Its agent's ceiling ran out while it ran: a gate on the tree,
-                # not the child's failure, and only that agent stops.
-                return _refused(subagent.name, run_id, parent_run_id, "exhausted", str(error))
-            return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
         except Exception as error:  # noqa: BLE001 - framed, not propagated
             # Tearing down the parent run would discard work it has already
             # done, and "that subagent failed" is something the parent can act
             # on.
-            return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
+            outcome, reason = _framed(error)
+            return _refused(subagent.name, run_id, parent_run_id, outcome, reason)
 
     def _run(
         self,
@@ -211,13 +224,16 @@ class SubagentRunner:
                 text=response.text,
             )
 
+        # Chosen by the stop's code: ``stopped_because`` carries a host's
+        # cancel reason, which is the host's and never the model's.
+        stopped = STOPS.get(str(response.stopped_code), "it was stopped")
         return SubagentResult(
             subagent=subagent.name,
             run_id=response.run_id,
             parent_run_id=parent_run_id,
             outcome="exhausted",
             text=(
-                f"The [{subagent.name}] subagent stopped early: {response.stopped_because}. "
+                f"The [{subagent.name}] subagent stopped early: {stopped}. "
                 f"Partial answer: {response.text}"
             ),
         )
@@ -280,12 +296,28 @@ def _lower_int(a: int | None, b: int | None) -> int | None:
     return b if a is None else a if b is None else min(a, b)
 
 
-def _named(error: BaseException) -> str:
-    """What a framed failure says about an exception: its class, and a
-    harness error's code, never its message."""
-    code = getattr(error, "code", None)
-    name = type(error).__name__
-    return f"{name} ({code})" if isinstance(error, HarnessError) and code else name
+def _framed(error: BaseException) -> tuple[str, str]:
+    """The outcome and reason a start that raised is framed with, from fixed
+    sets only. Every attribute is read once, guarded: one that raises, or
+    holds anything but a value the harness itself writes, frames ``failed``."""
+    if isinstance(error, StartRefused):
+        try:
+            refusal, outcome = error.refusal, error.outcome
+        except Exception:  # noqa: BLE001 - a forged refusal fails closed
+            return "failed", named(error)
+        reason = (
+            REASONS[refusal] if type(refusal) is str and refusal in REASONS else "it was refused"
+        )
+        return (
+            outcome if type(outcome) is str and outcome in OUTCOMES else "failed",
+            reason.format(depth=MAX_DEPTH),
+        )
+    code = harness_code(error)
+    if code is not None and code in CEILINGS:
+        # Its agent's ceiling ran out while it ran: a gate on the tree, not
+        # the child's failure, and only that agent stops.
+        return "exhausted", CEILINGS[code]
+    return "failed", named(error, code) if code is not None else type(error).__name__
 
 
 def _refused(
