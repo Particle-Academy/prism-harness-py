@@ -83,7 +83,7 @@ def modes(lead_steps: int = 8) -> ModeRegistry:
                 },
                 "work": {
                     "system_prompt": "Work.",
-                    "tools": ["echo"],
+                    "tools": ["echo", "lookup"],
                     "requires_approval": ["echo"],
                     "max_steps": 8,
                 },
@@ -104,6 +104,8 @@ class World:
         self.queue: list[LlmResponse] = []
         self.requests: list[LlmRequest] = []
         self.ran: list[str] = []
+        #: Host code run once, at the start of the next model call.
+        self.on_request: Callable[[], None] | None = None
         self._call = 0
         self.harness = self._harness()
         self.runtime = self._runtime()
@@ -152,6 +154,9 @@ class World:
         return self
 
     def _client(self, request: LlmRequest) -> LlmResponse:
+        hook, self.on_request = self.on_request, None
+        if hook is not None:
+            hook()
         self.requests.append(request)
         if self.queue:
             return self.queue.pop(0)
