@@ -26792,8 +26792,141 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0073",
@@ -26882,8 +27015,141 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 8,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 8,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 8,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0074",
@@ -26997,8 +27263,180 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 3
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 3
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 3
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0075",
@@ -27102,8 +27540,150 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 5,
+                "used": 0,
+                "own_left": 5,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 5,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 5
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 5,
+                "used": 0,
+                "own_left": 5,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 5,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 5
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 5,
+                "used": 0,
+                "own_left": 5,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 5,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 5
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0076",
@@ -27232,8 +27812,189 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0077",
@@ -27397,8 +28158,258 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0078",
@@ -27512,8 +28523,180 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 1,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 2,
+                "own_left": 6,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 1,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 2,
+                "own_left": 6,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 1,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 2,
+                "own_left": 6,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0079",
@@ -27627,8 +28810,180 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": 1,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": 5,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": 1,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": 5,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": 1,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": 5,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0080",
@@ -27717,8 +29072,141 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 3,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 5,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 5,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": 0,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 3,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 5,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 5,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": 0,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 3,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 5,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 5,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": 0,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0081",
@@ -27832,8 +29320,180 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 0,
+                "own_left": 6,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 6,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 2,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 5,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 5,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 6,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 0,
+                "own_left": 6,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 6,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 2,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 5,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 5,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 6,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 0,
+                "own_left": 6,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 6,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 2,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 5,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 5,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 6,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0082",
@@ -27897,8 +29557,102 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     },
     {
       "id": "hpl-0083",
@@ -28017,8 +29771,159 @@
         ],
         "final": null
       },
-      "result": {},
-      "agrees": false
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
     }
   ]
 }
