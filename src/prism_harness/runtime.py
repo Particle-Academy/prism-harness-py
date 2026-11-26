@@ -994,19 +994,19 @@ class AgentRuntime:
             row = assistant_row(response.text, calls, metadata, requests)
             if requests:
                 row["harness_tool_names"] = [tool.name for tool in offered]
-                # What a root that opened its tree has left of its own step
-                # budget, so a decision on it is checked as its resume will be.
-                # A root holding from its tree is capped by what it holds: its
-                # ledger was rebuilt from its own rows at the resume, so the
-                # steps its children took before an earlier pause are counted
-                # there, not on the ledger.
+                # What a root that opened its tree has left of its OWN step
+                # budget, so a decision on it is checked as its resume will be:
+                # the allowance it started this run with, less the steps taken
+                # since (a runner child's included). Never what it could hold
+                # from its tree: the tree's record is checked on its own.
                 parked_as = self._trees.member(run_id)
                 if parked_as is not None and parked_as["route"] == "open":
-                    ceiling = int(parked_as["own_max_steps"])
-                    held = self._trees.held_max_steps(run_id)
-                    if held is not None:
-                        ceiling = min(ceiling, held)
-                    row["harness_steps_left"] = max(0, ceiling - run.ledger.steps)
+                    if "own_left_start" in parked_as:
+                        taken = run.ledger.steps - int(parked_as["start_steps"])
+                        own = int(parked_as["own_left_start"]) - taken
+                    else:
+                        own = int(parked_as["own_max_steps"]) - run.ledger.steps
+                    row["harness_steps_left"] = max(0, own)
                 # What a resume needs to continue this run as the same run.
                 if run.agent is not None:
                     row["harness_agent_spend"] = {

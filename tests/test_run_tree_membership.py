@@ -785,3 +785,70 @@ def test_child_started_refuses_the_delegation_when_the_tree_cannot_fund_it() -> 
         trees.child_started(ada, member, 300)
 
     assert caught.value.code == "run_not_permitted"
+
+
+# The paused row's steps left is the run's OWN allowance, never what it could
+# hold from its tree: a root whose hold was limited by a sibling holding part
+# of the record, and that parks on the hold's last step, still has steps of its
+# own, and after its approval it continues with a model request.
+def test_a_root_whose_hold_a_sibling_limited_keeps_its_own_steps_left_when_it_parks() -> None:
+    rig = Rig(chat_steps=11)
+    ada = rig.session("ada")
+    rig.calls(("research", {"task": "Look."}))  # ada
+    rig.calls(("weather", {"city": "Paris"}))  # her child: parks
+    rig.calls(("weather", {"city": "Rome"}))  # ada parks: 3 of 11 spent
+    parked = rig.runtime.send(ada, "Go")
+    child = rig.session("ada", "chat::sub::research")
+    child_waiting = pending_approval_ids([entry.message for entry in child.thread().messages()])
+    rig.runtime.decide(child, child_waiting[0], True)
+    rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+    seen: dict[str, Any] = {}
+
+    def root_resumes() -> None:
+        # While the child holds most of the tree, ada resumes on what is left
+        # and parks again.
+        seen["parked"] = rig.runtime.send(ada, "")
+
+    rig.on_request = root_resumes
+    rig.calls(("weather", {"city": "Oslo"}))  # ada, resumed during the child's request
+    rig.text("Child done.")  # the child
+    rig.runtime.send(child, "")
+    again = seen["parked"].pending_approvals
+    assert len(again) == 1
+    requests = len(rig.requests)
+
+    rig.runtime.decide(ada, again[0].id, True)
+    rig.text("Ada done.")
+    resumed = rig.runtime.send(ada, "")
+
+    assert len(rig.requests) == requests + 1
+    assert resumed.stopped_because is None
+    record = tree_record(ada, {"session": ada.key(), "run": parked.run_id})
+    assert isinstance(record, dict) and record["steps"] <= record["max_steps"]
+
+
+# A paused row written before the field existed carries no steps left: the
+# decision is checked against the tree's record as before, and a spent tree
+# refuses it before anything is recorded.
+def test_a_legacy_paused_row_without_steps_left_is_checked_against_the_tree() -> None:
+    rig = Rig(chat_steps=3)
+    ada = rig.session("ada")
+    rig.calls(("survey", {"task": "S"}))  # ada
+    rig.text("Child answer.")  # her child
+    rig.calls(("weather", {"city": "Paris"}))  # ada parks on her last step: 3 of 3
+    parked = rig.runtime.send(ada, "Go")
+    store = rig.harness.durable_store()
+    key = f"{ada.key()}:thread"
+    stored = store.get(key)
+    assert isinstance(stored, dict)
+    for entry in stored["messages"]:
+        entry["message"].pop("harness_steps_left", None)
+    store.put(key, stored)
+    rows = len(ada.thread().messages())
+
+    with pytest.raises(HarnessError) as caught:
+        rig.runtime.decide(ada, parked.pending_approvals[0].id, True)
+
+    assert caught.value.code == "run_not_permitted"
+    assert len(ada.thread().messages()) == rows
+    assert rig.ran.count("weather") == 0

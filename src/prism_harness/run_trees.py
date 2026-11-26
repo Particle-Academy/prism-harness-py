@@ -304,6 +304,13 @@ class RunTrees:
         own_left = run.budget.max_steps - run.ledger.steps
         if route == "open" and steps_left is not None:
             own_left = min(own_left, steps_left)
+        recorded = self.members.get(run_id)
+        if route == "open" and recorded is not None:
+            # The run's own allowance as it starts, and where its ledger
+            # stood: what it has left at a pause is that allowance minus the
+            # steps it took since, never what it could hold from its tree.
+            recorded["own_left_start"] = max(0, own_left)
+            recorded["start_steps"] = run.ledger.steps
         if route == "open" and (resumed or _record_of(session, tree) is not None):
             if own_left >= 1:
                 route = "continue"
@@ -412,14 +419,6 @@ class RunTrees:
                 raise HarnessError.run_not_permitted(f"This run may not proceed: {grant['limit']}.")
             entry["held"] = True
         return {"session": tree["session"], "run": tree["run"]}
-
-    def held_max_steps(self, run_id: str) -> int | None:
-        """The step ceiling a run holding from its tree's record was narrowed
-        to, or None for a run that holds nothing."""
-        entry = self._runs.get(run_id)
-        if entry is None or entry["held"] is not True:
-            return None
-        return int(entry["budget"].max_steps)
 
     def holds(self, run_id: str) -> bool:
         """Whether this run spends from a durable run tree record."""
