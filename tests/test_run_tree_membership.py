@@ -384,6 +384,8 @@ def test_a_host_context_shallower_than_the_saved_depth_runs_at_the_saved_depth()
     child = rig.session("ada", "chat::sub::research").using_mode("research")
     child.remember_child_binding(CHEAP.to_row(), MAX_DEPTH - 1, 8)
     child.remember_child_refs(None, None)
+    # As a runner start writes it: a fresh delegation count.
+    child.claim_child_steps("setup", 0, 300, True, lambda _counted: 0)
 
     rig.calls(("dig", {"task": "Dig."}))  # one level deeper is the ceiling
     rig.text("Child answer.")
@@ -399,6 +401,8 @@ def test_a_host_context_deeper_than_the_saved_depth_runs_deeper() -> None:
     child = rig.session("ada", "chat::sub::research").using_mode("research")
     child.remember_child_binding(CHEAP.to_row(), 1, 8)
     child.remember_child_refs(None, None)
+    # As a runner start writes it: a fresh delegation count.
+    child.claim_child_steps("setup", 0, 300, True, lambda _counted: 0)
     deeper = RunContext(ledger=RunLedger.start("host"), budget=RunBudget(100), depth=2)
 
     rig.text("Child answer.")

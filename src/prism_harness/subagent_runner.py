@@ -9,7 +9,12 @@ from typing import Any
 from prism_harness.errors import HarnessError
 from prism_harness.harness import PrismHarness
 from prism_harness.modes import AgentMode
-from prism_harness.runtime import AgentRuntime, current_turn_run, current_turn_run_id
+from prism_harness.runtime import (
+    AgentRuntime,
+    assert_decidable,
+    current_turn_run,
+    current_turn_run_id,
+)
 from prism_harness.session import Session
 from prism_harness.subagents import MAX_DEPTH, ChildBinding, RunBudget, RunContext, Subagent
 from prism_harness.thread_rows import pending_approval_ids
@@ -103,9 +108,31 @@ class SubagentRunner:
         # A delegation with nothing to do is refused before anything is built
         # or written: an empty task on a child is not an instruction, and on a
         # parked child it would only continue that run under a new start.
-        if task.strip() == "":
+        # Blank is ONE explicit codepoint set, the same in every language,
+        # never a language's own strip().
+        if not isinstance(task, str):
+            return _refused(subagent.name, run_id, parent_run_id, "denied", "the task is not text")
+        if is_blank(task):
             return _refused(subagent.name, run_id, parent_run_id, "denied", "the task is empty")
 
+        # Every check around the child runs inside the framing: whatever
+        # raises (the store, a forged budget) comes back to the parent as a
+        # framed failure naming the exception's class only. Its message may
+        # carry store or host text, and the result is read by a model.
+        try:
+            return self._run(subagent, parent, context, parent_run_id, task, run_id)
+        except Exception as error:  # noqa: BLE001 - framed, not propagated
+            return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
+
+    def _run(
+        self,
+        subagent: Subagent,
+        parent: Session,
+        context: RunContext,
+        parent_run_id: str,
+        task: str,
+        run_id: str,
+    ) -> SubagentResult:
         # Checked BEFORE spawning, so an exhausted tree does not pay for a
         # session, a thread write and a provider call to discover it is
         # exhausted.
@@ -172,16 +199,28 @@ class SubagentRunner:
         # again: the new start would answer that approval "not provided" and
         # move on, so a model could dismiss a person's decision by delegating.
         # Read only; nothing is written to the child.
+        # Only an approval a person could still answer blocks: a child stuck
+        # on one no decision would be accepted for (no binding, too deep) can
+        # be started again.
         existing = child.find_thread()
-        if existing is not None and pending_approval_ids(
-            [entry.message for entry in existing.messages()]
-        ):
+        rows = [entry.message for entry in existing.messages()] if existing is not None else []
+        if pending_approval_ids(rows) and _answerable(child, rows):
             return _refused(
                 subagent.name,
                 run_id,
                 parent_run_id,
                 "denied",
                 "it is waiting on a person's approval",
+            )
+        # Nor while a turn on the child holds steps from its delegation: the
+        # new start would reset the count under a run that is still spending.
+        if child.child_live_hold(self._runtime.plans.now(), self._runtime.lock_ttl(child)):
+            return _refused(
+                subagent.name,
+                run_id,
+                parent_run_id,
+                "denied",
+                "a turn on it is still running",
             )
 
         # The child's authority comes from ITS mode, not the parent's.
@@ -194,7 +233,7 @@ class SubagentRunner:
             # tree, not the child's failure, and only that agent stops.
             if error.code in ("agent_spend_ceiling_exceeded", "budget_unpriced"):
                 return _refused(subagent.name, run_id, parent_run_id, "exhausted", str(error))
-            return _refused(subagent.name, run_id, parent_run_id, "failed", str(error))
+            return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
         except Exception as error:  # noqa: BLE001 - framed, not propagated
             # Tearing down the parent run would discard work it has already
             # done, and "that subagent failed" is something the parent can act
@@ -277,6 +316,36 @@ def _lower(a: float | None, b: float | None) -> float | None:
 
 def _lower_int(a: int | None, b: int | None) -> int | None:
     return b if a is None else a if b is None else min(a, b)
+
+
+#: The codepoints a blank task consists of, spelled identically in every
+#: language (prism-harness, prism-harness-ts): never the language's own
+#: whitespace rule, which differs between languages and versions.
+BLANK_CODEPOINTS = frozenset(
+    [*range(0x0009, 0x000E), 0x0020, 0x0085, 0x00A0, 0x1680]
+    + [*range(0x2000, 0x200E), 0x2028, 0x2029, 0x202F, 0x205F, 0x2060, 0x3000, 0xFEFF]
+)
+
+
+def is_blank(task: str) -> bool:
+    """Whether a task consists only of :data:`BLANK_CODEPOINTS` (or nothing)."""
+    return all(ord(character) in BLANK_CODEPOINTS for character in task)
+
+
+def _named(error: BaseException) -> str:
+    """What a framed failure says about an exception: its class, and a
+    harness error's code, never its message."""
+    code = getattr(error, "code", None)
+    name = type(error).__name__
+    return f"{name} ({code})" if isinstance(error, HarnessError) and code else name
+
+
+def _answerable(child: Session, rows: list[dict[str, Any]]) -> bool:
+    try:
+        assert_decidable(child, rows)
+    except HarnessError:
+        return False
+    return True
 
 
 def _refused(

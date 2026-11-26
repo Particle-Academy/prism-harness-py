@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
@@ -739,7 +738,7 @@ class AgentRuntime:
                     return int(_allowance(facts, False)["own_left"])
 
                 counted = session.claim_child_steps(
-                    run_id, int(time.time()), self.lock_ttl(session), False, decide
+                    run_id, self._plans.now(), self.lock_ttl(session), False, decide
                 )
                 forged = counted is None
                 claimed = True
@@ -765,7 +764,7 @@ class AgentRuntime:
                 # holds what it may take, settled when it ends.
                 session.claim_child_steps(
                     run_id,
-                    int(time.time()),
+                    self._plans.now(),
                     self.lock_ttl(session),
                     True,
                     lambda _counted: int(first["own_left"]),
@@ -970,7 +969,11 @@ class AgentRuntime:
             # child). A top-level session a host bound writes its binding on
             # its rows too, with its steps used, and is not a child.
             linked = (
-                session.child_refs() is not None
+                # A subagent child's address: whatever else was or was not
+                # saved (a child parked by v0.5.3 saved nothing but its
+                # thread), it is a child, and without a ceiling it fails closed.
+                "::sub::" in session.scope
+                or session.child_refs() is not None
                 or session.child_binding() is not None
                 or (tail is not None and "harness_tree" in tail)
                 or (
@@ -1703,7 +1706,7 @@ def _record_decision(
         # A decision the resuming turn could not act on at all is refused
         # here, with nothing written (G-387): a linked child with no saved
         # binding, or one too deep to run.
-        _assert_decidable(live, rows)
+        assert_decidable(live, rows)
         # No budget refuses a decision (G-387): acting on an approved call
         # makes no provider call, so a resume with no steps or cost left acts
         # on it and takes no model step. Only what the call itself cannot
@@ -1724,7 +1727,7 @@ def _record_decision(
     session.lock(write, ttl_seconds, wait_seconds)
 
 
-def _assert_decidable(session: Session, rows: Sequence[Mapping[str, Any]]) -> None:
+def assert_decidable(session: Session, rows: Sequence[Mapping[str, Any]]) -> None:
     """The checks a resume with no context runs before it acts on anything,
     asked before a decision is recorded (G-387).
 

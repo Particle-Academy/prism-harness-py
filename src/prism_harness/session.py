@@ -356,12 +356,15 @@ class Session:
         (G-387): the steps this child has used since the runner last started
         it, counted durably beside its saved ceiling, plus every live hold.
 
-        ``decide`` is handed that count (None when the stored count is not one
-        the harness wrote) and returns how many steps this run holds; the hold
-        is kept under ``run_id`` until :meth:`settle_child_steps`. A hold
-        older than ``hold_ttl`` is charged in full first, so a run that never
-        settles can only over-charge the delegation. ``reset`` (a runner
-        start) begins the count again at 0. Returns the count it decided on.
+        ``decide`` is handed that count (None when the stored count is
+        missing or not one the harness wrote, or ``run_id`` already holds or
+        was charged: the run then fails closed) and returns how many steps
+        this run holds; the hold is kept under ``run_id`` until
+        :meth:`settle_child_steps`. A hold older than ``hold_ttl`` is charged
+        in full first and remembered per run, so a run that never settles can
+        only over-charge the delegation, and one that settles late replaces
+        that charge with what it took. ``reset`` (a runner start) is the only
+        thing that writes a fresh count. Returns the count it decided on.
 
         Internal: called by the runtime when a run begins."""
         self._assert_writable()
@@ -372,17 +375,18 @@ class Session:
             stored = self._durable.get(key)
             current = dict(stored) if isinstance(stored, dict) else {}
             record: dict[str, Any] | None = (
-                {"steps": 0, "holds": {}}
-                if reset or "child_steps" not in current
-                else _child_steps(current["child_steps"])
+                {"steps": 0, "holds": {}, "charged": {}}
+                if reset
+                else _child_steps(current.get("child_steps"))
             )
-            if record is None:
+            if record is None or run_id in record["holds"] or run_id in record["charged"]:
                 decide(None)
                 return
             for hold_id, hold in list(record["holds"].items()):
                 if now - hold["at"] >= hold_ttl:
                     del record["holds"][hold_id]
                     record["steps"] += hold["steps"]
+                    record["charged"][hold_id] = hold["steps"]
             counted = record["steps"] + sum(hold["steps"] for hold in record["holds"].values())
             found[0] = counted
             taken = max(0, decide(counted))
@@ -394,9 +398,11 @@ class Session:
         return found[0]
 
     def settle_child_steps(self, run_id: str, took: int) -> None:
-        """Replace a run's hold on the child's delegation budget with the steps
-        it took (G-387). A hold already gone (charged in full when it expired)
-        changes nothing.
+        """Replace a run's charge on the child's delegation budget with the
+        steps it took (G-387): its live hold, or the full charge its hold
+        became when it expired, so a late settle is counted once. A record that
+        is not one the harness wrote is left as it is, never repaired into a
+        permissive one.
 
         Internal: called by the runtime when a run ends, parks or fails."""
         self._assert_writable()
@@ -406,13 +412,29 @@ class Session:
             stored = self._durable.get(key)
             current = dict(stored) if isinstance(stored, dict) else {}
             record = _child_steps(current.get("child_steps"))
-            if record is None or run_id not in record["holds"]:
+            if record is None:
                 return
-            del record["holds"][run_id]
+            if run_id in record["holds"]:
+                del record["holds"][run_id]
+            elif run_id in record["charged"]:
+                record["steps"] = max(0, record["steps"] - record["charged"].pop(run_id))
+            else:
+                return
             record["steps"] += max(0, took)
             self._durable.put(key, {**current, "child_steps": record})
 
         self._durable.with_lock(key, change, 10, 5)
+
+    def child_live_hold(self, now: int, hold_ttl: int) -> bool:
+        """Whether a turn on this child holds steps from its delegation budget
+        right now (a hold younger than ``hold_ttl``). Read only.
+
+        Internal: read by the subagent runner before it starts the child."""
+        stored = self._durable.get(self._child_key())
+        record = _child_steps(stored.get("child_steps")) if isinstance(stored, dict) else None
+        return record is not None and any(
+            now - hold["at"] < hold_ttl for hold in record["holds"].values()
+        )
 
     def remember_child_binding(
         self, binding: dict[str, Any], depth: int = 0, ceiling: int | None = None
@@ -736,11 +758,13 @@ def _whole(value: object) -> bool:
 
 def _child_steps(value: object) -> dict[str, Any] | None:
     """A child's durable step count as the harness writes it, copied, or None
-    for anything else."""
+    for anything else: missing, or any field (``steps``, the ``holds`` and
+    ``charged`` containers, every hold's ``steps`` and ``at``, every charge)
+    that is not a whole number from 0 to 2^53-1."""
     if not isinstance(value, dict) or not _whole(value.get("steps")):
         return None
-    holds = value.get("holds")
-    if not isinstance(holds, dict):
+    holds, charged = value.get("holds"), value.get("charged")
+    if not isinstance(holds, dict) or not isinstance(charged, dict):
         return None
     copied: dict[str, dict[str, int]] = {}
     for hold_id, hold in holds.items():
@@ -748,8 +772,13 @@ def _child_steps(value: object) -> dict[str, Any] | None:
             not isinstance(hold_id, str)
             or not isinstance(hold, dict)
             or not _whole(hold.get("steps"))
-            or type(hold.get("at")) is not int
+            or not _whole(hold.get("at"))
         ):
             return None
         copied[hold_id] = {"steps": hold["steps"], "at": hold["at"]}
-    return {"steps": value["steps"], "holds": copied}
+    charges: dict[str, int] = {}
+    for hold_id, steps in charged.items():
+        if not isinstance(hold_id, str) or not _whole(steps):
+            return None
+        charges[hold_id] = steps
+    return {"steps": value["steps"], "holds": copied, "charged": charges}
