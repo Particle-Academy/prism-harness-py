@@ -286,16 +286,26 @@ What one run tree is:
   start, and every later turn on it the runner did not start (answers, new
   messages, host `RunContext`s, at once or in a row) claims from what is
   left, in one locked write. A host `RunContext` can lower it, never raise it.
-  A new runner start begins a new count. A linked child with no saved
-  ceiling, or one that is not a whole number, takes no model step.
+  A new runner start begins a new count; the runner refuses to start a child
+  while a turn on it still holds steps. A subagent child (its scope is
+  `...::sub::<name>`, or the runner saved something with it) with no saved
+  ceiling or count, or one that is not a whole number, takes no model step:
+  that includes a child parked by v0.5.x.
+- A host `RunContext` belongs to ONE session's turn. Its ledger is shared by
+  reference, so a context handed to turns on several sessions charges every
+  one of them (and their children) the steps all of them took on it. Build a
+  context per turn.
 - A root under a host `RunContext` runs on the host's budget (what that context
   has left), not its mode's `max_steps`; `max_steps_ceiling` still bounds it,
   absolute on the run's whole count.
 - An approved subagent call on a run with no steps left is acted on: its
   result is the runner's "did not run: ... exhausted" refusal, and the child
-  takes no model step. The runner also refuses an empty task, and a
-  delegation into a child session with pending approvals, so a model cannot
-  dismiss a person's pending decision by delegating again.
+  takes no model step. The runner also refuses a task that is not a string
+  or is blank (only the codepoints listed in the changelog), and a delegation
+  into a child session with a pending approval a person could still answer,
+  so a model cannot dismiss a person's pending decision by delegating again.
+  Anything that raises around a child comes back as a framed `failed` result
+  naming the exception's class, never its message.
 - A decision is refused before anything is recorded only when its resume could
   not act on it at all: a linked child with no saved binding
   (`child_binding_missing`) or one too deep (`run_not_permitted`). A turn

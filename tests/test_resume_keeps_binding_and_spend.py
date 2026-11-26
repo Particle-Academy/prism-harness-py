@@ -251,8 +251,11 @@ def test_a_malformed_stored_binding_is_ignored() -> None:
     )
     legacy.thread().record(rows, None)
     record_approval(legacy, paused["tool_approval_requests"][0]["approval_id"], True)
+    before = len(world.child_requests())
 
     world.runtime.send(legacy, "")
 
-    resumed = world.child_requests()[-1]
-    assert (resumed.provider, resumed.model) == ("anthropic", "opus-like")
+    # Its address is a subagent child's and nothing about it was saved: it
+    # fails closed (G-387), acting on the approval with no model step, so no
+    # provider is chosen for it from a malformed binding.
+    assert len(world.child_requests()) == before

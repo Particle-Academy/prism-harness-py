@@ -1,0 +1,113 @@
+"""Park a subagent child on an approval with RELEASED prism-harness-py code
+(v0.5.3), into a file store, so main's code can be tested resuming that exact
+shape (G-387 round 3, item 3).
+
+Usage: python -I record_v053_child.py <v0.5.3 src> <output directory>
+Offline: sockets refused.
+"""
+
+from __future__ import annotations
+
+import socket
+import sys
+from typing import Any
+
+
+def _refuse(*_a: object, **_k: object) -> None:
+    raise AssertionError("network")
+
+
+socket.socket.connect = _refuse  # type: ignore[method-assign]
+socket.create_connection = _refuse  # type: ignore[assignment]
+
+sys.path.insert(0, sys.argv[1])
+directory = sys.argv[2]
+
+from prism_harness import (  # noqa: E402
+    AgentRuntime,
+    FileSessionStore,
+    LlmResponse,
+    LlmToolCall,
+    ModeRegistry,
+    Participant,
+    PrismHarness,
+    RunBudget,
+    RunContext,
+    SubagentRunner,
+    ToolRegistry,
+)
+
+MODES = ModeRegistry(
+    {
+        "default": "lead",
+        "modes": {
+            "lead": {
+                "system_prompt": "Lead.",
+                "tools": ["echo", "worker"],
+                "requires_approval": ["echo"],
+                "max_steps": 8,
+                "subagents": {"worker": {"mode": "work", "max_steps": 2}},
+            },
+            "work": {
+                "system_prompt": "Work.",
+                "tools": ["echo", "lookup"],
+                "requires_approval": ["echo"],
+                "max_steps": 8,
+            },
+        },
+    }
+)
+
+script = [
+    # the root turn delegates
+    LlmResponse(
+        text="", finish_reason="tool_calls", tool_calls=[LlmToolCall("c1", "worker", {"task": "go"})]
+    ),
+    # the child parks on a gated echo
+    LlmResponse(
+        text="", finish_reason="tool_calls", tool_calls=[LlmToolCall("c2", "echo", {"n": 1})]
+    ),
+    # the root answers
+    LlmResponse(text="Root done.", finish_reason="stop"),
+]
+
+
+def client(_request: Any) -> LlmResponse:
+    return script.pop(0)
+
+
+class Tool:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def handle(self, args: dict[str, Any]) -> Any:
+        return "ok"
+
+
+harness = PrismHarness(
+    drivers={"files": lambda: FileSessionStore(directory)},
+    stores={"ephemeral": "files", "durable": "files"},
+)
+runtime: AgentRuntime
+
+
+def delegate(session: Any) -> Any:
+    subagent = MODES.resolve("lead").subagents["worker"]
+    return SubagentRunner(harness, runtime).tool(
+        subagent, session, RunContext.root("tool-run", RunBudget(100)), "tool-run"
+    )
+
+
+tools = ToolRegistry().register(Tool("echo")).register(Tool("lookup"))
+tools.register_factory("worker", delegate)
+runtime = AgentRuntime(
+    client=client, modes=MODES, tools=tools, config={"provider": "openai", "model": "root-model"}
+)
+root = harness.for_(Participant("User", "ada")).session("support")
+root.using_mode("lead")
+response = runtime.send(root, "Go")
+child = harness.for_(Participant("User", "ada")).session("support::sub::worker")
+rows = [m.message for m in child.thread().messages()]
+parked = [r for r in rows if r.get("tool_approval_requests")]
+print("root:", response.finish_reason, "child rows:", len(rows), "parked:", len(parked))
+print("parked row keys:", sorted(parked[-1].keys()) if parked else None)

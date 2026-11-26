@@ -17,13 +17,16 @@
   that count in one locked write. So answers, new messages and host
   `RunContext`s on the child, sequential or at once, never total more than the
   ceiling; a host context can only lower it. A hold whose run never settles
-  is charged in full once the lock TTL has passed. A runner start begins a new
-  count with the ceiling it saves.
-- A linked child session (one the runner started) with no saved ceiling, or a
-  saved ceiling or step count that is not a whole number, fails closed: it
-  acts on its recorded decisions and takes no model step, and a new message to
-  it is refused before anything is recorded. Only a session that was never a
-  child runs on its mode's `max_steps`.
+  is charged in full once the lock TTL has passed; when that run does settle,
+  the steps it took replace the full charge, so it is counted once. Only a
+  runner start writes a fresh count, with the ceiling it saves.
+- A subagent child session (its scope is a child's, `...::sub::<name>`, or the
+  runner saved references, a binding or a tree with it) with no saved ceiling,
+  or a saved ceiling or step count that is missing a field or is not a whole
+  number, fails closed: it acts on its recorded decisions and takes no model
+  step, and a new message to it is refused before anything is recorded. This
+  covers a child parked by v0.5.x, which saved only its thread. Only a
+  session that is not a subagent child runs on its mode's `max_steps`.
 - A run that parks on an approval writes the steps it has used, its children's
   included, on the row it parks on (`harness_steps_used`). Its resume counts
   the larger of that, the child's durable count and the session's own
@@ -55,9 +58,19 @@
   records no new prompt: it ends on the cancellation before any model step,
   and its approvals stay pending.
 - The subagent runner refuses (`denied`, a framed result, nothing written to
-  the child) a task that is empty or whitespace only, and a delegation into a
-  child session that has pending approvals, so a delegation cannot dismiss a
-  person's pending decision.
+  the child): a task that is not a string; a blank task, one made only of
+  U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200D, U+2028,
+  U+2029, U+202F, U+205F, U+2060, U+3000 and U+FEFF (one explicit set, the
+  same in every language); a delegation into a child session with a pending
+  approval a person could still answer, so a delegation cannot dismiss a
+  person's pending decision; and a delegation while a turn on the child holds
+  steps from its count. A child stuck on an approval no decision could act on
+  can be started again.
+- Everything the runner does around a child (building its session, reading
+  its thread, its count, the budget arithmetic) is framed: any exception comes
+  back to the parent as a `failed` result naming the exception's class (and a
+  harness error's code), never its message, so no store or host text reaches
+  the model.
 - `send_structured()` returns a `StructuredAgentResponse`, with no document,
   when the run parks on an approval or runs out of steps.
 

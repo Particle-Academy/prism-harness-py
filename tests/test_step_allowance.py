@@ -140,12 +140,13 @@ class World:
 
         for name in ("worker", "alpha", "beta", "big", "deep", "gated"):
             tools.register_factory(name, delegate(name))
-        return AgentRuntime(
+        runtime = AgentRuntime(
             client=self._client,
             modes=modes(self.lead_steps),
             tools=tools,
             config={"provider": "openai", "model": "root-model", **self.config},
         )
+        return runtime
 
     def fresh(self) -> World:
         """A new worker: new harness and runtime objects, the same disk."""
