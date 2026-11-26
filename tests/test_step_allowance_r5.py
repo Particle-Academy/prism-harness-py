@@ -22,7 +22,6 @@ from prism_harness import (
     HarnessError,
     RunBudget,
     RunContext,
-    RunLedger,
     Session,
     SubagentRunner,
     record_approval,
@@ -123,21 +122,8 @@ def test_a_host_cancel_reaches_the_subagent_tool_inside_a_turn() -> None:
     assert "did not run: host stopped delegations" in following
 
 
-def test_a_host_context_with_an_unenforceable_cost_cap_stops_the_tool_inside_a_turn() -> None:
-    world = World()
-
-    def unpriced() -> RunContext:
-        context = RunContext(ledger=RunLedger("host"), budget=RunBudget(100, max_cost_usd=1.0))
-        context.ledger.record_cost(None)  # a call that reported no cost
-        return context
-
-    world.tool_context = unpriced
-    world.fresh()
-
-    following = delegate_in_a_turn(world)
-
-    assert child_requests(world) == 0
-    assert "cost budget cannot be enforced" in following
+# The unenforceable-cost-cap control is in test_step_allowance_r6.py, on a
+# metered turn, where the turn's own ledger cannot trip the cap by itself.
 
 
 def test_a_live_host_context_still_delegates_inside_a_turn() -> None:
