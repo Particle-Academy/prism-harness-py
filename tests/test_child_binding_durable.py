@@ -344,7 +344,9 @@ def test_a_binding_the_host_put_on_its_own_context_is_never_saved() -> None:
 def test_a_child_started_again_under_a_host_tree_keeps_its_saved_tree() -> None:
     rig = Rig(chat_steps=3)
     rig.calls(("research", {"task": "Find the weather."}))
-    rig.calls(("weather", {"city": "Paris"}))
+    # The child answers: a child a person's approval is pending on is never
+    # delegated into again (G-387).
+    rig.text("Child answer.")
     rig.text("Parent answer.")
     rig.runtime.send(rig.session(), "Go")
     child = rig.session("chat::sub::research")

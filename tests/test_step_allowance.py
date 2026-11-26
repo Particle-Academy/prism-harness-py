@@ -278,36 +278,50 @@ def test_a_host_context_smaller_than_the_saved_ceiling_lowers_it() -> None:
 
 def test_a_runner_start_overwrites_the_saved_ceiling() -> None:
     world = World()
-    world.run_child_in_runner("big")  # declared 4
+    parent = world.root()
+    subagent = world.runtime.mode_for(parent).subagents["big"]  # declared 4
+    world.text("First answer.")
+    SubagentRunner(world.harness, world.runtime).run(
+        subagent, parent, RunContext.root("root", RunBudget(8)), "root", "one"
+    )
     # The runner starts it again from a parent with one step left: its ceiling
     # is now 1, and a later turn outside the runner is held to that.
-    parent = world.fresh().root()
-    subagent = world.runtime.mode_for(parent).subagents["big"]
-    ledger_context = RunContext.root("root2", RunBudget(1))
-    SubagentRunner(world.harness, world.runtime).run(
-        subagent, parent, ledger_context, "root2", "again"
+    world.text("Second answer.")
+    SubagentRunner(world.fresh().harness, world.runtime).run(
+        subagent, world.root(), RunContext.root("root2", RunBudget(1)), "root2", "again"
     )
     assert len(world.requests) == 2
 
-    approve_and_resume(world, lambda: world.child("big"), 6)
+    world.text("Unused.")
+    with pytest.raises(HarnessError) as caught:
+        world.fresh().runtime.send(world.child("big"), "A new question")
 
+    assert caught.value.code == "run_not_permitted"
     assert len(world.requests) == 2
 
 
 def test_a_runner_start_is_never_read_as_a_resume_of_the_parked_run() -> None:
     world = World()
     world.run_child_in_runner("big")
-    # The parked row says the run used every step there is.
+    approve_and_resume(world, lambda: world.child("big"), 1)  # parks again
+    waiting = world.pending(world.child("big"))
+    record_approval(world.child("big"), waiting[0], True)
+    world.text("Child done.")
+    world.fresh().runtime.send(world.child("big"), "")  # nothing pending now
+    assert world.pending(world.child("big")) == []
+    # The last parked row says the run used every step there is.
     rewrite_paused_row(world.child("big"), lambda row: row.update(harness_steps_used=999))
+    requests = len(world.requests)
     parent = world.fresh().root()
     subagent = world.runtime.mode_for(parent).subagents["big"]
 
+    world.text("New task done.")
     SubagentRunner(world.harness, world.runtime).run(
         subagent, parent, RunContext.root("root2", RunBudget(8)), "root2", "a new task"
     )
 
     # A runner start is a new run: it takes model steps of its own.
-    assert len(world.requests) == 2
+    assert len(world.requests) == requests + 1
 
 
 # -- the tree a sibling spent: the decision is acted on, with no model step

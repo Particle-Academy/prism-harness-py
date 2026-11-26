@@ -220,7 +220,10 @@ class ModeRegistry:
                 raise HarnessError.mode_malformed(name, f"subagent [{key}] is not an object")
 
             self._check_subagent_binding(name, key, config, agents)
-            subagent = subagent_from_config(key, config)
+            try:
+                subagent = subagent_from_config(key, config)
+            except ValueError as error:
+                raise HarnessError.mode_malformed(name, f"subagent [{key}]: {error}") from None
 
             # The child runs in the DELEGATED agent when one is named, so that is
             # where its mode has to exist. Names only: resolving it here would

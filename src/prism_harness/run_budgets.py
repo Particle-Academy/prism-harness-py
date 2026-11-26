@@ -1,18 +1,13 @@
 """How many model steps a run may take: one authority (G-387).
 
 G-381 gave a run's tree membership one authority. This does the same for its
-step allowance. Before it, "steps left" was worked out at many sites from four
-sources that were never reconciled: the in-memory ledger, re-seeded on a resume
-from the session's own transcript (which never holds a child's steps); the
-durable run-tree record; the plan ledger; and a fresh ceiling from the mode, the
-``max_steps_ceiling`` setting, a subagent declaration or a host context. Each
-site read a different pair, so the decision checks and the resume disagreed,
-and a subagent's declared ``max_steps`` was lost on every turn the runner did
-not start.
+step allowance: the facts it is worked out from are persisted, never
+re-derived, and it is worked out once.
 
-Now the facts are persisted (the steps a parked run used, children included,
-on the row it parks on as ``harness_steps_used``; a child's ceiling, saved with
-its binding when the runner starts it) and :func:`allowance` turns them into
+The facts: the steps a parked run used, children included, on the row it
+parks on as ``harness_steps_used``; a child's ceiling, saved with its binding
+when the runner starts it, and the steps the child used since, counted durably
+beside it. Then :func:`allowance` turns them into
 the run's allowance ONCE, when the run begins. The runtime records it beside
 the run's membership, narrows the run to it, and every consumer reads that.
 
@@ -39,9 +34,15 @@ MAX_SAFE_INTEGER = 2**53 - 1
 
 
 def _nat(value: Any) -> int | None:
-    """A whole number, at least 0; None stays None."""
+    """A whole number, at least 0; None stays None. Anything that is not a
+    finite number (NaN, an infinity, a string, a boolean) is 0: an input that
+    cannot be measured never removes a cap, it closes it."""
     if value is None:
         return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if isinstance(value, float) and not math.isfinite(value):
+        return 0
     whole: int = math.trunc(value)
     return max(0, whole)
 

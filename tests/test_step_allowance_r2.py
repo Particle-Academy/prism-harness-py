@@ -285,7 +285,7 @@ def test_a_host_context_whose_budget_was_forced_non_finite_takes_no_model_step(
 @pytest.mark.parametrize("ceiling", [math.nan, math.inf, 2.0])
 def test_a_max_steps_ceiling_that_is_not_a_whole_number_is_refused(ceiling: float) -> None:
     with pytest.raises(ValueError):
-        World(config={"max_steps_ceiling": ceiling})  # type: ignore[typeddict-item]
+        World(config={"max_steps_ceiling": ceiling})  # type: ignore[arg-type]
 
 
 # -- 4. a decision the resume could not act on is refused before recording -

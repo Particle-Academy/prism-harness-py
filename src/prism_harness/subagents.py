@@ -51,6 +51,14 @@ class RunBudget:
     max_output_tokens_per_call: int | None = None
 
     def __post_init__(self) -> None:
+        # A step cap that is not a whole number is no cap: NaN compares false
+        # with everything and an infinity never runs out, so either would
+        # remove the limit it claims to set (G-387). Refused, never coerced.
+        steps = self.max_steps
+        if isinstance(steps, bool) or not isinstance(steps, int):
+            raise TypeError("max_steps must be a whole number.")
+        if steps < 0:
+            raise ValueError("max_steps must be zero or more.")
         output = self.max_output_tokens_per_call
         if output is not None and (
             isinstance(output, bool) or not isinstance(output, int) or output < 1
@@ -64,8 +72,15 @@ class RunBudget:
             isinstance(output, bool) or not isinstance(output, int) or output < 1
         ):
             raise ValueError("Output ceilings must be positive integers or null.")
+        steps = config.get("max_steps")
+        if steps is None:
+            steps = default_steps
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 0:
+            # A declaration that is not a whole number is refused, never read
+            # as the default: a typo must not raise the cap it meant to set.
+            raise ValueError("A subagent's max_steps must be a whole number, zero or more.")
         return cls(
-            max_steps=_int_or(config.get("max_steps"), default_steps),
+            max_steps=steps,
             max_cost_usd=_float_or_none(config.get("max_cost_usd")),
             max_seconds=_int_or_none(config.get("max_seconds")),
             max_output_tokens_per_call=output,
@@ -514,12 +529,6 @@ def _lesser(a: float | None, b: float | None) -> float | None:
     if b is None:
         return a
     return min(a, b)
-
-
-def _int_or(value: Any, fallback: int) -> int:
-    return (
-        int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else fallback
-    )
 
 
 def _int_or_none(value: Any) -> int | None:

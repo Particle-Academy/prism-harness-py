@@ -279,10 +279,27 @@ What one run tree is:
   tree and the plan budget have left and can never widen them. A child started
   under a run context the host built outside a turn has no tree record and
   resumes as before.
-- A subagent child's step ceiling (the least of its declared `max_steps`, what
-  its parent had left and `max_steps_ceiling`) is saved with the child when
-  the runner starts it, and applies to every later turn on it the runner did
-  not start. A host `RunContext` can lower it, never raise it.
+- A subagent child's step ceiling is the runner's grant (the least of its
+  declared `max_steps`, what its parent had left and `max_steps_ceiling`),
+  saved with the child when the runner starts it. It is a lifetime budget for
+  that delegation: the child's steps are counted durably from the runner's
+  start, and every later turn on it the runner did not start (answers, new
+  messages, host `RunContext`s, at once or in a row) claims from what is
+  left, in one locked write. A host `RunContext` can lower it, never raise it.
+  A new runner start begins a new count. A linked child with no saved
+  ceiling, or one that is not a whole number, takes no model step.
+- A root under a host `RunContext` runs on the host's budget (what that context
+  has left), not its mode's `max_steps`; `max_steps_ceiling` still bounds it,
+  absolute on the run's whole count.
+- An approved subagent call on a run with no steps left is acted on: its
+  result is the runner's "did not run: ... exhausted" refusal, and the child
+  takes no model step. The runner also refuses an empty task, and a
+  delegation into a child session with pending approvals, so a model cannot
+  dismiss a person's pending decision by delegating again.
+- A decision is refused before anything is recorded only when its resume could
+  not act on it at all: a linked child with no saved binding
+  (`child_binding_missing`) or one too deep (`run_not_permitted`). A turn
+  whose context's ledger is cancelled runs no approved call.
 - Every other `send()` starts a new run tree, with nothing spent.
 - So does every `runtime.plan(session).advance()` that is not handed a
   `RunContext`: each step of a plan gets the full ceiling. To hold a whole plan

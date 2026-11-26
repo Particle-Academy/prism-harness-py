@@ -382,7 +382,7 @@ def test_a_child_started_again_from_a_new_tree_saves_it_at_the_runners_depth() -
 def test_a_host_context_shallower_than_the_saved_depth_runs_at_the_saved_depth() -> None:
     rig = Rig()
     child = rig.session("ada", "chat::sub::research").using_mode("research")
-    child.remember_child_binding(CHEAP.to_row(), MAX_DEPTH - 1)
+    child.remember_child_binding(CHEAP.to_row(), MAX_DEPTH - 1, 8)
     child.remember_child_refs(None, None)
 
     rig.calls(("dig", {"task": "Dig."}))  # one level deeper is the ceiling
@@ -397,7 +397,7 @@ def test_a_host_context_shallower_than_the_saved_depth_runs_at_the_saved_depth()
 def test_a_host_context_deeper_than_the_saved_depth_runs_deeper() -> None:
     rig = Rig()
     child = rig.session("ada", "chat::sub::research").using_mode("research")
-    child.remember_child_binding(CHEAP.to_row(), 1)
+    child.remember_child_binding(CHEAP.to_row(), 1, 8)
     child.remember_child_refs(None, None)
     deeper = RunContext(ledger=RunLedger.start("host"), budget=RunBudget(100), depth=2)
 

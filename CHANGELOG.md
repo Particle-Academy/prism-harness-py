@@ -2,41 +2,64 @@
 
 ## Unreleased
 
-### Fixed
+### Changed
 
 - One authority for a run's step allowance (G-387). How many model steps a run
-  may take is now worked out once, when the run begins, by the pure
+  may take is worked out once, when the run begins, by the pure
   `RunBudgets.allowance` (`prism_harness.run_budgets`), and every consumer
   reads that one answer: the loop's step gate, the paused row, a subagent's
-  pre-check, a child's tree hold and the plan's hold. Before, it was re-derived
-  at many sites from different sources, which disagreed.
-- A declared subagent ceiling was not re-applied on turns the runner did not
-  start. The ceiling the runner starts a child with (the least of its declared
-  `max_steps`, what its parent had left and `max_steps_ceiling`) is now saved
-  with the child's binding and applies to every later turn on it: an answer to
-  its approval, a new message, or a host `RunContext`, which can only lower it.
+  pre-check, a child's tree hold and the plan's hold.
+- A subagent child's step ceiling is the runner's grant: the least of its
+  declared `max_steps`, what its parent had left and `max_steps_ceiling`. It
+  is saved with the child's binding and is the DELEGATION's lifetime budget.
+  The steps the child takes after the runner starts it are counted durably
+  beside the ceiling, and every run on the child claims what it may take from
+  that count in one locked write. So answers, new messages and host
+  `RunContext`s on the child, sequential or at once, never total more than the
+  ceiling; a host context can only lower it. A hold whose run never settles
+  is charged in full once the lock TTL has passed. A runner start begins a new
+  count with the ceiling it saves.
+- A linked child session (one the runner started) with no saved ceiling, or a
+  saved ceiling or step count that is not a whole number, fails closed: it
+  acts on its recorded decisions and takes no model step, and a new message to
+  it is refused before anything is recorded. Only a session that was never a
+  child runs on its mode's `max_steps`.
 - A run that parks on an approval writes the steps it has used, its children's
-  included, on the row it parks on (`harness_steps_used`), and its resume
-  counts the larger of that and the session's own transcript count (which
-  never held a child's steps), so a row forged lower gains nothing. A value
-  there that is not a whole number from 0 to 2^53-1 fails closed: the resume
-  acts on its decisions and takes no model step; so does a child row without
-  one. A row written before the field existed uses the transcript count.
-  `harness_steps_left` is still written, now including a shared plan budget's
-  narrowing, but nothing reads it to decide a budget.
-- `max_steps_ceiling` is absolute on a run's whole count under every context:
-  a host-context resume no longer gets it afresh from the host's ledger.
-- One decision rule: acting on an approved call makes no provider call, so
-  no budget (steps or cost; the run's own, its run tree's or a shared plan
+  included, on the row it parks on (`harness_steps_used`). Its resume counts
+  the larger of that, the child's durable count and the session's own
+  transcript count. A value there that is not a whole number from 0 to
+  2^53-1 fails closed, and so does a child row without one; a root row
+  written before the field existed uses the transcript count.
+  `harness_steps_left` is still written, including a shared plan budget's
+  narrowing, and nothing reads it to decide a budget.
+- `max_steps_ceiling` is absolute on a run's whole count under every context.
+  A root under a host `RunContext` runs on the host's budget (what the host
+  context has left), not its mode's `max_steps`; `max_steps_ceiling` still
+  bounds it.
+- `RunBudget` refuses a `max_steps` that is not a whole number of zero or more
+  (`TypeError` / `ValueError`), and a subagent declaration's `max_steps` must
+  be one (`mode_malformed`). `RunBudgets.allowance` reads any input that is
+  not a finite number as 0.
+- One decision rule: acting on an approved call makes no provider call, so no
+  budget (steps or cost; the run's own, its run tree's or a shared plan
   budget's) refuses a decision or a resume. The resume runs the approved call
-  and takes no model step, ending `budget_exhausted`. A decision is no longer
-  refused with `run_not_permitted` / `plan_budget_exhausted`, nor accepted and
-  then left unacted on. A turn with a NEW prompt and nothing left is still
-  refused before anything is recorded: `plan_budget_exhausted` when the plan's
-  grant is what is spent, otherwise `run_not_permitted`.
-- `send_structured()` returned a plain `AgentResponse` (and failed its own
-  type check) when the run parked on an approval or ran out of steps. It now
-  returns a `StructuredAgentResponse` with no document in both cases.
+  and takes no model step, ending `budget_exhausted`. An approved subagent
+  call on a spent run is acted on: its result is the runner's "did not run"
+  refusal, and no child model step is taken. A turn with a NEW prompt and
+  nothing left is refused before anything is recorded: `plan_budget_exhausted`
+  when the plan's grant is what is spent, otherwise `run_not_permitted`.
+- A decision the resuming turn could not act on is refused before anything is
+  recorded: `child_binding_missing` for a linked child with no saved binding,
+  `run_not_permitted` for one nested at or past the depth ceiling.
+- A turn whose run context's ledger is cancelled acts on no decision and
+  records no new prompt: it ends on the cancellation before any model step,
+  and its approvals stay pending.
+- The subagent runner refuses (`denied`, a framed result, nothing written to
+  the child) a task that is empty or whitespace only, and a delegation into a
+  child session that has pending approvals, so a delegation cannot dismiss a
+  person's pending decision.
+- `send_structured()` returns a `StructuredAgentResponse`, with no document,
+  when the run parks on an approval or runs out of steps.
 
 ### Parity
 

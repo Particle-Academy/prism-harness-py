@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
@@ -34,7 +35,13 @@ from prism_harness.run_budgets import allowance, fail_closed, steps_used
 from prism_harness.run_trees import RunTrees, kept_refs, saved_refs
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
-from prism_harness.subagents import ChildBinding, RunBudget, RunContext, binding_route
+from prism_harness.subagents import (
+    MAX_DEPTH,
+    ChildBinding,
+    RunBudget,
+    RunContext,
+    binding_route,
+)
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     ToolCallInput,
@@ -718,6 +725,24 @@ class AgentRuntime:
             facts, forged = self._allowance_facts(
                 session, mode, kind, context, prompt, stored, saved_binding
             )
+            claimed = False
+            if kind != "runner" and facts["saved_ceiling"] is not None and not forged:
+                # A child's saved ceiling is its DELEGATION's budget: the
+                # steps it used since the runner last started it are counted
+                # durably, live holds included, and this run claims what it
+                # may take from them in the same locked write, so two turns on
+                # the child at once, or many in a row, never total more.
+                def decide(counted: int | None) -> int:
+                    if counted is None:
+                        return 0
+                    facts["used"] = max(int(facts["used"]), counted)
+                    return int(_allowance(facts, False)["own_left"])
+
+                counted = session.claim_child_steps(
+                    run_id, int(time.time()), self.lock_ttl(session), False, decide
+                )
+                forged = counted is None
+                claimed = True
             first = _allowance(facts, forged)
             if kind in ("none", "metadata"):
                 # A resume is the SAME run: the fresh ledger continues its
@@ -725,6 +750,8 @@ class AgentRuntime:
                 # pause. Never on a context's ledger, which is someone else's.
                 run.ledger.record_steps(first["used"])
             begin_steps = run.ledger.steps
+            self._trees.members[run_id]["begin_steps"] = begin_steps
+            self._trees.members[run_id]["child_claim"] = claimed
             if context is not None and runner_binding is not None:
                 # The runner is starting a child: save its binding, its depth
                 # and its step ceiling, and the run tree and plan budget it
@@ -734,6 +761,16 @@ class AgentRuntime:
                 session.remember_child_binding(
                     runner_binding.to_row(), member["depth"], first["ceiling"]
                 )
+                # A new delegation: its count starts again at 0, and this run
+                # holds what it may take, settled when it ends.
+                session.claim_child_steps(
+                    run_id,
+                    int(time.time()),
+                    self.lock_ttl(session),
+                    True,
+                    lambda _counted: int(first["own_left"]),
+                )
+                self._trees.members[run_id]["child_claim"] = True
                 self._trees.child_started(session, member, self.lock_ttl(session))
                 # The tree it is in, with the plan ledger of the run it spends
                 # from. Under a run tree the host built, or none, there is no
@@ -814,6 +851,25 @@ class AgentRuntime:
             offered, plan_gates = self._with_plan_tools(session, mode, offered, scope)
             called: list[str] = []
 
+            if run.ledger.cancelled:
+                # A cancelled tree acts on no decision and records no new
+                # prompt: an approved call never runs after its tree was
+                # cancelled. The approvals stay pending; the loop ends the run
+                # on the cancellation before any model step.
+                return self._loop(
+                    session,
+                    mode,
+                    run,
+                    run_id,
+                    provider,
+                    model,
+                    offered,
+                    called,
+                    schema,
+                    system_prompt,
+                    plan_gates,
+                )
+
             # Decisions recorded since the run stopped are acted on FIRST, before
             # a new prompt is recorded, so the results land after the calls they
             # answer rather than after the new turn.
@@ -876,6 +932,7 @@ class AgentRuntime:
                 )
             )
             self._plans.after_turn(session)
+            self._settle_child(session, run_id)
             self._trees.finished(session, run_id)
             raise
         finally:
@@ -905,6 +962,28 @@ class AgentRuntime:
         used = 0
         forged = False
         if kind != "runner":
+            ceiling_state, _ = session.child_ceiling_state()
+            tail = paused_approval_row(stored)
+            # Linked: the runner saved something with the session, or its
+            # parked row names the tree a child belongs to, or a binding on a
+            # row written before rows carried their steps used (a legacy
+            # child). A top-level session a host bound writes its binding on
+            # its rows too, with its steps used, and is not a child.
+            linked = (
+                session.child_refs() is not None
+                or session.child_binding() is not None
+                or (tail is not None and "harness_tree" in tail)
+                or (
+                    tail is not None
+                    and "harness_binding" in tail
+                    and "harness_steps_used" not in tail
+                )
+            )
+            if ceiling_state == "garbage" or (ceiling_state == "absent" and linked):
+                # A linked child with no usable saved ceiling fails closed:
+                # it acts on its decisions and takes no model step. Only a
+                # session that was never a child runs on its mode.
+                forged = True
             row = paused_approval_row(stored) if prompt == "" else None
             found = steps_used(row)
             if row is None:
@@ -1217,6 +1296,7 @@ class AgentRuntime:
                 # in the thread, so a different process can resume after a person
                 # answers.
                 self._plans.after_turn(session)
+                self._settle_child(session, run_id)
                 self._trees.finished(session, run_id)
                 parked = AgentResponse(
                     run_id=run_id,
@@ -1487,7 +1567,9 @@ class AgentRuntime:
         session.complete_run(run_id, finish_reason, called)
         # G-360: when the run is over, the plan reads the thread it left.
         self._plans.after_turn(session)
-        # A root run that holds part of a run tree's budget settles it.
+        # A root run that holds part of a run tree's budget settles it, and
+        # a child its delegation's count.
+        self._settle_child(session, run_id)
         self._trees.finished(session, run_id)
         self._emit(
             RunFinished(
@@ -1510,6 +1592,22 @@ class AgentRuntime:
             finish_reason=finish_reason,
             stopped_because=stopped_because,
         )
+
+    def _settle_child(self, session: Session, run_id: str) -> None:
+        """Replace a child run's claim on its delegation budget with the steps
+        it took, children included (G-387). A failed write is reported; the
+        hold is then charged in full once it expires."""
+        member = self._trees.members.get(run_id)
+        if member is None or not member.get("child_claim"):
+            return
+        member["child_claim"] = False
+        took = member["ledger"].steps - int(member.get("begin_steps", member["ledger"].steps))
+        try:
+            session.settle_child_steps(run_id, took)
+        except Exception as failure:  # noqa: BLE001 - the hold is charged in full once it expires
+            logging.getLogger(__name__).warning(
+                "A child step count update failed: %s.", type(failure).__name__
+            )
 
     def _emit(self, event: HarnessEvent) -> None:
         if self._events is not None:
@@ -1602,6 +1700,10 @@ def _record_decision(
         rows = [entry.message for entry in live.thread().messages()]
         if approval_id not in pending_approval_ids(rows):
             raise HarnessError.approval_not_pending(approval_id)
+        # A decision the resuming turn could not act on at all is refused
+        # here, with nothing written (G-387): a linked child with no saved
+        # binding, or one too deep to run.
+        _assert_decidable(live, rows)
         # No budget refuses a decision (G-387): acting on an approved call
         # makes no provider call, so a resume with no steps or cost left acts
         # on it and takes no model step. Only what the call itself cannot
@@ -1620,6 +1722,25 @@ def _record_decision(
         )
 
     session.lock(write, ttl_seconds, wait_seconds)
+
+
+def _assert_decidable(session: Session, rows: Sequence[Mapping[str, Any]]) -> None:
+    """The checks a resume with no context runs before it acts on anything,
+    asked before a decision is recorded (G-387).
+
+    :raises HarnessError: ``child_binding_missing`` or ``run_not_permitted``.
+    """
+    saved = ChildBinding.from_row(session.child_binding())
+    if saved is None:
+        tail = paused_approval_row(rows)
+        saved = ChildBinding.from_row(tail.get("harness_binding")) if tail else None
+    route = binding_route("none", False, saved is not None, session.child_refs() is not None)
+    if route["binding"] == "refused":
+        raise HarnessError.child_binding_missing()
+    if session.child_depth() >= MAX_DEPTH:
+        raise HarnessError.run_not_permitted(
+            "This decision cannot be acted on: its run is nested at or past the depth ceiling."
+        )
 
 
 def _digestible(arguments: Mapping[str, Any] | None) -> bool:
