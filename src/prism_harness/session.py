@@ -478,6 +478,68 @@ class Session:
             self._write_child({"child_refs": refs})
         return self
 
+    def start_child(
+        self,
+        run_id: str,
+        now: int,
+        hold_ttl: int,
+        steps: int,
+        binding: dict[str, Any],
+        depth: int,
+        ceiling: int | None,
+        refs: dict[str, dict[str, str] | None],
+    ) -> None:
+        """A runner start's child records, in ONE locked write (G-387 start
+        gate): a fresh delegation count with this run holding ``steps``, the
+        binding, the depth, the step ceiling and the run tree and plan budget
+        references. Refused (``child_turn_live``) with nothing written while a
+        turn on the child holds steps from its delegation, re-checked here, in
+        the same write, so a resume claiming since the gate read it is never
+        wiped.
+
+        Internal: called by the runtime once the start gate let a start through
+        and its tree hold is taken."""
+        self._assert_writable()
+        key = self._child_key()
+        depth = depth if type(depth) is int and depth > 0 else 0
+        ceiling = ceiling if type(ceiling) is int and ceiling >= 0 else None
+        taken = max(0, steps)
+
+        def change() -> None:
+            stored = self._durable.get(key)
+            current = dict(stored) if isinstance(stored, dict) else {}
+            standing = _child_steps(current.get("child_steps"))
+            if standing is not None and any(
+                now - hold["at"] < hold_ttl for hold in standing["holds"].values()
+            ):
+                raise HarnessError(CHILD_TURN_LIVE, "A turn on this child is still running.")
+            legacy = self._durable.get(self._durable_key()) or {}
+            for name in ("child_binding", "child_depth", "child_ceiling", "child_refs"):
+                if name not in current and name in legacy:
+                    current[name] = deepcopy(legacy[name])
+            self._durable.put(
+                key,
+                {
+                    **current,
+                    "child_steps": {
+                        "steps": 0,
+                        "holds": {run_id: {"steps": taken, "at": now}} if taken > 0 else {},
+                        "charged": {},
+                    },
+                    "child_binding": deepcopy(binding),
+                    "child_depth": depth,
+                    "child_ceiling": ceiling,
+                    "child_refs": {
+                        "tree": None if refs.get("tree") is None else dict(refs["tree"] or {}),
+                        "plan_ledger": None
+                        if refs.get("plan_ledger") is None
+                        else dict(refs["plan_ledger"] or {}),
+                    },
+                },
+            )
+
+        self._durable.with_lock(key, change, 10, 5)
+
     def _child_key(self) -> str:
         """What the subagent runner saves about this session as a child (its
         binding, depth and run tree references) lives under a key of its own,

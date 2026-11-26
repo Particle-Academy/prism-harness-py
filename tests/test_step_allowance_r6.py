@@ -3,8 +3,8 @@
 - Every ledger-only stop (steps, cost, time, cancel) a runner start reaches
   after the runner's pre-check refuses it before the child's records are
   written.
-- The refusal sits immediately before the runner start's first durable write
-  on the child. Once past it, the start is committed: a later cancel or
+- Since round 7 the refusal is the start gate (test_run_starts.py), asked once
+  before ANY write. Once past it, the start is committed: a later cancel or
   time-out only stops model steps, and the task is recorded. Never "refused but
   the records rewritten".
 """
@@ -143,36 +143,23 @@ def capture_context(monkeypatch: pytest.MonkeyPatch) -> list[RunContext]:
     return contexts
 
 
+@pytest.mark.parametrize("method", ["start_child", "begin_run"])
 @pytest.mark.parametrize("how", ["cancelled", "time"])
-def test_a_stop_during_begin_run_refuses_at_the_gate_with_records_unchanged(
-    how: str, monkeypatch: pytest.MonkeyPatch
+def test_a_stop_after_the_start_gate_commits_the_start_and_takes_no_model_step(
+    how: str, method: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    world = World()
-    approval = dead_approval_child(world)
-    before = authority(world.child("worker"))
-    hook_after(monkeypatch, "begin_run", how, capture_context(monkeypatch))
-
-    result = start_again(world)
-
-    assert result.outcome == ("cancelled" if how == "cancelled" else "exhausted")
-    assert authority(world.child("worker")) == before
-    with pytest.raises(HarnessError):
-        record_approval(world.fresh().child("worker"), approval, True)
-    assert child_requests(world) == 1
-
-
-@pytest.mark.parametrize("how", ["cancelled", "time"])
-def test_a_stop_after_the_gate_commits_the_start_and_takes_no_model_step(
-    how: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+    """Round 7 (G-387 start gate): the gate is asked once, before anything is
+    written, so a stop landing during the commit (the child's records, or
+    begin_run and its listeners) no longer refuses the start. It is committed:
+    the task is recorded as a runner start records it, the dead approval is
+    ended, and the loop's gate takes no model step. (Round 6 refused a stop
+    during begin_run at a second, late gate.)"""
     world = World()
     dead_approval_child(world)
-    hook_after(monkeypatch, "remember_child_binding", how, capture_context(monkeypatch))
+    hook_after(monkeypatch, method, how, capture_context(monkeypatch))
 
     result = start_again(world)
 
-    # Committed: the task is recorded as a runner start records it, the dead
-    # approval is ended, and the loop's gate takes no model step.
     child = world.child("worker")
     rows = [entry.message for entry in child.thread().messages()]
     assert {"type": "user", "content": "Again."} in rows
@@ -264,24 +251,22 @@ def test_a_write_failing_after_the_tree_hold_leaves_no_hold_behind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     world = World()
-    original = Session.remember_child_binding
+    original = Session.start_child
 
     def failing(self: Session, *args: Any, **kwargs: Any) -> Any:
         if "::sub::" in self.scope:
             raise OSError("store down")
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(Session, "remember_child_binding", failing)
+    monkeypatch.setattr(Session, "start_child", failing)
     world.calls(("worker", {"task": "Look."}))  # the root delegates: the tree hold is taken
     world.text("Root done.")
     response = world.runtime.send(world.root(), "Go")
 
-    # The child start failed after the hold; the root's run settled the tree,
-    # so no hold is left and only the steps actually taken are charged.
+    # The child's records failed to save after the tree hold: the start
+    # releases the hold it took (round 7, G-387 start gate), so no record is
+    # left holding anything, and the root's own run never opened one.
     assert response.finish_reason == "stop"
     root = world.root()
-    record = root.plan_store().get(f"{root.key()}:run-tree:{response.run_id}")
-    assert isinstance(record, dict)
-    assert record["holds"] == {}
-    assert record["steps"] == 2
+    assert root.plan_store().get(f"{root.key()}:run-tree:{response.run_id}") is None
     assert child_requests(world) == 0

@@ -29,10 +29,12 @@ from prism_harness.events import (
 )
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.plans import budget as plan_budget
+from prism_harness.plans.refusal import PlanRefused
 from prism_harness.plans.service import Plans
 from prism_harness.run_budgets import allowance, fail_closed, steps_used
+from prism_harness.run_starts import StartRefused, gate
 from prism_harness.run_trees import RunTrees, kept_refs, saved_refs
-from prism_harness.session import Session
+from prism_harness.session import CHILD_TURN_LIVE, Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import (
     MAX_DEPTH,
@@ -408,12 +410,15 @@ class AgentRuntime:
         context: RunContext,
         parent_run_id: str | None = None,
         parent_session_key: str | None = None,
+        start: Mapping[str, Any] | None = None,
     ) -> RunContext:
         """Internal: the subagent runner marks the context it starts a child
         under as its own, so only that context saves the child's binding, with
         the run and session of the ACTIVE turn starting it (None outside one):
-        the child joins that run's tree once the run is verified live."""
-        return self._trees.starting_child(context, parent_run_id, parent_session_key)
+        the child joins that run's tree once the run is verified live.
+        ``start`` is what the start is for (``task``, ``mode``, ``hosts``),
+        read by the start gate (G-387)."""
+        return self._trees.starting_child(context, parent_run_id, parent_session_key, start)
 
     def mode_for(self, session: Session) -> AgentMode:
         """The mode a session's next run resolves, refusing a malformed one."""
@@ -611,7 +616,14 @@ class AgentRuntime:
         # Refused before a run exists: a bad attachment is a mistake in the call,
         # and it should not cost a run, events or budget.
         attachments = admit_attachments(prompt, additional_content)
-        mode = self._modes.for_agent(session.agent).resolve(session.mode())
+        kind = self._trees.context_kind(context)
+        # A runner start names the child's mode on its context: the session's
+        # mode is written only once the start is committed (G-387 start gate).
+        start = self._trees.start_of(context) if kind == "runner" else None
+        start_mode = start.get("mode") if start is not None else None
+        mode = self._modes.for_agent(session.agent).resolve(
+            start_mode if isinstance(start_mode, str) else session.mode()
+        )
         run_id = str(uuid.uuid4())
         base = context or RunContext.root(run_id, RunBudget(mode.max_steps))
         # A resume with no context continues the run that paused (G-321 E):
@@ -635,7 +647,6 @@ class AgentRuntime:
         # A host context on a session that was never a child keeps the
         # binding it states for that turn; it is never saved. The rule is
         # binding_route(), the one the harness-plans corpus pins.
-        kind = self._trees.context_kind(context)
         saved_binding = ChildBinding.from_row(session.child_binding())
         if saved_binding is None:
             tail = paused_approval_row([entry.message for entry in session.thread().messages()])
@@ -665,40 +676,62 @@ class AgentRuntime:
         provider, model = self._binding(session, mode, run)
         thread = session.thread()
 
-        if run.too_deep():
+        if kind != "runner" and run.too_deep():
             raise HarnessError.run_not_permitted(
                 f"This run is nested {run.depth} deep, at or past the ceiling. Nobody debugs a "
                 "tree that deep, and a configuration that produced one is a mistake worth "
                 "reporting rather than executing."
             )
 
-        if kind == "runner" and run.ledger.exhaustion(run.budget) is not None:
-            # A runner start whose run was stopped after the runner's own
-            # pre-check (cancelled, out of steps, time or an enforceable cost)
-            # is refused before anything is written for it.
-            raise HarnessError.run_not_permitted(
-                "This run may not proceed: its run tree is stopped."
+        # A runner start READS every fact first, asks the start gate ONCE, and
+        # commits only what the gate lets through: the tree hold, then the
+        # child's records in one locked write. A refusal writes nothing.
+        started = (
+            self._start_child(
+                session, mode, run, run_id, member, context, prompt, start or {}, runner_binding
             )
-
-        session.begin_run(
-            run_id, mode.name, provider, model, tree=member["tree"], depth=member["depth"]
+            if kind == "runner"
+            else None
         )
-        # Recorded before any tool can run, so a child started from this turn
-        # finds it; dropped when the run finishes.
-        self._trees.record(session, run_id, member, run)
-        self._emit(
-            RunStarted(
-                run_id=run_id,
-                session_key=session.key(),
-                mode=mode.name,
-                provider=provider,
-                model=model,
-                root_run_id=run.root_run_id,
-                depth=run.depth,
-                at=_now(),
-                harness_agent=session.agent,
+        try:
+            # The run itself: for a runner start, only now that it is committed.
+            session.begin_run(
+                run_id, mode.name, provider, model, tree=member["tree"], depth=member["depth"]
             )
-        )
+            # Recorded before any tool can run, so a child started from this
+            # turn finds it; dropped when the run finishes.
+            self._trees.record(session, run_id, member, run)
+            if started is not None:
+                # The child's authority comes from ITS mode, not the parent's.
+                session.using_mode(mode.name)
+            self._emit(
+                RunStarted(
+                    run_id=run_id,
+                    session_key=session.key(),
+                    mode=mode.name,
+                    provider=provider,
+                    model=model,
+                    root_run_id=run.root_run_id,
+                    depth=run.depth,
+                    at=_now(),
+                    harness_agent=session.agent,
+                )
+            )
+        except Exception:
+            if started is not None:
+                # The run could not begin: the start's tree hold is released
+                # and its hold on the child's count settled at nothing.
+                self._trees.release_start(session, member)
+                self._trees.finished(session, run_id)
+                try:
+                    session.settle_child_steps(run_id, 0)
+                except Exception as unsettled:  # noqa: BLE001 - charged in full once it expires
+                    logging.getLogger(__name__).warning(
+                        "A child step count update failed: %s.", type(unsettled).__name__
+                    )
+            raise
+        if started is not None:
+            self._trees.committed(member)
 
         turn_token = None
         try:
@@ -729,10 +762,13 @@ class AgentRuntime:
             # row's count, children included), a child's saved ceiling, the
             # context and max_steps_ceiling. Worked out first without the
             # tree and plan grants, which it then asks for.
-            facts, forged = self._allowance_facts(
-                session, mode, kind, context, prompt, stored, saved_binding
-            )
-            claimed = False
+            if started is not None:
+                facts, forged = dict(started["facts"]), False
+            else:
+                facts, forged = self._allowance_facts(
+                    session, mode, kind, context, prompt, stored, saved_binding
+                )
+            claimed = started is not None
             if kind != "runner" and facts["saved_ceiling"] is not None and not forged:
                 # A child's saved ceiling is its DELEGATION's budget: the
                 # steps it used since the runner last started it are counted
@@ -750,7 +786,7 @@ class AgentRuntime:
                 )
                 forged = counted is None
                 claimed = True
-            first = _allowance(facts, forged)
+            first = _allowance(facts, forged) if started is None else started["first"]
             if kind in ("none", "metadata"):
                 # A resume is the SAME run: the fresh ledger continues its
                 # count, so what the run reports includes the steps before the
@@ -759,61 +795,6 @@ class AgentRuntime:
             begin_steps = run.ledger.steps
             self._trees.members[run_id]["begin_steps"] = begin_steps
             self._trees.members[run_id]["child_claim"] = claimed
-            if (
-                context is not None
-                and runner_binding is not None
-                and run.ledger.exhaustion(run.budget) is not None
-            ):
-                # The runner start's gate, IMMEDIATELY before its first durable
-                # write on the child: a stop that landed since the check above
-                # (during begin_run or its listeners) refuses the start with
-                # the child's records unchanged. Past this point the start is
-                # committed: a later stop only ends its model steps.
-                raise HarnessError.run_not_permitted(
-                    "This run may not proceed: its run tree is stopped."
-                )
-            if context is not None and runner_binding is not None:
-                # The runner is starting a child: save its binding, its depth
-                # and its step ceiling, and the run tree and plan budget it
-                # belongs to, so every later turn on the child the runner did
-                # not start continues them. Only the runner's own context
-                # writes them, and a runner start always overwrites them.
-                # The tree hold FIRST: a tree that cannot fund the delegation
-                # refuses it before anything is written on the child. The hold
-                # is the spending run's, settled when that run ends, so a write
-                # failing after it leaves no hold behind.
-                self._trees.child_started(session, member, self.lock_ttl(session))
-                # A new delegation: its count starts again at 0, and this run
-                # holds what it may take, settled when it ends. Claimed next:
-                # refused while a turn on the child holds steps, and then
-                # nothing (binding, ceiling, refs) is saved.
-                session.claim_child_steps(
-                    run_id,
-                    self._plans.now(),
-                    self.lock_ttl(session),
-                    True,
-                    lambda _counted: int(first["own_left"]),
-                )
-                self._trees.members[run_id]["child_claim"] = True
-                session.remember_child_binding(
-                    runner_binding.to_row(), member["depth"], first["ceiling"]
-                )
-                # The tree it is in, with the plan ledger of the run it spends
-                # from. Under a run tree the host built, or none, there is no
-                # durable tree to name: the references the child saved before
-                # are kept, never replaced with nothing, so a later turn the
-                # runner does not start still continues the tree it last had
-                # rather than a fresh root budget.
-                saved_tree, saved_plan_ledger = saved_refs(session)
-                spends = member["spends"]
-                refs = kept_refs(
-                    member,
-                    self._plans.ledger_of(spends) if isinstance(spends, str) else None,
-                    saved_tree,
-                    saved_plan_ledger,
-                    False,
-                )
-                session.remember_child_refs(refs["tree"], refs["plan_ledger"])
             # A root run opens a tree; any turn on a child session the runner
             # did not start (an answer, a new message, or a host context)
             # continues the run tree it was saved with, holding what its own
@@ -823,19 +804,25 @@ class AgentRuntime:
             run, tree_left = self._trees.root_run(
                 session, run_id, run, member, self.lock_ttl(session), first["own_left"]
             )
-            run, plan_left = self._plans.plan_turn(
-                session,
-                run_id,
-                run,
-                context,
-                self.lock_ttl(session),
-                prompt,
-                kind,
-                first["own_left"] if tree_left is None else min(first["own_left"], tree_left),
-            )
+            # A runner start spends from its parent's run, never from a plan
+            # ledger of its own (its gate refused one); its tree grant is the
+            # one its commit held.
+            if started is None:
+                run, plan_left = self._plans.plan_turn(
+                    session,
+                    run_id,
+                    run,
+                    context,
+                    self.lock_ttl(session),
+                    prompt,
+                    kind,
+                    first["own_left"] if tree_left is None else min(first["own_left"], tree_left),
+                )
+            else:
+                tree_left, plan_left = started["tree_left"], None
             facts = {**facts, "tree_left": tree_left, "plan_left": plan_left}
             allowed = _allowance(facts, forged)
-            if prompt != "" and allowed["allowance"] == 0:
+            if started is None and prompt != "" and allowed["allowance"] == 0:
                 # A NEW prompt resumes no recorded decision, so with nothing
                 # left it is refused before anything is recorded. Only a resume
                 # acts on its decisions with no model step (G-387).
@@ -852,7 +839,7 @@ class AgentRuntime:
                     "This run may not proceed: its step allowance is spent."
                 )
             # Narrowed ONCE, and recorded beside the membership: the loop's
-            # step gate, the paused row, a subagent's pre-check and a child's
+            # step gate, the paused row, a runner start's gate and a child's
             # tree hold all read this and nothing else.
             run = replace(
                 run, budget=replace(run.budget, max_steps=run.ledger.steps + allowed["allowance"])
@@ -877,7 +864,7 @@ class AgentRuntime:
             offered, plan_gates = self._with_plan_tools(session, mode, offered, scope)
             called: list[str] = []
 
-            if kind != "runner" and (run.ledger.cancelled or _time_spent(run)):
+            if started is None and (run.ledger.cancelled or _time_spent(run)):
                 # A cancelled tree, or a context whose time is spent, acts on
                 # no decision (an approval or a denial) and records no new
                 # prompt: an approved call never runs after its tree was
@@ -968,6 +955,105 @@ class AgentRuntime:
         finally:
             if turn_token is not None:
                 _TURN_RUN.reset(turn_token)
+
+    def _start_child(
+        self,
+        session: Session,
+        mode: AgentMode,
+        run: RunContext,
+        run_id: str,
+        member: Mapping[str, Any],
+        context: RunContext | None,
+        prompt: str,
+        start: Mapping[str, Any],
+        binding: ChildBinding | None,
+    ) -> dict[str, Any]:
+        """A runner start (G-387 start gate): every fact it depends on READ
+        first, :func:`~prism_harness.run_starts.gate` asked ONCE, then the
+        commit, in order: (a) the tree hold, a conditional locked write;
+        (b) the child's records (its count, binding, depth, ceiling and refs),
+        one locked write that re-checks the child is not busy. A refusal at
+        the gate or at either write raises
+        :class:`~prism_harness.run_starts.StartRefused` having written nothing
+        (a refused (b) releases (a)). A read that raises fails closed, before
+        any write. The runtime then begins the run, (c)."""
+        assert context is not None
+        hosts = tuple(host for host in start.get("hosts", ()) if isinstance(host, RunContext))
+        contexts = (run, *hosts)
+        stored = [entry.message for entry in session.thread().messages()]
+        facts, _ = self._allowance_facts(session, mode, "runner", context, prompt, stored, None)
+        # What the start's own allowance gives: the runner context's remainder,
+        # under every host context the start obeys, capped by
+        # max_steps_ceiling.
+        left = int(facts["context_left"])
+        for host in hosts:
+            left = min(left, host.budget.max_steps - host.ledger.steps)
+        facts["context_left"] = left
+        first = _allowance(facts, False)
+        now, ttl = self._plans.now(), self.lock_ttl(session)
+        pending = "none"
+        if pending_approval_ids(stored):
+            pending = "answerable" if _decidable(session, stored) else "unanswerable"
+        if self._plans._ledger_for(session, prompt, context, "runner", mode.name) is not None:
+            # Only the plan's own step run under a runner context routes to a
+            # plan ledger, and that is refused (plan.budget_context).
+            raise PlanRefused("plan.budget_context")
+        tree_left = self._trees.start_grant(session, member, ttl)
+        saved_tree, saved_plan_ledger = saved_refs(session)
+        spends = member["spends"]
+        refs = kept_refs(
+            member,
+            self._plans.ledger_of(spends) if isinstance(spends, str) else None,
+            saved_tree,
+            saved_plan_ledger,
+            False,
+        )
+        decided = gate(
+            {
+                "task": start.get("task", prompt),
+                "too_deep": context.too_deep() or run.too_deep(),
+                "cancelled": any(bool(each.ledger.cancelled) for each in contexts),
+                "time_spent": any(_time_spent_closed(each) for each in contexts),
+                "steps_left": first["own_left"],
+                "cost": _cost_fact(contexts, run),
+                "child_busy": session.child_live_hold(now, ttl),
+                "child_pending": pending,
+                "tree_left": tree_left,
+                "plan_left": None,
+            }
+        )
+        found = decided.get("gate")
+        if not isinstance(found, dict):
+            raise HarnessError.run_not_permitted("This runner start could not be decided.")
+        if "refused" in found:
+            raise StartRefused(str(found["refused"]), str(found["outcome"]))
+        steps = int(found["start"]["steps"])
+
+        # (a) the tree hold: refused (nothing stored) when a race since the
+        # read shrank the grant.
+        self._trees.child_started(session, member, ttl, tree_left)
+        # (b) the child's records, in one locked write re-checking busy.
+        try:
+            if binding is not None:
+                session.start_child(
+                    run_id,
+                    now,
+                    ttl,
+                    steps,
+                    binding.to_row(),
+                    member["depth"],
+                    first["ceiling"],
+                    refs,
+                )
+        except HarnessError as error:
+            self._trees.release_start(session, member)
+            if error.code == CHILD_TURN_LIVE:
+                raise StartRefused("child_busy", "denied") from None
+            raise
+        except Exception:
+            self._trees.release_start(session, member)
+            raise
+        return {"facts": facts, "first": first, "steps": steps, "tree_left": tree_left}
 
     def _allowance_facts(
         self,
@@ -1658,6 +1744,54 @@ def _allowance(facts: Mapping[str, Any], forged: bool) -> dict[str, Any]:
         raise HarnessError.run_not_permitted("This run's step allowance could not be decided.")
     result: dict[str, Any] = (fail_closed(found) if forged else found)["allowance"]
     return result
+
+
+def _time_spent_closed(run: RunContext) -> bool:
+    """Whether a context's time is spent, for the start gate: a limit that is
+    not a finite number (NaN compares false with everything) is spent, never
+    read as no limit."""
+    limit: Any = run.budget.max_seconds
+    if limit is None:
+        return False
+    if isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit):
+        return True
+    return run.ledger.elapsed_seconds() >= limit
+
+
+def _cost_fact(contexts: Sequence[RunContext], run: RunContext) -> str:
+    """The start gate's cost fact: ``spent`` when any cost limit that would
+    stop the child is spent (a context's cost cap, or the child agent's spend
+    ceiling), ``unenforceable`` when one cannot be metered, else ``ok``. A cap
+    that is not a finite number is spent."""
+    spent = unenforceable = False
+    for each in contexts:
+        cap: Any = each.budget.max_cost_usd
+        if cap is None:
+            continue
+        unusable = (
+            isinstance(cap, bool) or not isinstance(cap, (int, float)) or not math.isfinite(cap)
+        )
+        if unusable or each.ledger.cost_usd >= cap:
+            spent = True
+        elif each.ledger.unmetered_runs > 0:
+            unenforceable = True
+    stop = run.agent_stop()
+    if stop is not None:
+        if stop.code == "agent_spend_ceiling_exceeded":
+            spent = True
+        else:
+            unenforceable = True
+    return "spent" if spent else "unenforceable" if unenforceable else "ok"
+
+
+def _decidable(session: Session, rows: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a decision on the session's pending approval would be accepted
+    (the answerability rule, :func:`assert_decidable`)."""
+    try:
+        assert_decidable(session, rows)
+    except HarnessError:
+        return False
+    return True
 
 
 def _time_spent(run: RunContext) -> bool:

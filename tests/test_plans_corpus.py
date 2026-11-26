@@ -89,6 +89,8 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
                 results.append(plans_tree_op(op))
             elif op["op"] == "step_allowance":
                 results.append(plans_allowance_op(op))
+            elif op["op"] == "start_gate":
+                results.append(plans_start_gate_op(op))
             elif str(op["op"]).startswith("budget_"):
                 results.append(plans_budget_op(op, state, now))
             else:
@@ -186,6 +188,14 @@ def plans_allowance_op(op: dict[str, Any]) -> dict[str, Any]:
     """How many model steps a run may take (G-387): the pure
     RunBudgets.allowance the runtime asks once when a run begins."""
     return RunBudgets.allowance(op)
+
+
+def plans_start_gate_op(op: dict[str, Any]) -> dict[str, Any]:
+    """Whether a runner start may start, decided once before it writes
+    anything (G-387): the pure RunStarts.gate."""
+    from prism_harness.run_starts import RunStarts
+
+    return RunStarts.gate(op)
 
 
 def plans_budget_op(op: dict[str, Any], state: dict[str, Any], now: int) -> dict[str, Any]:
@@ -417,7 +427,7 @@ if RECORD:
 else:
 
     def test_the_corpus_has_every_case() -> None:
-        assert len(CASES) == 83
+        assert len(CASES) == 89
 
     @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
     def test_every_plans_corpus_row_as_the_reference_recorded_it(case: dict[str, Any]) -> None:

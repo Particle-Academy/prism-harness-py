@@ -31,8 +31,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from prism_harness.errors import HarnessError
 from prism_harness.plans import budget
+from prism_harness.run_starts import StartRefused
 from prism_harness.stores.base import SessionStore
 from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import paused_approval_row
@@ -170,12 +170,16 @@ class RunTrees:
             weakref.WeakValueDictionary()
         )
         self._parents: dict[int, tuple[str | None, str | None]] = {}
+        #: What each of those contexts was built to start: the raw task, the
+        #: child's mode and the host contexts whose stops the start obeys.
+        self._starts: dict[int, dict[str, Any]] = {}
 
     def starting_child(
         self,
         context: RunContext,
         parent_run_id: str | None = None,
         parent_session_key: str | None = None,
+        start: Mapping[str, Any] | None = None,
     ) -> RunContext:
         """The subagent runner is starting a child under ``context``, which it
         built, from the ACTIVE turn ``parent_run_id`` on the session
@@ -189,8 +193,17 @@ class RunTrees:
         if self._child_contexts.get(key) is not context:
             self._child_contexts[key] = context
             weakref.finalize(context, self._parents.pop, key, None)
+            weakref.finalize(context, self._starts.pop, key, None)
         self._parents[key] = (parent_run_id, parent_session_key)
+        self._starts[key] = dict(start or {})
         return context
+
+    def start_of(self, context: RunContext | None) -> dict[str, Any] | None:
+        """What a runner context was built to start (``task``, ``mode``,
+        ``hosts``), or None for any other context."""
+        if context is None or self._child_contexts.get(id(context)) is not context:
+            return None
+        return dict(self._starts.get(id(context)) or {})
 
     def binding_context_kind(self, context: RunContext | None) -> str:
         """The kind of context a turn was handed, for
@@ -365,8 +378,60 @@ class RunTrees:
         self._runs[run_id] = {**entry, "held": True}
         return narrowed, int(grant["steps"])
 
+    def _start_hold(self, member: Mapping[str, Any]) -> dict[str, Any] | None:
+        """The tree hold a runner start would take: the first time the run it
+        spends from starts a child, that run's whole allowance is held from the
+        tree's record. None when it is in the host's tree or in none, or the
+        spending run already holds."""
+        tree = member["tree"]
+        if not isinstance(tree, Mapping):
+            return None
+        spends = member["spends"]
+        entry = self._runs.get(spends) if isinstance(spends, str) else None
+        if not isinstance(spends, str) or entry is None or entry["held"]:
+            return None
+        spender = self.members.get(spends) or {}
+        allotted = spender.get("allowance")
+        steps = int(allotted["allowance"]) if isinstance(allotted, Mapping) else 0
+        narrowed = spender.get("budget")
+        cost = (
+            None
+            if not isinstance(narrowed, RunBudget) or narrowed.max_cost_usd is None
+            else budget.micros(max(0.0, narrowed.max_cost_usd - entry["cost"]))
+        )
+        return {
+            "entry": entry,
+            "holder": spends,
+            # The record is the tree's: named by the tree's run, which differs
+            # from the run that holds from it for a resumed root.
+            "plan_id": tree["run"],
+            "settings": {"mode": "shared", "max_steps": steps, "max_cost_micros": cost},
+            "asked": max(1, steps),
+            "cost": cost,
+        }
+
+    def start_grant(self, session: Session, member: Mapping[str, Any], hold_ttl: int) -> int | None:
+        """The steps the tree's record would grant a runner start NOW, read
+        without a write (G-387 start gate): 0 when it cannot fund it, None when
+        no tree hold applies to the start."""
+        hold = self._start_hold(member)
+        if hold is None:
+            return None
+        state = _record_of(session, hold["entry"]["tree"])
+        current = (
+            state if state is not None else budget.open_ledger(hold["plan_id"], hold["settings"])
+        )
+        _, grant = budget.reserve(
+            current, hold["holder"], hold["asked"], hold["cost"], int(time.time()), hold_ttl
+        )
+        return 0 if "refused" in grant else int(grant["steps"])
+
     def child_started(
-        self, session: Session, member: Mapping[str, Any], hold_ttl: int
+        self,
+        session: Session,
+        member: Mapping[str, Any],
+        hold_ttl: int,
+        expected: int | None = None,
     ) -> Tree | None:
         """A runner-started child is starting: the tree its membership names,
         opened in the durable store, for the budget entry of the run it spends
@@ -374,53 +439,84 @@ class RunTrees:
         host's tree or in none.
 
         The record's step allowance is the one the spending run recorded when
-        it began (:meth:`allot`), held in full by that run until it settles."""
+        it began (:meth:`allot`), held in full by that run until it settles.
+        A conditional write: when the record grants fewer than ``expected``
+        steps (what :meth:`start_grant` read), nothing is stored and the start
+        is refused (:class:`~prism_harness.run_starts.StartRefused`, ``tree``).
+        """
         tree = member["tree"]
         if not isinstance(tree, Mapping):
             return None
-        spends = member["spends"]
-        entry = self._runs.get(spends) if isinstance(spends, str) else None
-        if isinstance(spends, str) and entry is not None and not entry["held"]:
-            spender = self.members.get(spends) or {}
-            allotted = spender.get("allowance")
-            steps = int(allotted["allowance"]) if isinstance(allotted, Mapping) else 0
-            narrowed = spender.get("budget")
-            cost = (
-                None
-                if not isinstance(narrowed, RunBudget) or narrowed.max_cost_usd is None
-                else budget.micros(max(0.0, narrowed.max_cost_usd - entry["cost"]))
-            )
-            settings: dict[str, Any] = {
-                "mode": "shared",
-                "max_steps": steps,
-                "max_cost_micros": cost,
-            }
+        hold = self._start_hold(member)
+        if hold is not None:
             now = int(time.time())
-            holder: str = spends
-            # The record is the tree's: named by the tree's run, which differs
-            # from the run that holds from it for a resumed root.
-            plan_id: str = tree["run"]
+            entry = hold["entry"]
+            created = [False]
 
             def open_and_hold(state: dict[str, Any] | None) -> tuple[dict[str, Any] | None, Any]:
                 # Named by the tree's run; held under the run that spends. A
                 # resumed root holds from its tree in root_run, never here.
-                current = state if state is not None else budget.open_ledger(plan_id, settings)
-                return budget.reserve(
-                    current,
-                    holder,
-                    max(1, steps),
-                    cost,
-                    now,
-                    hold_ttl,
+                created[0] = state is None
+                current = (
+                    state
+                    if state is not None
+                    else budget.open_ledger(hold["plan_id"], hold["settings"])
                 )
+                following, grant = budget.reserve(
+                    current, hold["holder"], hold["asked"], hold["cost"], now, hold_ttl
+                )
+                if "refused" in grant or (expected is not None and int(grant["steps"]) < expected):
+                    # A race since the read shrank the grant: nothing stored.
+                    return None, None
+                return following, grant
 
             grant = _write(session.plan_store(), entry["tree"], open_and_hold)
-            if "refused" in grant:
-                # The tree cannot fund it: the delegation is refused rather
-                # than run on a hold that was never taken.
-                raise HarnessError.run_not_permitted(f"This run may not proceed: {grant['limit']}.")
+            if grant is None:
+                raise StartRefused("tree", "exhausted")
             entry["held"] = True
+            entry["start_hold"] = {"created": created[0]}
         return {"session": tree["session"], "run": tree["run"]}
+
+    def release_start(self, session: Session, member: Mapping[str, Any]) -> None:
+        """Undo the tree hold a runner start took in :meth:`child_started`,
+        when a later part of its commit failed: the record goes back to what it
+        was (removed, when the start opened it), and the spending run holds
+        nothing, so the next child it starts takes the hold again. Only a hold
+        a start took is released, and only once."""
+        spends = member.get("spends")
+        entry = self._runs.get(spends) if isinstance(spends, str) else None
+        if entry is None or not isinstance(entry.get("start_hold"), dict):
+            return
+        taken = entry.pop("start_hold")
+        entry["held"] = False
+        holder = str(spends)
+        store = session.plan_store()
+        key = _key(entry["tree"])
+        plan_id = entry["tree"]["run"]
+
+        def undo() -> None:
+            stored = store.get(key)
+            if not isinstance(stored, dict) or stored.get("planId") != plan_id:
+                return
+            holds = dict(stored.get("holds") or {})
+            holds.pop(holder, None)
+            if taken["created"] and not holds and stored.get("steps") == 0:
+                store.forget(key)
+                return
+            store.put(key, {**stored, "holds": holds})
+
+        try:
+            store.with_lock(key, undo, 10, 5)
+        except Exception as failure:  # noqa: BLE001 - the hold is charged in full once it expires
+            _log.warning("A run tree hold release failed: %s.", type(failure).__name__)
+
+    def committed(self, member: Mapping[str, Any]) -> None:
+        """A runner start's commit finished: the tree hold it took is the
+        spending run's from now on, settled when that run ends."""
+        spends = member.get("spends")
+        entry = self._runs.get(spends) if isinstance(spends, str) else None
+        if entry is not None:
+            entry.pop("start_hold", None)
 
     def holds(self, run_id: str) -> bool:
         """Whether this run spends from a durable run tree record."""

@@ -9,18 +9,13 @@ from typing import Any
 from prism_harness.errors import HarnessError
 from prism_harness.harness import PrismHarness
 from prism_harness.modes import AgentMode
-from prism_harness.runtime import (
-    AgentRuntime,
-    assert_decidable,
-    current_turn_run,
-    current_turn_run_id,
-)
-from prism_harness.session import CHILD_TURN_LIVE, Session
+from prism_harness.run_starts import BLANK_CODEPOINTS, REASONS, StartRefused, is_blank
+from prism_harness.runtime import AgentRuntime, current_turn_run, current_turn_run_id
+from prism_harness.session import Session
 from prism_harness.subagents import MAX_DEPTH, ChildBinding, RunBudget, RunContext, Subagent
-from prism_harness.thread_rows import pending_approval_ids
 from prism_harness.tools import HarnessTool
 
-__all__ = ["SubagentResult", "SubagentRunner", "SubagentTool"]
+__all__ = ["BLANK_CODEPOINTS", "SubagentResult", "SubagentRunner", "SubagentTool", "is_blank"]
 
 
 @dataclass(frozen=True)
@@ -65,35 +60,25 @@ class SubagentTool:
             )
         task = args.get("task")
 
-        # The host context's narrowing runs inside the framing too: a context
+        # The host context's narrowing runs inside the framing: a context
         # whose ledger or budget raises comes back as a framed failure naming
-        # the exception's class, never its message.
+        # the exception's class, never its message. The tool refuses nothing
+        # itself: the context the host wired it with is handed to the start
+        # gate, which reads its stops (cancelled, time, steps, cost) with every
+        # other fact of the start (G-387).
         try:
-            # The context the host wired this tool with is checked FIRST: a
-            # host that cancelled it (or whose budget on it is spent, or whose
-            # cost cap is unenforceable) stops the delegation inside a turn
-            # too, before it is narrowed to the turn.
-            host = self._context
-            stop = host.ledger.exhaustion(host.budget)
-            if stop is not None:
-                return _refused(
-                    self._subagent.name,
-                    "run_none",
-                    self._parent_run_id,
-                    "cancelled" if host.ledger.cancelled else "exhausted",
-                    stop,
-                ).to_tool_result()
             context = within_turn(self._context, current_turn_run(self._parent.key()))
         except Exception as error:  # noqa: BLE001 - framed, not propagated
             return _refused(
                 self._subagent.name, "run_none", self._parent_run_id, "failed", _named(error)
             ).to_tool_result()
-        return self._runner.run(
+        return self._runner._start(
             self._subagent,
             self._parent,
             context,
             self._parent_run_id,
-            task if isinstance(task, str) else "",
+            task,
+            (self._context,),
         ).to_tool_result()
 
 
@@ -126,25 +111,44 @@ class SubagentRunner:
         parent_run_id: str,
         task: str,
     ) -> SubagentResult:
+        return self._start(subagent, parent, context, parent_run_id, task, ())
+
+    def _start(
+        self,
+        subagent: Subagent,
+        parent: Session,
+        context: RunContext,
+        parent_run_id: str,
+        task: object,
+        hosts: tuple[RunContext, ...],
+    ) -> SubagentResult:
+        """A runner start. Every stop is decided ONCE, by the start gate the
+        runtime asks before it writes anything (G-387): the task (not text, or
+        blank), depth, a cancel, time, steps or cost of this context or of any
+        host context in ``hosts``, a child a turn is running on or a person can
+        still answer, and the tree. A refused start writes nothing, and comes
+        back framed with the gate's outcome and a harness-written reason.
+
+        Every way the start can end is framed inside here: whatever raises
+        (the store, a forged budget) names the exception's class only. Its
+        message may carry store or host text, and the result is read by a
+        model."""
         run_id = f"run_{secrets.token_hex(6)}"
-
-        # A delegation with nothing to do is refused before anything is built
-        # or written: an empty task on a child is not an instruction, and on a
-        # parked child it would only continue that run under a new start.
-        # Blank is ONE explicit codepoint set, the same in every language,
-        # never a language's own strip().
-        if not isinstance(task, str):
-            return _refused(subagent.name, run_id, parent_run_id, "denied", "the task is not text")
-        if is_blank(task):
-            return _refused(subagent.name, run_id, parent_run_id, "denied", "the task is empty")
-
-        # Every check around the child runs inside the framing: whatever
-        # raises (the store, a forged budget) comes back to the parent as a
-        # framed failure naming the exception's class only. Its message may
-        # carry store or host text, and the result is read by a model.
         try:
-            return self._run(subagent, parent, context, parent_run_id, task, run_id)
+            return self._run(subagent, parent, context, parent_run_id, task, hosts, run_id)
+        except StartRefused as refused:
+            reason = REASONS.get(refused.refusal, "it was refused").format(depth=MAX_DEPTH)
+            return _refused(subagent.name, run_id, parent_run_id, refused.outcome, reason)
+        except HarnessError as error:
+            if error.code in ("agent_spend_ceiling_exceeded", "budget_unpriced"):
+                # Its agent's ceiling ran out while it ran: a gate on the tree,
+                # not the child's failure, and only that agent stops.
+                return _refused(subagent.name, run_id, parent_run_id, "exhausted", str(error))
+            return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
         except Exception as error:  # noqa: BLE001 - framed, not propagated
+            # Tearing down the parent run would discard work it has already
+            # done, and "that subagent failed" is something the parent can act
+            # on.
             return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
 
     def _run(
@@ -153,23 +157,10 @@ class SubagentRunner:
         parent: Session,
         context: RunContext,
         parent_run_id: str,
-        task: str,
+        task: object,
+        hosts: tuple[RunContext, ...],
         run_id: str,
     ) -> SubagentResult:
-        # Checked BEFORE spawning, so an exhausted tree does not pay for a
-        # session, a thread write and a provider call to discover it is
-        # exhausted.
-        stop = context.ledger.exhaustion(context.budget)
-
-        if stop is not None:
-            return _refused(
-                subagent.name,
-                run_id,
-                parent_run_id,
-                "cancelled" if context.ledger.cancelled else "exhausted",
-                stop,
-            )
-
         child_agent = subagent.agent if subagent.agent is not None else parent.agent
         same_agent = child_agent == parent.agent
         parent_mode = self._parent_mode(parent)
@@ -180,7 +171,9 @@ class SubagentRunner:
         # binding. Marked with the ACTIVE turn on the parent session, never the
         # run id this tool was built with nor one a caller passes: the child
         # joins that turn's run tree only once the runtime has verified it is
-        # live and its ledger is this context's (G-381).
+        # live and its ledger is this context's (G-381). It carries what the
+        # start is for (the raw task, the child's mode, the host contexts),
+        # which the start gate reads; nothing is written for the child here.
         child_context = self._runtime._starting_child(
             context.for_child(subagent, parent_run_id).with_binding(
                 ChildBinding(
@@ -196,21 +189,8 @@ class SubagentRunner:
             ),
             current_turn_run_id(parent.key()),
             parent.key(),
+            {"task": task, "mode": subagent.mode, "hosts": hosts},
         )
-
-        # Refused BEFORE the child's address is built. Two modes naming each
-        # other as subagents form a cycle budgets would eventually stop -- but
-        # only after each level had appended `::sub::<name>` to an address that
-        # may truncate rather than error, and two children truncated to the same
-        # string are one conversation.
-        if child_context.too_deep():
-            return _refused(
-                subagent.name,
-                run_id,
-                parent_run_id,
-                "denied",
-                f"subagent nesting reached the maximum depth of {MAX_DEPTH}",
-            )
 
         # The agent was checked against the parent mode's `agents` when that mode
         # resolved: a child only ever runs as an agent its parent declared.
@@ -218,70 +198,9 @@ class SubagentRunner:
             subagent.scope_under(parent.scope)
         )
 
-        # A child a person's approval is pending on is never delegated into
-        # again: the new start would answer that approval "not provided" and
-        # move on, so a model could dismiss a person's decision by delegating.
-        # Read only; nothing is written to the child.
-        # Only an approval a person could still answer blocks: a child stuck
-        # on one no decision would be accepted for (no binding, too deep) can
-        # be started again.
-        existing = child.find_thread()
-        rows = [entry.message for entry in existing.messages()] if existing is not None else []
-        if pending_approval_ids(rows) and _answerable(child, rows):
-            return _refused(
-                subagent.name,
-                run_id,
-                parent_run_id,
-                "denied",
-                "it is waiting on a person's approval",
-            )
-        # Nor while a turn on the child holds steps from its delegation: the
-        # new start would reset the count under a run that is still spending.
-        if child.child_live_hold(self._runtime.plans.now(), self._runtime.lock_ttl(child)):
-            return _refused(
-                subagent.name,
-                run_id,
-                parent_run_id,
-                "denied",
-                "a turn on it is still running",
-            )
-
-        # The child's authority comes from ITS mode, not the parent's.
-        child.using_mode(subagent.mode)
-
-        try:
-            response = self._runtime.send(child, task, context=child_context)
-        except HarnessError as error:
-            # Its agent's ceiling is spent, or cannot be enforced: a gate on the
-            # tree, not the child's failure, and only that agent stops.
-            stopped = child_context.ledger.exhaustion(child_context.budget)
-            if stopped is not None and error.code == "run_not_permitted":
-                # Stopped after the pre-check (cancelled, or out of steps, time
-                # or an enforceable cost): refused by the runtime at its gate,
-                # before the child's records were written, and framed as the
-                # pre-check frames it.
-                return _refused(
-                    subagent.name,
-                    run_id,
-                    parent_run_id,
-                    "cancelled" if child_context.ledger.cancelled else "exhausted",
-                    stopped,
-                )
-            if error.code == CHILD_TURN_LIVE:
-                # A turn on the child took a hold after the early check: the
-                # reset refused inside its own locked write, nothing saved.
-                return _refused(
-                    subagent.name, run_id, parent_run_id, "denied", "a turn on it is still running"
-                )
-            if error.code in ("agent_spend_ceiling_exceeded", "budget_unpriced"):
-                return _refused(subagent.name, run_id, parent_run_id, "exhausted", str(error))
-            return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
-        except Exception as error:  # noqa: BLE001 - framed, not propagated
-            # Tearing down the parent run would discard work it has already
-            # done, and "that subagent failed" is something the parent can act
-            # on. Named by its class only: its message may carry store, host
-            # or provider text, and the result is read by a model.
-            return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
+        response = self._runtime.send(
+            child, task if isinstance(task, str) else "", context=child_context
+        )
 
         if response.stopped_because is None:
             return SubagentResult(
@@ -361,34 +280,12 @@ def _lower_int(a: int | None, b: int | None) -> int | None:
     return b if a is None else a if b is None else min(a, b)
 
 
-#: The codepoints a blank task consists of, spelled identically in every
-#: language (prism-harness, prism-harness-ts): never the language's own
-#: whitespace rule, which differs between languages and versions.
-BLANK_CODEPOINTS = frozenset(
-    [*range(0x0009, 0x000E), 0x0020, 0x0085, 0x00A0, 0x1680]
-    + [*range(0x2000, 0x200E), 0x2028, 0x2029, 0x202F, 0x205F, 0x2060, 0x3000, 0xFEFF]
-)
-
-
-def is_blank(task: str) -> bool:
-    """Whether a task consists only of :data:`BLANK_CODEPOINTS` (or nothing)."""
-    return all(ord(character) in BLANK_CODEPOINTS for character in task)
-
-
 def _named(error: BaseException) -> str:
     """What a framed failure says about an exception: its class, and a
     harness error's code, never its message."""
     code = getattr(error, "code", None)
     name = type(error).__name__
     return f"{name} ({code})" if isinstance(error, HarnessError) and code else name
-
-
-def _answerable(child: Session, rows: list[dict[str, Any]]) -> bool:
-    try:
-        assert_decidable(child, rows)
-    except HarnessError:
-        return False
-    return True
 
 
 def _refused(
