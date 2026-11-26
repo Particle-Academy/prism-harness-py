@@ -15,7 +15,7 @@ from prism_harness.runtime import (
     current_turn_run,
     current_turn_run_id,
 )
-from prism_harness.session import Session
+from prism_harness.session import CHILD_TURN_LIVE, Session
 from prism_harness.subagents import MAX_DEPTH, ChildBinding, RunBudget, RunContext, Subagent
 from prism_harness.thread_rows import pending_approval_ids
 from prism_harness.tools import HarnessTool
@@ -65,10 +65,19 @@ class SubagentTool:
             )
         task = args.get("task")
 
+        # The host context's narrowing runs inside the framing too: a context
+        # whose ledger or budget raises comes back as a framed failure naming
+        # the exception's class, never its message.
+        try:
+            context = within_turn(self._context, current_turn_run(self._parent.key()))
+        except Exception as error:  # noqa: BLE001 - framed, not propagated
+            return _refused(
+                self._subagent.name, "run_none", self._parent_run_id, "failed", _named(error)
+            ).to_tool_result()
         return self._runner.run(
             self._subagent,
             self._parent,
-            within_turn(self._context, current_turn_run(self._parent.key())),
+            context,
             self._parent_run_id,
             task if isinstance(task, str) else "",
         ).to_tool_result()
@@ -231,14 +240,21 @@ class SubagentRunner:
         except HarnessError as error:
             # Its agent's ceiling is spent, or cannot be enforced: a gate on the
             # tree, not the child's failure, and only that agent stops.
+            if error.code == CHILD_TURN_LIVE:
+                # A turn on the child took a hold after the early check: the
+                # reset refused inside its own locked write, nothing saved.
+                return _refused(
+                    subagent.name, run_id, parent_run_id, "denied", "a turn on it is still running"
+                )
             if error.code in ("agent_spend_ceiling_exceeded", "budget_unpriced"):
                 return _refused(subagent.name, run_id, parent_run_id, "exhausted", str(error))
             return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
         except Exception as error:  # noqa: BLE001 - framed, not propagated
             # Tearing down the parent run would discard work it has already
             # done, and "that subagent failed" is something the parent can act
-            # on.
-            return _refused(subagent.name, run_id, parent_run_id, "failed", str(error))
+            # on. Named by its class only: its message may carry store, host
+            # or provider text, and the result is read by a model.
+            return _refused(subagent.name, run_id, parent_run_id, "failed", _named(error))
 
         if response.stopped_because is None:
             return SubagentResult(

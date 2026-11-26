@@ -259,3 +259,71 @@ def test_a_malformed_stored_binding_is_ignored() -> None:
     # fails closed (G-387), acting on the approval with no model step, so no
     # provider is chosen for it from a malformed binding.
     assert len(world.child_requests()) == before
+
+
+def _replace_paused_binding(session: Any, binding: object) -> str:
+    """Put ``binding`` on the session's paused row, as a store writer could;
+    returns the row's approval id."""
+    store, key = (
+        session._durable,
+        f"{session.key()}:thread",
+    )  # a test standing in for a store writer
+    stored = store.get(key)
+    for entry in reversed(stored["messages"]):
+        if entry["message"].get("tool_approval_requests"):
+            entry["message"]["harness_binding"] = binding
+            approval: str = entry["message"]["tool_approval_requests"][0]["approval_id"]
+            break
+    store.put(key, stored)
+    return approval
+
+
+def test_a_malformed_binding_on_a_linked_childs_row_never_picks_its_provider() -> None:
+    # The runner started this child: it saved its binding, ceiling and count.
+    world = delegating_world()
+    parent = world.session("planner", "plan")
+    world.send(parent)
+    child = (
+        world.harness.for_agent("planner")
+        .for_(parent.participant)
+        .session("binding::sub::research")
+    )
+    assert child.child_ceiling() is not None
+    approval = _replace_paused_binding(child, {"declared": {"provider": 7, "model": "cheap"}})
+    record_approval(child, approval, True)
+
+    world.runtime.send(child, "")
+
+    # The binding saved with the session decides, never the malformed row.
+    resumed = world.child_requests()[-1]
+    assert (resumed.provider, resumed.model) == ("custom-cheap", "cheap")
+
+
+def test_a_malformed_binding_on_a_top_level_sessions_row_is_ignored() -> None:
+    world = delegating_world()
+    parent = world.session("planner", "plan")
+    world.send(parent)
+    child = (
+        world.harness.for_agent("planner")
+        .for_(parent.participant)
+        .session("binding::sub::research")
+    )
+    rows = [entry.message for entry in child.thread().messages()]
+    paused = rows[-1]
+    rows[-1] = {**paused, "harness_binding": {"declared": {"provider": 7, "model": "cheap"}}}
+    # The same rows on a session that is not a subagent child (written by this
+    # version: they carry harness_steps_used): the malformed binding is
+    # ignored, and the run resolves its provider as a root does.
+    plain = (
+        world.harness.for_agent("planner")
+        .for_(parent.participant)
+        .session("binding-plain")
+        .using_mode("research")
+    )
+    plain.thread().record(rows, None)
+    record_approval(plain, paused["tool_approval_requests"][0]["approval_id"], True)
+
+    world.runtime.send(plain, "")
+
+    resumed = world.child_requests()[-1]
+    assert (resumed.provider, resumed.model) == ("anthropic", "opus-like")

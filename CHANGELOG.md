@@ -20,7 +20,8 @@
   is charged in full once the lock TTL has passed; when that run does settle,
   the steps it took replace the full charge, so it is counted once. Only a
   runner start writes a fresh count, with the ceiling it saves.
-- A subagent child session (its scope is a child's, `...::sub::<name>`, or the
+- `::sub::` in a session scope is reserved for subagent children. A subagent
+  child session (its scope is a child's, `...::sub::<name>`, or the
   runner saved references, a binding or a tree with it) with no saved ceiling,
   or a saved ceiling or step count that is missing a field or is not a whole
   number, fails closed: it acts on its recorded decisions and takes no model
@@ -54,9 +55,10 @@
 - A decision the resuming turn could not act on is refused before anything is
   recorded: `child_binding_missing` for a linked child with no saved binding,
   `run_not_permitted` for one nested at or past the depth ceiling.
-- A turn whose run context's ledger is cancelled acts on no decision and
-  records no new prompt: it ends on the cancellation before any model step,
-  and its approvals stay pending.
+- A turn whose run context's ledger is cancelled, or whose context's time
+  limit is spent, acts on no recorded decision (an approval or a denial) and
+  records no new prompt: it ends on the cancellation or the time before any
+  model step, and the decisions stay recorded for a later resume.
 - The subagent runner refuses (`denied`, a framed result, nothing written to
   the child): a task that is not a string; a blank task, one made only of
   U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200D, U+2028,
@@ -65,12 +67,15 @@
   approval a person could still answer, so a delegation cannot dismiss a
   person's pending decision; and a delegation while a turn on the child holds
   steps from its count. A child stuck on an approval no decision could act on
-  can be started again.
+  can be started again. The refusal for a turn still holding steps is part of the
+  reset's own locked write, and a refused start saves nothing on the child.
 - Everything the runner does around a child (building its session, reading
   its thread, its count, the budget arithmetic) is framed: any exception comes
   back to the parent as a `failed` result naming the exception's class (and a
-  harness error's code), never its message, so no store or host text reaches
-  the model.
+  harness error's code), never its message, so no store, host or provider
+  text reaches the model. That covers the subagent tool's narrowing of its
+  host context and everything inside the child's own run (its store writes,
+  its count, its provider client).
 - `send_structured()` returns a `StructuredAgentResponse`, with no document,
   when the run parks on an approval or runs out of steps.
 

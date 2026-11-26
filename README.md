@@ -96,6 +96,12 @@ Use `ToolRegistry(refuse_duplicates=True)` and
 Named session addresses are immutable and validated; legacy participant/scope
 values retain their existing mutable behavior.
 
+`::sub::` in a session scope is reserved for subagent children: the runner
+builds a child's scope as `<parent scope>::sub::<name>`. A scope you choose
+that contains it is treated as a child's, so without a ceiling the runner saved
+it takes no model step and a new message to it is refused. Do not put `::sub::`
+in a host scope (or in user input you build a scope from).
+
 AgentRuntime's agents map supports provider/model, max_steps_ceiling,
 max_output_tokens_per_call and lock_ttl/lock_wait. Unset scalars use config's
 fallback; explicit None clears nullable defaults. Caps narrow the existing
@@ -308,8 +314,11 @@ What one run tree is:
   naming the exception's class, never its message.
 - A decision is refused before anything is recorded only when its resume could
   not act on it at all: a linked child with no saved binding
-  (`child_binding_missing`) or one too deep (`run_not_permitted`). A turn
-  whose context's ledger is cancelled runs no approved call.
+  (`child_binding_missing`) or one too deep (`run_not_permitted`). Recording
+  a denial runs nothing. A resume whose context's ledger is cancelled, or
+  whose context's time limit is spent, acts on NO recorded decision, approval
+  or denial: nothing runs and nothing is written, and the decisions stay
+  recorded for a later resume that can act on them.
 - Every other `send()` starts a new run tree, with nothing spent.
 - So does every `runtime.plan(session).advance()` that is not handed a
   `RunContext`: each step of a plan gets the full ceiling. To hold a whole plan

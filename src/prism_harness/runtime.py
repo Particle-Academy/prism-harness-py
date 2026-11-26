@@ -757,11 +757,10 @@ class AgentRuntime:
                 # belongs to, so every later turn on the child the runner did
                 # not start continues them. Only the runner's own context
                 # writes them, and a runner start always overwrites them.
-                session.remember_child_binding(
-                    runner_binding.to_row(), member["depth"], first["ceiling"]
-                )
                 # A new delegation: its count starts again at 0, and this run
-                # holds what it may take, settled when it ends.
+                # holds what it may take, settled when it ends. Claimed FIRST:
+                # refused while a turn on the child holds steps, and then
+                # nothing (binding, ceiling, refs) is saved.
                 session.claim_child_steps(
                     run_id,
                     self._plans.now(),
@@ -770,6 +769,9 @@ class AgentRuntime:
                     lambda _counted: int(first["own_left"]),
                 )
                 self._trees.members[run_id]["child_claim"] = True
+                session.remember_child_binding(
+                    runner_binding.to_row(), member["depth"], first["ceiling"]
+                )
                 self._trees.child_started(session, member, self.lock_ttl(session))
                 # The tree it is in, with the plan ledger of the run it spends
                 # from. Under a run tree the host built, or none, there is no
@@ -850,11 +852,13 @@ class AgentRuntime:
             offered, plan_gates = self._with_plan_tools(session, mode, offered, scope)
             called: list[str] = []
 
-            if run.ledger.cancelled:
-                # A cancelled tree acts on no decision and records no new
+            if run.ledger.cancelled or _time_spent(run):
+                # A cancelled tree, or a context whose time is spent, acts on
+                # no decision (an approval or a denial) and records no new
                 # prompt: an approved call never runs after its tree was
-                # cancelled. The approvals stay pending; the loop ends the run
-                # on the cancellation before any model step.
+                # cancelled or its time ran out. The decisions stay recorded
+                # for a later resume that can act; the loop ends the run on the
+                # cancellation or the time before any model step.
                 return self._loop(
                     session,
                     mode,
@@ -1627,6 +1631,12 @@ def _allowance(facts: Mapping[str, Any], forged: bool) -> dict[str, Any]:
         raise HarnessError.run_not_permitted("This run's step allowance could not be decided.")
     result: dict[str, Any] = (fail_closed(found) if forged else found)["allowance"]
     return result
+
+
+def _time_spent(run: RunContext) -> bool:
+    """Whether the run's context has a time limit and it is spent."""
+    limit = run.budget.max_seconds
+    return limit is not None and run.ledger.elapsed_seconds() >= limit
 
 
 def _structured(response: AgentResponse, document: Any) -> StructuredAgentResponse:
