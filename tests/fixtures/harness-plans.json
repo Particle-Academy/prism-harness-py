@@ -1,9 +1,9 @@
 {
   "suite": "harness-plans",
   "schema_version": 1,
-  "corpus_version": "0.1.9",
+  "corpus_version": "0.1.10",
   "generated_by": "tools/generate-harness-plans.mjs writes the inputs. `expected` is the PHP reference's recording; every security row was checked by hand against the G-360 design before TypeScript or Python ran. `result` records what each language measured, merged with --merge.",
-  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. binding_route runs the pure ChildBinding.route; whether a binding is saved starts false and carries from op to op, set when a route saves. binding_context builds a real RunContext (none, or RunContext.root(\"host_root\") with a 10-step budget; bound when supplied_binding; marked through the runtime RunTrees.startingChild when runner_started; bound again by the host after the mark when rebound), records the kind RunTrees.bindingContextKind gives it and the binding_route of that kind, and carries whether a binding is saved like binding_route; marking no context, or a context kind other than none or host, is invalid. tree_membership runs the pure RunTrees.membership (G-381): from a context kind, the run and its session, the recorded membership of the live parent run the runner verified (null when there is none), the run tree and depth the session saved, the depth the context states and, for a root turn resuming its parked run, the tree that run began in (resumed_tree), it records the run's one membership: tree (a {session, run} tree, \"host\" or \"none\"), spends (the live run whose hold it spends from, or null), depth, and route (open, continue or none). kept_refs runs the pure RunTrees.keptRefs: the run tree and plan ledger the runner saves with a child, from its membership, the plan ledger of the run it spends from, what the session saved and whether that saved tree was cancelled. step_allowance runs the pure RunBudgets.allowance (G-387), computed once when a run begins: from the context kind, the mode's max_steps, the ceiling saved with a child (saved_ceiling), what a runner or host context has left (context_left), max_steps_ceiling (steps_ceiling), the steps the run already used (the count its parked row wrote; a runner start is always 0), the tree and plan grants (null when neither bounds it) and the steps the turn then took, it records the ceiling, used, own_left, tree_left, plan_left, the allowance (the least of them), acts_without_step (no model step is left; the run still acts on its decisions) and what it writes when it parks (used_at_park, left_at_park). Negative inputs count as 0; a runner or host context with no context_left is invalid. A setting or context kind that is invalid records {invalid: true}.",
+  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. binding_route runs the pure ChildBinding.route; whether a binding is saved starts false and carries from op to op, set when a route saves. binding_context builds a real RunContext (none, or RunContext.root(\"host_root\") with a 10-step budget; bound when supplied_binding; marked through the runtime RunTrees.startingChild when runner_started; bound again by the host after the mark when rebound), records the kind RunTrees.bindingContextKind gives it and the binding_route of that kind, and carries whether a binding is saved like binding_route; marking no context, or a context kind other than none or host, is invalid. tree_membership runs the pure RunTrees.membership (G-381): from a context kind, the run and its session, the recorded membership of the live parent run the runner verified (null when there is none), the run tree and depth the session saved, the depth the context states and, for a root turn resuming its parked run, the tree that run began in (resumed_tree), it records the run's one membership: tree (a {session, run} tree, \"host\" or \"none\"), spends (the live run whose hold it spends from, or null), depth, and route (open, continue or none). kept_refs runs the pure RunTrees.keptRefs: the run tree and plan ledger the runner saves with a child, from its membership, the plan ledger of the run it spends from, what the session saved and whether that saved tree was cancelled. step_allowance runs the pure RunBudgets.allowance (G-387), computed once when a run begins: from the context kind, the mode's max_steps, the ceiling saved with a child (saved_ceiling), what a runner or host context has left (context_left), max_steps_ceiling (steps_ceiling), the steps the run already used (the count its parked row wrote; a runner start is always 0), the tree and plan grants (null when neither bounds it) and the steps the turn then took, it records the ceiling, used, own_left, tree_left, plan_left, the allowance (the least of them), acts_without_step (no model step is left; the run still acts on its decisions) and what it writes when it parks (used_at_park, left_at_park). Negative inputs count as 0; a runner or host context with no context_left is invalid. start_gate runs the pure RunStarts.gate (G-387), the one decision a runner start makes before it writes anything: from the task, whether the run is too deep, cancelled, out of time, its steps left, its cost state (ok, spent or unenforceable), whether a turn on the child is live, whether the child waits on an approval a person can answer (none, answerable, unanswerable) and the tree and plan grants (null when none applies), it records {start: {steps}} (the least of steps_left and the grants) or {refused: code, outcome}, asking in a fixed order; blank is an explicit codepoint set. A setting or context kind that is invalid records {invalid: true}.",
   "cases": [
     {
       "id": "hpl-0001",
@@ -29911,6 +29911,2350 @@
                 "acts_without_step": true,
                 "used_at_park": 0,
                 "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0084",
+      "title": "a runner start that nothing stops starts, on the least of what its context, tree and plan grant",
+      "since": "0.1.10",
+      "notes": "A runner start is decided by ONE gate (start_gate: RunStarts.gate, G-387) that reads every stop condition before the start writes anything: no tree hold, no binding, ceiling or count, no run state. Only when it says start does the start commit, and once committed a later stop only stops model steps (a start that saves a child's records and is then refused, which revives an approval nobody could answer).",
+      "ops": [
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": 2,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": 9,
+          "plan_left": 1
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 3,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": 5,
+          "plan_left": 4
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "gate": {
+              "start": {
+                "steps": 4
+              }
+            }
+          },
+          {
+            "gate": {
+              "start": {
+                "steps": 2
+              }
+            }
+          },
+          {
+            "gate": {
+              "start": {
+                "steps": 1
+              }
+            }
+          },
+          {
+            "gate": {
+              "start": {
+                "steps": 3
+              }
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 2
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 1
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 3
+                }
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 2
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 1
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 3
+                }
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 2
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 1
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 3
+                }
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0085",
+      "title": "a task that is not text, or only blank codepoints, is denied before anything is written",
+      "since": "0.1.10",
+      "notes": "Blank is one explicit codepoint set spelled identically in every language, never a language's own trim: U+0009-000D, U+0020, U+0085, U+00A0, U+1680, U+2000-200D, U+2028, U+2029, U+202F, U+205F, U+2060, U+3000, U+FEFF. A task with any other character delegates (an empty delegation that dismisses a person's pending approval, or three languages disagreeing on what is blank).",
+      "ops": [
+        {
+          "op": "start_gate",
+          "task": "",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": null,
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": 7,
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "\t",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "\n",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "\u000b",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "\f",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "\r",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "​",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "‌",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "‍",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "⁠",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "　",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "﻿",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " \t ​　﻿ ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "‎",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "᠎",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "\u001c",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": " a ",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_invalid",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_invalid",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "start": {
+                "steps": 4
+              }
+            }
+          },
+          {
+            "gate": {
+              "start": {
+                "steps": 4
+              }
+            }
+          },
+          {
+            "gate": {
+              "start": {
+                "steps": 4
+              }
+            }
+          },
+          {
+            "gate": {
+              "start": {
+                "steps": 4
+              }
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_invalid",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_invalid",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_invalid",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_invalid",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_invalid",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_invalid",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0086",
+      "title": "the run's own stops refuse a start: depth, cancel, time, steps and cost",
+      "since": "0.1.10",
+      "notes": "Each stop of the run doing the delegating refuses the start on its own, with the outcome the parent model sees: too deep is denied, a cancel is cancelled, spent time, no steps left, spent cost and a cost cap the provider cannot meter are exhausted (a start that passed an early check and was refused later, after writing).",
+      "ops": [
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": true,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": true,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": true,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 0,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": -2,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "spent",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "unenforceable",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "gate": {
+              "refused": "too_deep",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "cancelled",
+              "outcome": "cancelled"
+            }
+          },
+          {
+            "gate": {
+              "refused": "time",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "gate": {
+              "refused": "steps",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "gate": {
+              "refused": "steps",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "gate": {
+              "refused": "cost",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "gate": {
+              "refused": "cost_unenforceable",
+              "outcome": "exhausted"
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "gate": {
+                "refused": "too_deep",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cancelled",
+                "outcome": "cancelled"
+              }
+            },
+            {
+              "gate": {
+                "refused": "time",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "steps",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "steps",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cost",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cost_unenforceable",
+                "outcome": "exhausted"
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "gate": {
+                "refused": "too_deep",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cancelled",
+                "outcome": "cancelled"
+              }
+            },
+            {
+              "gate": {
+                "refused": "time",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "steps",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "steps",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cost",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cost_unenforceable",
+                "outcome": "exhausted"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "gate": {
+                "refused": "too_deep",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cancelled",
+                "outcome": "cancelled"
+              }
+            },
+            {
+              "gate": {
+                "refused": "time",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "steps",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "steps",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cost",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cost_unenforceable",
+                "outcome": "exhausted"
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0087",
+      "title": "the child's state refuses a start: a turn on it is live, or a person can still answer its approval",
+      "since": "0.1.10",
+      "notes": "A child whose delegation count a running turn holds is busy, and a child waiting on an approval a person can still answer is waiting: both are denied, so a reset never wipes a running turn's hold and a model never dismisses a person's approval by delegating again. An approval nobody can answer does not block (a child stuck for good).",
+      "ops": [
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": true,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "answerable",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "unanswerable",
+          "tree_left": null,
+          "plan_left": null
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "gate": {
+              "refused": "child_busy",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "child_waiting",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "start": {
+                "steps": 4
+              }
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "gate": {
+                "refused": "child_busy",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "child_waiting",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "gate": {
+                "refused": "child_busy",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "child_waiting",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "gate": {
+                "refused": "child_busy",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "child_waiting",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "start": {
+                  "steps": 4
+                }
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0088",
+      "title": "a tree or plan that cannot fund the start refuses it before the child is touched",
+      "since": "0.1.10",
+      "notes": "The tree and plan grants are read by the gate, not discovered by the hold after the child's records are saved: a spent tree or a spent plan is exhausted, with nothing written on the child (a sibling spending the tree between the pre-check and the hold, leaving a re-bound child).",
+      "ops": [
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": 0,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": 0
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": 3,
+          "plan_left": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "gate": {
+              "refused": "tree",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "gate": {
+              "refused": "plan",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "gate": {
+              "refused": "plan",
+              "outcome": "exhausted"
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "gate": {
+                "refused": "tree",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "plan",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "plan",
+                "outcome": "exhausted"
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "gate": {
+                "refused": "tree",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "plan",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "plan",
+                "outcome": "exhausted"
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "gate": {
+                "refused": "tree",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "plan",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "plan",
+                "outcome": "exhausted"
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0089",
+      "title": "the gate asks in one order, so every language refuses with the same reason",
+      "since": "0.1.10",
+      "notes": "When several stops hold at once the first in this order is the reason: the task, depth, cancel, time, steps, cost, an unmeterable cost cap, a busy child, a waiting child, the tree, the plan. An unknown cost or pending state is invalid (two languages telling the parent model different reasons for one refused start).",
+      "ops": [
+        {
+          "op": "start_gate",
+          "task": "",
+          "too_deep": false,
+          "cancelled": true,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": true,
+          "cancelled": true,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": true,
+          "time_spent": true,
+          "steps_left": 0,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": true,
+          "steps_left": 0,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 0,
+          "cost": "spent",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "spent",
+          "child_busy": true,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": true,
+          "child_pending": "answerable",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "answerable",
+          "tree_left": 0,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": 0,
+          "plan_left": 0
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "free",
+          "child_busy": false,
+          "child_pending": "none",
+          "tree_left": null,
+          "plan_left": null
+        },
+        {
+          "op": "start_gate",
+          "task": "Summarise the report",
+          "too_deep": false,
+          "cancelled": false,
+          "time_spent": false,
+          "steps_left": 4,
+          "cost": "ok",
+          "child_busy": false,
+          "child_pending": "maybe",
+          "tree_left": null,
+          "plan_left": null
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "gate": {
+              "refused": "task_blank",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "too_deep",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "cancelled",
+              "outcome": "cancelled"
+            }
+          },
+          {
+            "gate": {
+              "refused": "time",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "gate": {
+              "refused": "steps",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "gate": {
+              "refused": "cost",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "gate": {
+              "refused": "child_busy",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "child_waiting",
+              "outcome": "denied"
+            }
+          },
+          {
+            "gate": {
+              "refused": "tree",
+              "outcome": "exhausted"
+            }
+          },
+          {
+            "invalid": true
+          },
+          {
+            "invalid": true
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "too_deep",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cancelled",
+                "outcome": "cancelled"
+              }
+            },
+            {
+              "gate": {
+                "refused": "time",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "steps",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cost",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "child_busy",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "child_waiting",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "tree",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "too_deep",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cancelled",
+                "outcome": "cancelled"
+              }
+            },
+            {
+              "gate": {
+                "refused": "time",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "steps",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cost",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "child_busy",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "child_waiting",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "tree",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "gate": {
+                "refused": "task_blank",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "too_deep",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cancelled",
+                "outcome": "cancelled"
+              }
+            },
+            {
+              "gate": {
+                "refused": "time",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "steps",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "cost",
+                "outcome": "exhausted"
+              }
+            },
+            {
+              "gate": {
+                "refused": "child_busy",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "child_waiting",
+                "outcome": "denied"
+              }
+            },
+            {
+              "gate": {
+                "refused": "tree",
+                "outcome": "exhausted"
               }
             },
             {
