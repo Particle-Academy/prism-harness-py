@@ -9,9 +9,10 @@ The first time a root run starts a child, the tree's allowance is written to
 the durable store as a ledger record (the shape a shared plan budget keeps)
 with the root run holding all of it; when the root run ends it settles what the
 whole tree spent. A resumed child then holds what the tree has left before it
-runs, settles what it spent when it ends, and is refused once the tree's
-allowance is spent. A hold whose run never settled is charged in full once the
-session lock's TTL has passed, so a crash can only over-charge the tree.
+runs and settles what it spent when it ends. Once the tree's allowance is spent
+it is granted no model step (never refused: it still acts on the decisions
+recorded for it, G-387). A hold whose run never settled is charged in full once
+the session lock's TTL has passed, so a crash can only over-charge the tree.
 
 The tree a child belongs to is saved in the child session's durable half when
 the runner starts it (:meth:`Session.child_refs`), so EVERY turn on the child
@@ -33,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 from prism_harness.errors import HarnessError
 from prism_harness.plans import budget
 from prism_harness.stores.base import SessionStore
-from prism_harness.subagents import RunContext
+from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import paused_approval_row
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -44,7 +45,6 @@ __all__ = [
     "RunTrees",
     "kept_refs",
     "membership",
-    "refuse_spent_tree",
     "saved_refs",
     "saved_tree",
 ]
@@ -248,14 +248,25 @@ class RunTrees:
     def record(
         self, session: Session, run_id: str, member: Mapping[str, Any], run: RunContext
     ) -> None:
-        """Record a live run's membership, until :meth:`finished`, with its
-        own step ceiling (before any tree narrows it)."""
+        """Record a live run's membership, until :meth:`finished`."""
         self.members[run_id] = {
             **member,
             "session": session.key(),
             "ledger": run.ledger,
-            "own_max_steps": run.budget.max_steps,
         }
+
+    def allot(
+        self, run_id: str, allowance: Mapping[str, Any], begin_steps: int, run: RunBudget
+    ) -> None:
+        """Record a live run's step allowance (G-387), worked out once when it
+        began, beside its membership: the allowance, where its ledger stood
+        then, and the budget it was narrowed to. Every consumer of "how many
+        steps this run may still take" reads this record."""
+        member = self.members.get(run_id)
+        if member is not None:
+            member["allowance"] = dict(allowance)
+            member["begin_steps"] = begin_steps
+            member["budget"] = run
 
     def member(self, run_id: str) -> dict[str, Any] | None:
         """The recorded membership of a live run, or None."""
@@ -269,60 +280,38 @@ class RunTrees:
         run: RunContext,
         member: Mapping[str, Any],
         hold_ttl: int,
-        steps_left: int | None = None,
-    ) -> RunContext:
-        """A run is starting, in the tree its membership names. ``open``
-        registers a budget entry of its own, kept in memory until it starts a
-        child. ``continue`` (a turn on a child session the runner did not
-        start: an answer, a new message, or a host context) holds what the
-        saved tree has left, and its run is narrowed to the hold, so a host
-        context can only lower what the tree allows. Any other run is left
-        alone.
+        own_left: int,
+    ) -> tuple[RunContext, int | None]:
+        """A run is starting, in the tree its membership names: the run, with
+        its cost narrowed to what it holds, and the steps the tree's record
+        grants it (``tree_left`` of its allowance), or None when no durable
+        record bounds it.
 
-        :raises HarnessError: ``run_not_permitted`` when that tree is spent.
+        ``open`` registers a budget entry of its own, kept in memory until it
+        starts a child. ``continue`` (a turn on a child session the runner did
+        not start: an answer, a new message, or a host context) holds up to
+        ``own_left`` steps from the saved tree's record, in one locked write.
+        A root resuming its parked run is held to the record of the tree that
+        run began in the same way; when that run never delegated, the record
+        is opened here, in the same locked change, so a second resume of the
+        same parked run finds it and is bounded by it.
+
+        A tree whose steps or cost are spent, or a record that is gone, grants
+        0 steps and is never a refusal here: a resume still acts on the
+        decisions recorded for it, which makes no provider call (G-387). The
+        runtime refuses a turn with a new prompt and nothing left.
         """
         route = member["route"]
         if route not in ("open", "continue"):
-            return run
+            return run, None
         tree: Tree = {"session": member["tree"]["session"], "run": member["tree"]["run"]}
-        # A root resuming its parked run is in the tree that run began, and
-        # is held to it as any other turn continuing the tree, so the tree's
-        # allowance holds across the pause: it holds what the tree's record
-        # has left and is narrowed to it. When that run never delegated, the
-        # record does not exist yet and is opened here, in the same locked
-        # change, so a second resume of the same parked run that starts
-        # meanwhile finds it and is bounded by it. An open run whose tree
-        # already has a record (whatever its run id) is held to it too.
-        # A run whose own step budget is already spent takes no step, so it
-        # is left as it was: it still acts on the person's decisions, then
-        # stops on its own budget, with the same outcome and message as
-        # before.
-        # "Own steps left" is ONE measure, the one the decision check read:
-        # what the paused row says the parked run had left of its own budget
-        # (its ledger, a runner child's steps included), when it says so.
         resumed = route == "open" and tree["run"] != run_id
-        own_left = run.budget.max_steps - run.ledger.steps
-        if route == "open" and steps_left is not None:
-            own_left = min(own_left, steps_left)
-        recorded = self.members.get(run_id)
-        if route == "open" and recorded is not None:
-            # The run's own allowance as it starts, and where its ledger
-            # stood: what it has left at a pause is that allowance minus the
-            # steps it took since, never what it could hold from its tree.
-            recorded["own_left_start"] = max(0, own_left)
-            recorded["start_steps"] = run.ledger.steps
         if route == "open" and (resumed or _record_of(session, tree) is not None):
-            if own_left >= 1:
-                route = "continue"
-            elif run.budget.max_steps > run.ledger.steps:
-                # Spent by that measure: it acts on the decisions and takes
-                # no further step.
-                run = replace(run, budget=replace(run.budget, max_steps=run.ledger.steps))
+            route = "continue"
         ledger = run.ledger
         entry: dict[str, Any] = {
             "session": session.key(),
             "tree": tree,
-            "budget": run.budget,
             "ledger": ledger,
             "steps": ledger.steps,
             "cost": ledger.cost_usd,
@@ -331,7 +320,7 @@ class RunTrees:
         }
         if route == "open":
             self._runs[run_id] = entry
-            return run
+            return run, None
 
         own = run.budget
         turn_cost = (
@@ -340,37 +329,41 @@ class RunTrees:
             else budget.micros(max(0.0, own.max_cost_usd - entry["cost"]))
         )
         now = int(time.time())
-
-        left = max(0, own.max_steps - entry["steps"])
+        asked = max(0, own_left)
 
         def hold(state: dict[str, Any] | None) -> tuple[dict[str, Any] | None, Any]:
             if state is None:
                 if not resumed:
                     # The tree's record is gone: closed, never a fresh budget.
-                    return None, {"refused": budget.EXHAUSTED, "limit": "steps"}
+                    return None, {"steps": 0, "cost_micros": None}
                 # A resumed root whose parked run never delegated opens its
                 # tree's record, named by the tree's run, with what it has left.
                 state = budget.open_ledger(
                     tree["run"],
-                    {"mode": "shared", "max_steps": left, "max_cost_micros": turn_cost},
+                    {"mode": "shared", "max_steps": asked, "max_cost_micros": turn_cost},
                 )
-            return budget.reserve(state, run_id, left, turn_cost, now, hold_ttl)
+            if asked < 1:
+                return None, {"steps": 0, "cost_micros": None}
+            following, grant = budget.reserve(state, run_id, asked, turn_cost, now, hold_ttl)
+            if "refused" in grant:
+                # Spent, on steps or on cost: 0 steps and no hold.
+                return None, {"steps": 0, "cost_micros": None}
+            return following, grant
 
         grant = _write(session.plan_store(), tree, hold)
-        if "refused" in grant:
-            raise HarnessError.run_not_permitted(f"This run may not proceed: {grant['limit']}.")
-        narrowed = replace(
-            run,
-            budget=replace(
-                own,
-                max_steps=entry["steps"] + int(grant["steps"]),
-                max_cost_usd=own.max_cost_usd
-                if grant["cost_micros"] is None
-                else entry["cost"] + grant["cost_micros"] / 1_000_000,
-            ),
+        narrowed = (
+            run
+            if grant["cost_micros"] is None
+            else replace(
+                run,
+                budget=replace(own, max_cost_usd=entry["cost"] + grant["cost_micros"] / 1_000_000),
+            )
         )
-        self._runs[run_id] = {**entry, "budget": narrowed.budget, "held": True}
-        return narrowed
+        # Held, whatever was granted: a run continuing a tree never opens a
+        # second record for it, and settling a hold that was never taken
+        # changes nothing.
+        self._runs[run_id] = {**entry, "held": True}
+        return narrowed, int(grant["steps"])
 
     def child_started(
         self, session: Session, member: Mapping[str, Any], hold_ttl: int
@@ -378,20 +371,29 @@ class RunTrees:
         """A runner-started child is starting: the tree its membership names,
         opened in the durable store, for the budget entry of the run it spends
         from, the first time that run starts a child. None when it is in the
-        host's tree or in none."""
+        host's tree or in none.
+
+        The record's step allowance is the one the spending run recorded when
+        it began (:meth:`allot`), held in full by that run until it settles."""
         tree = member["tree"]
         if not isinstance(tree, Mapping):
             return None
         spends = member["spends"]
         entry = self._runs.get(spends) if isinstance(spends, str) else None
         if isinstance(spends, str) and entry is not None and not entry["held"]:
-            own = entry["budget"]
-            settings = {
+            spender = self.members.get(spends) or {}
+            allotted = spender.get("allowance")
+            steps = int(allotted["allowance"]) if isinstance(allotted, Mapping) else 0
+            narrowed = spender.get("budget")
+            cost = (
+                None
+                if not isinstance(narrowed, RunBudget) or narrowed.max_cost_usd is None
+                else budget.micros(max(0.0, narrowed.max_cost_usd - entry["cost"]))
+            )
+            settings: dict[str, Any] = {
                 "mode": "shared",
-                "max_steps": max(0, own.max_steps - entry["steps"]),
-                "max_cost_micros": None
-                if own.max_cost_usd is None
-                else budget.micros(max(0.0, own.max_cost_usd - entry["cost"])),
+                "max_steps": steps,
+                "max_cost_micros": cost,
             }
             now = int(time.time())
             holder: str = spends
@@ -406,8 +408,8 @@ class RunTrees:
                 return budget.reserve(
                     current,
                     holder,
-                    max(1, int(settings["max_steps"])),
-                    settings["max_cost_micros"],
+                    max(1, steps),
+                    cost,
                     now,
                     hold_ttl,
                 )
@@ -488,50 +490,6 @@ def _saved_plan_ledger(row: Mapping[str, Any] | None) -> dict[str, str] | None:
     ):
         return {"session": saved["session"], "plan": saved["plan"]}
     return None
-
-
-def refuse_spent_tree(session: Session, now: int, hold_ttl: int) -> None:
-    """Refuse, before anything is recorded, a decision on a child session whose
-    run tree has nothing left: recorded, it would be consumed by a resume the
-    tree then refuses, and the approved call would never run.
-
-    :raises HarnessError: ``run_not_permitted``.
-    """
-    saved, _ = saved_refs(session)
-    # A decision takes no context: it resumes as a turn with none and no new
-    # message, and that turn's would-be membership says whether it is held to
-    # a tree's record.
-    would_be = membership(
-        "none",
-        session.key(),
-        "decision",
-        None,
-        saved,
-        session.child_depth(),
-        0,
-        session.resumed_run_tree(""),
-    )
-    tree = would_be["tree"]
-    if not isinstance(tree, dict):
-        return
-    state = _record_of(session, tree)
-    if would_be["route"] == "open":
-        # A root resuming its parked run is held to its tree's record only
-        # when one exists, and only when its own step budget has steps left:
-        # a resume that can take no step only acts on the decisions.
-        if tree["run"] == "decision" or state is None:
-            return
-        row = paused_approval_row([entry.message for entry in session.thread().messages()])
-        steps_left = row.get("harness_steps_left") if row is not None else None
-        if type(steps_left) is int and steps_left < 1:
-            return
-    elif would_be["route"] != "continue":
-        return
-    if state is None:
-        raise HarnessError.run_not_permitted("This run may not proceed: steps.")
-    _, grant = budget.reserve(state, "decision", 1, None, now, hold_ttl)
-    if "refused" in grant:
-        raise HarnessError.run_not_permitted(f"This run may not proceed: {grant['limit']}.")
 
 
 def _record_of(session: Session, tree: Tree) -> dict[str, Any] | None:

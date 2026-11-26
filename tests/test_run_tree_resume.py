@@ -2,8 +2,9 @@
 
 A subagent child that stops on an approval is resumed later on its own session,
 outside the runner. That run continues the run tree it was started in: it
-spends what the tree has left, never a fresh root budget, and an approval the
-spent tree could not run is refused with nothing recorded. Ports
+spends what the tree has left, never a fresh root budget. A spent tree grants
+no model step and refuses nothing: an approval is acted on with no model step
+(G-387). Ports
 prism-harness's tests/RunTreeResumeTest.php, driven through ``send``,
 ``record_approval`` and ``runtime.decide`` with a scripted model; the network
 is refused and every store is in memory.
@@ -70,18 +71,23 @@ def test_a_resumed_child_runs_on_what_its_tree_has_left_not_a_fresh_root_budget(
 
 
 @pytest.mark.parametrize("path", ["decide", "record_approval"])
-def test_an_approval_for_a_child_whose_run_tree_is_spent_is_refused(path: str) -> None:
+def test_an_approval_for_a_child_whose_run_tree_is_spent_is_acted_on_with_no_model_step(
+    path: str,
+) -> None:
     rig, child, approval = paused_child(3)
     before = len(rig.requests)
 
-    with pytest.raises(HarnessError) as caught:
-        if path == "decide":
-            rig.runtime.decide(child, approval, True)
-        else:
-            record_approval(child, approval, True)
-    assert caught.value.code == "run_not_permitted"
-    assert pending(rig, child) == [approval]
-    assert rig.ran.count("weather") == 0
+    # G-387: acting on a decision costs no model step, so a spent tree never
+    # refuses it; the resume runs the approved call and takes no step.
+    if path == "decide":
+        rig.runtime.decide(child, approval, True)
+    else:
+        record_approval(child, approval, True)
+    resumed = rig.runtime.send(child, "")
+
+    assert resumed.finish_reason == "budget_exhausted"
+    assert pending(rig, child) == []
+    assert rig.ran.count("weather") == 1
     assert len(rig.requests) == before
 
 
@@ -124,11 +130,15 @@ def test_a_new_message_to_a_child_session_runs_on_what_its_tree_has_left() -> No
 def test_a_new_message_to_a_child_session_whose_tree_is_spent_is_refused() -> None:
     rig, child, _ = paused_child(3)
     before = len(rig.requests)
+    rows = len(child.thread().messages())
 
+    # A new message resumes no decision: with nothing left it is refused
+    # before anything is recorded. Only a resume acts without a model step.
     with pytest.raises(HarnessError) as caught:
         rig.runtime.send(child, "New question")
     assert caught.value.code == "run_not_permitted"
     assert len(rig.requests) == before
+    assert len(child.thread().messages()) == rows
 
 
 def test_a_host_context_on_a_resumed_child_is_narrowed_to_what_its_tree_has_left() -> None:
@@ -148,6 +158,7 @@ def test_a_host_context_on_a_resumed_child_is_narrowed_to_what_its_tree_has_left
 def test_a_host_context_on_a_child_whose_tree_is_spent_is_refused() -> None:
     rig, child, _ = paused_child(3)
     before = len(rig.requests)
+    rows = len(child.thread().messages())
 
     with pytest.raises(HarnessError) as caught:
         rig.runtime.send(
@@ -155,3 +166,4 @@ def test_a_host_context_on_a_child_whose_tree_is_spent_is_refused() -> None:
         )
     assert caught.value.code == "run_not_permitted"
     assert len(rig.requests) == before
+    assert len(child.thread().messages()) == rows

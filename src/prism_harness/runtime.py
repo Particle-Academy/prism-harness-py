@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
@@ -29,8 +28,10 @@ from prism_harness.events import (
     ToolDenied,
 )
 from prism_harness.modes import AgentMode, ModeRegistry
-from prism_harness.plans.service import Plans, refuse_unfunded_decision
-from prism_harness.run_trees import RunTrees, kept_refs, refuse_spent_tree, saved_refs
+from prism_harness.plans import budget as plan_budget
+from prism_harness.plans.service import Plans
+from prism_harness.run_budgets import allowance, fail_closed, steps_used
+from prism_harness.run_trees import RunTrees, kept_refs, saved_refs
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import ChildBinding, RunBudget, RunContext, binding_route
@@ -331,7 +332,6 @@ class AgentRuntime:
             reason,
             options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
             options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
-            self._plans.now,
         )
         self._plans.decided(session)
 
@@ -414,17 +414,18 @@ class AgentRuntime:
         return self._modes.for_agent(session.agent).resolve(session.mode())
 
     def _bounded_run(self, session: Session, run: RunContext) -> RunContext:
+        """The run under this agent's label and output ceiling. Its STEPS are
+        not touched here: ``max_steps_ceiling`` is one input of the run's
+        allowance (G-387), absolute on the run's whole count."""
         run = self._labelled(session, run)
         options, budget = self._settings(session), run.budget
-        steps, output = options.get("max_steps_ceiling"), options.get("max_output_tokens_per_call")
-        if steps is None and output is None:
+        output = options.get("max_output_tokens_per_call")
+        if output is None:
             return run
         return RunContext(
             run.ledger,
             RunBudget(
-                budget.max_steps
-                if steps is None
-                else min(budget.max_steps, run.ledger.steps + steps),
+                budget.max_steps,
                 budget.max_cost_usd,
                 budget.max_seconds,
                 budget.max_output_tokens_per_call
@@ -709,20 +710,30 @@ class AgentRuntime:
                 offered = self._offer(session, mode, tool_names)[0]
             stored = [entry.message for entry in thread.messages()]
             scope = approval_tool_scope(stored)
-            # A resume continues the paused run's step count; it never opens a
-            # new allowance. Only for a root run: a child's steps are already on
-            # the tree ledger its caller hands back in.
-            if prompt == "" and context is None:
-                run.ledger.record_steps(approval_run_steps(stored) or 0)
-            # G-366: one of the plan's own turns, with a shared budget, holds
-            # what the plan has left, after the paused steps it continues are
-            # counted. Any other turn is unchanged.
+            # The run's step allowance (G-387), from facts the harness wrote
+            # itself: what the parked run this turn resumes had used (its own
+            # row's count, children included), a child's saved ceiling, the
+            # context and max_steps_ceiling. Worked out first without the
+            # tree and plan grants, which it then asks for.
+            facts, forged = self._allowance_facts(
+                session, mode, kind, context, prompt, stored, saved_binding
+            )
+            first = _allowance(facts, forged)
+            if kind in ("none", "metadata"):
+                # A resume is the SAME run: the fresh ledger continues its
+                # count, so what the run reports includes the steps before the
+                # pause. Never on a context's ledger, which is someone else's.
+                run.ledger.record_steps(first["used"])
+            begin_steps = run.ledger.steps
             if context is not None and runner_binding is not None:
-                # The runner is starting a child: save its binding and the run
-                # tree and plan budget it belongs to, so every later turn on
-                # the child the runner did not start continues them. Only the
-                # runner's own context writes them.
-                session.remember_child_binding(runner_binding.to_row(), member["depth"])
+                # The runner is starting a child: save its binding, its depth
+                # and its step ceiling, and the run tree and plan budget it
+                # belongs to, so every later turn on the child the runner did
+                # not start continues them. Only the runner's own context
+                # writes them, and a runner start always overwrites them.
+                session.remember_child_binding(
+                    runner_binding.to_row(), member["depth"], first["ceiling"]
+                )
                 self._trees.child_started(session, member, self.lock_ttl(session))
                 # The tree it is in, with the plan ledger of the run it spends
                 # from. Under a run tree the host built, or none, there is no
@@ -741,22 +752,50 @@ class AgentRuntime:
                 )
                 session.remember_child_refs(refs["tree"], refs["plan_ledger"])
             # A root run opens a tree; any turn on a child session the runner
-            # did not start (an answer, a new message, or a host context,
-            # narrowed to what is left) continues the run tree it was saved
-            # with. The runner's own context is left alone.
-            # What the paused row says the parked run had left of its own step
-            # budget: the measure the decision check read (G-381).
-            steps_left = paused.get("harness_steps_left") if paused is not None else None
-            run = self._trees.root_run(
+            # did not start (an answer, a new message, or a host context)
+            # continues the run tree it was saved with, holding what its own
+            # allowance leaves, in one locked write. The runner's own context
+            # is left alone. Then the plan's own turns hold from the plan's
+            # shared budget what the run and its tree leave (G-366).
+            run, tree_left = self._trees.root_run(
+                session, run_id, run, member, self.lock_ttl(session), first["own_left"]
+            )
+            run, plan_left = self._plans.plan_turn(
                 session,
                 run_id,
                 run,
-                member,
+                context,
                 self.lock_ttl(session),
-                steps_left if type(steps_left) is int else None,
+                prompt,
+                kind,
+                first["own_left"] if tree_left is None else min(first["own_left"], tree_left),
             )
-            run = self._plans.plan_turn(
-                session, run_id, run, context, self.lock_ttl(session), prompt, kind
+            facts = {**facts, "tree_left": tree_left, "plan_left": plan_left}
+            allowed = _allowance(facts, forged)
+            if prompt != "" and allowed["allowance"] == 0:
+                # A NEW prompt resumes no recorded decision, so with nothing
+                # left it is refused before anything is recorded. Only a resume
+                # acts on its decisions with no model step (G-387).
+                asked = (
+                    first["own_left"] if tree_left is None else min(first["own_left"], tree_left)
+                )
+                if plan_left == 0 and asked > 0:
+                    raise HarnessError(
+                        plan_budget.EXHAUSTED,
+                        "This plan step may not proceed (plan_budget_exhausted): the plan's "
+                        "shared budget has nothing left.",
+                    )
+                raise HarnessError.run_not_permitted(
+                    "This run may not proceed: its step allowance is spent."
+                )
+            # Narrowed ONCE, and recorded beside the membership: the loop's
+            # step gate, the paused row, a subagent's pre-check and a child's
+            # tree hold all read this and nothing else.
+            run = replace(
+                run, budget=replace(run.budget, max_steps=run.ledger.steps + allowed["allowance"])
+            )
+            self._trees.allot(
+                run_id, {**allowed, "facts": facts, "forged": forged}, begin_steps, run.budget
             )
             # From here every tool the turn runs, a subagent included, runs
             # under this run context (G-366).
@@ -843,6 +882,62 @@ class AgentRuntime:
             if turn_token is not None:
                 _TURN_RUN.reset(turn_token)
 
+    def _allowance_facts(
+        self,
+        session: Session,
+        mode: AgentMode,
+        kind: str,
+        context: RunContext | None,
+        prompt: str,
+        stored: Sequence[Mapping[str, Any]],
+        saved_binding: ChildBinding | None,
+    ) -> tuple[dict[str, Any], bool]:
+        """The facts a run's allowance is worked out from (G-387), and whether
+        the parked row's steps-used count is not one the harness could have
+        written (the run then fails closed: no model step).
+
+        ``used`` is read for any turn that resumes a parked run (no new
+        message, a row waiting on approvals) except a runner start, which is
+        a new run: the larger of the row's ``harness_steps_used`` and the
+        transcript's count of the run's own model steps. A row written before
+        that field existed uses the transcript's count; a child with a saved
+        ceiling, which always parks with its count, fails closed without one."""
+        used = 0
+        forged = False
+        if kind != "runner":
+            row = paused_approval_row(stored) if prompt == "" else None
+            found = steps_used(row)
+            if row is None:
+                used = 0
+            elif found == "forged":
+                forged = True
+            elif found == "absent" and session.child_ceiling() is not None:
+                # A child the runner started on this version always parks with
+                # its count; a row without one was not written by it, and is
+                # never read as a laxer, legacy measure.
+                forged = True
+            elif found == "absent":
+                used = approval_run_steps(stored) or 0
+            else:
+                # The larger of the row's count and the transcript's, so a row
+                # forged lower than the steps it shows gains nothing.
+                assert isinstance(found, int)
+                used = max(found, approval_run_steps(stored) or 0)
+        steps_ceiling = self._settings(session).get("max_steps_ceiling")
+        return {
+            "context": kind,
+            "mode_steps": mode.max_steps,
+            "saved_ceiling": None if kind == "runner" else session.child_ceiling(),
+            "context_left": None
+            if context is None or kind in ("none", "metadata")
+            else context.budget.max_steps - context.ledger.steps,
+            "steps_ceiling": steps_ceiling,
+            "used": used,
+            "tree_left": None,
+            "plan_left": None,
+            "took": 0,
+        }, forged
+
     def _with_plan_tools(
         self,
         session: Session,
@@ -904,9 +999,12 @@ class AgentRuntime:
             exhausted = run.ledger.exhaustion(run.budget)
 
             if exhausted is not None:
-                return self._finish(
+                spent = self._finish(
                     session, run_id, called, "budget_exhausted", text, run, exhausted
                 )
+                # The structured path ends a spent run exactly as send() does,
+                # in the structured shape, with no document.
+                return spent if schema is None else _structured(spent, None)
 
             # This agent's own ceiling, in the same ledger. Raised rather than
             # finished: a subagent child refused here comes back to its parent
@@ -994,19 +1092,20 @@ class AgentRuntime:
             row = assistant_row(response.text, calls, metadata, requests)
             if requests:
                 row["harness_tool_names"] = [tool.name for tool in offered]
-                # What a root that opened its tree has left of its OWN step
-                # budget, so a decision on it is checked as its resume will be:
-                # the allowance it started this run with, less the steps taken
-                # since (a runner child's included). Never what it could hold
-                # from its tree: the tree's record is checked on its own.
+                # The steps this run has used, children included, and what
+                # its allowance leaves (G-387): the facts its resume reads,
+                # from the allowance recorded when it began and what its
+                # ledger gained since. harness_steps_used is what decides the
+                # resume; harness_steps_left is reported, never read.
                 parked_as = self._trees.member(run_id)
-                if parked_as is not None and parked_as["route"] == "open":
-                    if "own_left_start" in parked_as:
-                        taken = run.ledger.steps - int(parked_as["start_steps"])
-                        own = int(parked_as["own_left_start"]) - taken
-                    else:
-                        own = int(parked_as["own_max_steps"]) - run.ledger.steps
-                    row["harness_steps_left"] = max(0, own)
+                allotted = parked_as.get("allowance") if parked_as is not None else None
+                if parked_as is not None and isinstance(allotted, dict):
+                    took = run.ledger.steps - int(parked_as["begin_steps"])
+                    at_park = _allowance(
+                        {**allotted["facts"], "took": took}, bool(allotted["forged"])
+                    )
+                    row["harness_steps_used"] = at_park["used_at_park"]
+                    row["harness_steps_left"] = at_park["left_at_park"]
                 # What a resume needs to continue this run as the same run.
                 if run.agent is not None:
                     row["harness_agent_spend"] = {
@@ -1069,16 +1168,7 @@ class AgentRuntime:
                 if schema is None:
                     return finished
 
-                return StructuredAgentResponse(
-                    run_id=finished.run_id,
-                    text=finished.text,
-                    steps=finished.steps,
-                    tool_calls=finished.tool_calls,
-                    finish_reason=finished.finish_reason,
-                    pending_approvals=finished.pending_approvals,
-                    stopped_because=finished.stopped_because,
-                    structured=response.structured,
-                )
+                return _structured(finished, response.structured)
 
             # The calls that need nobody run now, as in the reference, and their
             # results are recorded even when the step then stops for a person.
@@ -1128,7 +1218,7 @@ class AgentRuntime:
                 # answers.
                 self._plans.after_turn(session)
                 self._trees.finished(session, run_id)
-                return AgentResponse(
+                parked = AgentResponse(
                     run_id=run_id,
                     text=text,
                     steps=run.ledger.steps,
@@ -1144,6 +1234,9 @@ class AgentRuntime:
                         for call, request in zip(gated, requests, strict=True)
                     ],
                 )
+                # A structured turn that parks answers in the structured shape,
+                # with no document yet, as a spent one does.
+                return parked if schema is None else _structured(parked, None)
 
     def _resolve_approvals(
         self,
@@ -1423,6 +1516,31 @@ class AgentRuntime:
             self._events.emit(event)
 
 
+def _allowance(facts: Mapping[str, Any], forged: bool) -> dict[str, Any]:
+    """The run's allowance from its facts (G-387); a forged steps-used count
+    fails closed."""
+    found = allowance(facts)
+    if "invalid" in found:
+        # Every kind the runtime hands over is known and carries what it
+        # needs; an invalid answer is a bug, and a run never starts on one.
+        raise HarnessError.run_not_permitted("This run's step allowance could not be decided.")
+    result: dict[str, Any] = (fail_closed(found) if forged else found)["allowance"]
+    return result
+
+
+def _structured(response: AgentResponse, document: Any) -> StructuredAgentResponse:
+    return StructuredAgentResponse(
+        run_id=response.run_id,
+        text=response.text,
+        steps=response.steps,
+        tool_calls=response.tool_calls,
+        finish_reason=response.finish_reason,
+        pending_approvals=response.pending_approvals,
+        stopped_because=response.stopped_because,
+        structured=document,
+    )
+
+
 def _approval_expired(tool: str) -> str:
     return (
         f"Not run: the approval for {tool} was recorded by an earlier version and has expired. "
@@ -1472,7 +1590,6 @@ def _record_decision(
     reason: str | None,
     ttl_seconds: float,
     wait_seconds: float,
-    clock: Callable[[], int] | None = None,
 ) -> None:
     """The pending check and the write, together under the session lock.
 
@@ -1485,13 +1602,11 @@ def _record_decision(
         rows = [entry.message for entry in live.thread().messages()]
         if approval_id not in pending_approval_ids(rows):
             raise HarnessError.approval_not_pending(approval_id)
-        # A decision a spent shared plan budget could not run is refused here,
-        # with nothing recorded, rather than consumed by a resume that is then
-        # refused (G-366).
-        now = clock() if clock is not None else int(time.time())
-        refuse_unfunded_decision(live, approval_id, now, int(ttl_seconds))
-        # The same for a subagent child whose run tree has nothing left.
-        refuse_spent_tree(live, int(time.time()), int(ttl_seconds))
+        # No budget refuses a decision (G-387): acting on an approved call
+        # makes no provider call, so a resume with no steps or cost left acts
+        # on it and takes no model step. Only what the call itself cannot
+        # pass (its binding, depth, a call-level limit) is refused, when the
+        # resume runs it.
 
         run = live.run()
 

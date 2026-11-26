@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- One authority for a run's step allowance (G-387). How many model steps a run
+  may take is now worked out once, when the run begins, by the pure
+  `RunBudgets.allowance` (`prism_harness.run_budgets`), and every consumer
+  reads that one answer: the loop's step gate, the paused row, a subagent's
+  pre-check, a child's tree hold and the plan's hold. Before, it was re-derived
+  at many sites from different sources, which disagreed.
+- A declared subagent ceiling was not re-applied on turns the runner did not
+  start. The ceiling the runner starts a child with (the least of its declared
+  `max_steps`, what its parent had left and `max_steps_ceiling`) is now saved
+  with the child's binding and applies to every later turn on it: an answer to
+  its approval, a new message, or a host `RunContext`, which can only lower it.
+- A run that parks on an approval writes the steps it has used, its children's
+  included, on the row it parks on (`harness_steps_used`), and its resume
+  counts the larger of that and the session's own transcript count (which
+  never held a child's steps), so a row forged lower gains nothing. A value
+  there that is not a whole number from 0 to 2^53-1 fails closed: the resume
+  acts on its decisions and takes no model step; so does a child row without
+  one. A row written before the field existed uses the transcript count.
+  `harness_steps_left` is still written, now including a shared plan budget's
+  narrowing, but nothing reads it to decide a budget.
+- `max_steps_ceiling` is absolute on a run's whole count under every context:
+  a host-context resume no longer gets it afresh from the host's ledger.
+- One decision rule: acting on an approved call makes no provider call, so
+  no budget (steps or cost; the run's own, its run tree's or a shared plan
+  budget's) refuses a decision or a resume. The resume runs the approved call
+  and takes no model step, ending `budget_exhausted`. A decision is no longer
+  refused with `run_not_permitted` / `plan_budget_exhausted`, nor accepted and
+  then left unacted on. A turn with a NEW prompt and nothing left is still
+  refused before anything is recorded: `plan_budget_exhausted` when the plan's
+  grant is what is spent, otherwise `run_not_permitted`.
+- `send_structured()` returned a plain `AgentResponse` (and failed its own
+  type check) when the run parked on an approval or ran out of steps. It now
+  returns a `StructuredAgentResponse` with no document in both cases.
+
+### Parity
+
+- harness-plans 0.1.9: the `step_allowance` op (hpl-0072..hpl-0083) runs
+  `RunBudgets.allowance`; all twelve rows agree with the reference.
+
 ## 0.6.0
 
 Includes every fix released on the 0.5 line in 0.5.1, 0.5.2 and 0.5.3.

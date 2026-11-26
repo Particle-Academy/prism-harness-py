@@ -1,9 +1,9 @@
 {
   "suite": "harness-plans",
   "schema_version": 1,
-  "corpus_version": "0.1.8",
+  "corpus_version": "0.1.9",
   "generated_by": "tools/generate-harness-plans.mjs writes the inputs. `expected` is the PHP reference's recording; every security row was checked by hand against the G-360 design before TypeScript or Python ran. `result` records what each language measured, merged with --merge.",
-  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. binding_route runs the pure ChildBinding.route; whether a binding is saved starts false and carries from op to op, set when a route saves. binding_context builds a real RunContext (none, or RunContext.root(\"host_root\") with a 10-step budget; bound when supplied_binding; marked through the runtime RunTrees.startingChild when runner_started; bound again by the host after the mark when rebound), records the kind RunTrees.bindingContextKind gives it and the binding_route of that kind, and carries whether a binding is saved like binding_route; marking no context, or a context kind other than none or host, is invalid. tree_membership runs the pure RunTrees.membership (G-381): from a context kind, the run and its session, the recorded membership of the live parent run the runner verified (null when there is none), the run tree and depth the session saved, the depth the context states and, for a root turn resuming its parked run, the tree that run began in (resumed_tree), it records the run's one membership: tree (a {session, run} tree, \"host\" or \"none\"), spends (the live run whose hold it spends from, or null), depth, and route (open, continue or none). kept_refs runs the pure RunTrees.keptRefs: the run tree and plan ledger the runner saves with a child, from its membership, the plan ledger of the run it spends from, what the session saved and whether that saved tree was cancelled. A setting or context kind that is invalid records {invalid: true}.",
+  "pins_note": "Each case runs `ops` in order against a fresh plan through the language's pure PlanMachine and PlanView, with ids minted as prefix + \"_\" + a 26-digit counter, the clock at `now` (default 1767225600, 2026-01-01T00:00:00Z) and the run id \"run_case\". Each op records {ok} or {refused: code} or its outcome. `final` is the plan as stored (the fields a consumer or the next turn depends on), its g282.3 update, its counts, its context block and its first-event size, or null when nothing was written. Budget ops (G-366) run the pure PlanBudget against one ledger per case, opened with plan id \"plan\"; `budget` is that ledger with its holds as a list sorted by id, present only when the case opened one. binding_route runs the pure ChildBinding.route; whether a binding is saved starts false and carries from op to op, set when a route saves. binding_context builds a real RunContext (none, or RunContext.root(\"host_root\") with a 10-step budget; bound when supplied_binding; marked through the runtime RunTrees.startingChild when runner_started; bound again by the host after the mark when rebound), records the kind RunTrees.bindingContextKind gives it and the binding_route of that kind, and carries whether a binding is saved like binding_route; marking no context, or a context kind other than none or host, is invalid. tree_membership runs the pure RunTrees.membership (G-381): from a context kind, the run and its session, the recorded membership of the live parent run the runner verified (null when there is none), the run tree and depth the session saved, the depth the context states and, for a root turn resuming its parked run, the tree that run began in (resumed_tree), it records the run's one membership: tree (a {session, run} tree, \"host\" or \"none\"), spends (the live run whose hold it spends from, or null), depth, and route (open, continue or none). kept_refs runs the pure RunTrees.keptRefs: the run tree and plan ledger the runner saves with a child, from its membership, the plan ledger of the run it spends from, what the session saved and whether that saved tree was cancelled. step_allowance runs the pure RunBudgets.allowance (G-387), computed once when a run begins: from the context kind, the mode's max_steps, the ceiling saved with a child (saved_ceiling), what a runner or host context has left (context_left), max_steps_ceiling (steps_ceiling), the steps the run already used (the count its parked row wrote; a runner start is always 0), the tree and plan grants (null when neither bounds it) and the steps the turn then took, it records the ceiling, used, own_left, tree_left, plan_left, the allowance (the least of them), acts_without_step (no model step is left; the run still acts on its decisions) and what it writes when it parks (used_at_park, left_at_park). Negative inputs count as 0; a runner or host context with no context_left is invalid. A setting or context kind that is invalid records {invalid: true}.",
   "cases": [
     {
       "id": "hpl-0001",
@@ -26698,6 +26698,3226 @@
                 "depth": 1,
                 "route": "none"
               }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0072",
+      "title": "a fresh root may take its mode's steps, and no more",
+      "since": "0.1.9",
+      "notes": "How many model steps a run may take is decided ONCE, when it begins (step_allowance: RunBudgets.allowance, G-387), next to its membership, and every consumer reads that record: the loop's step gate, the paused row, the runner's pre-check, the tree and plan holds and both decision checks. A root with no context and nothing parked takes its mode's max_steps. took is the steps the turn then took; used_at_park and left_at_park are what the run writes on the row it parks on (a step gate, paused row or pre-check each computing its own remainder from a different source).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "metadata",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 3,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 2
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 8,
+              "used": 0,
+              "own_left": 8,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 8,
+              "acts_without_step": false,
+              "used_at_park": 0,
+              "left_at_park": 8
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 8,
+              "used": 0,
+              "own_left": 8,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 8,
+              "acts_without_step": false,
+              "used_at_park": 0,
+              "left_at_park": 8
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 3,
+              "used": 0,
+              "own_left": 3,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 3,
+              "acts_without_step": false,
+              "used_at_park": 2,
+              "left_at_park": 1
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 0,
+                "own_left": 8,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 8,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 8
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0073",
+      "title": "a resumed root continues the count its parked run wrote, its children's steps included",
+      "since": "0.1.9",
+      "notes": "A root that parked on an approval after its own steps and the steps of the subagents it ran wrote what it used, children included, on the row it parked on. Its resume reads that count, never a recount of its own transcript rows, which holds none of its children's steps (a root that delegated 5 of its 8 steps resuming with 7 left).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 6,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 6,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 2
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 8,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 8,
+              "used": 6,
+              "own_left": 2,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 2,
+              "acts_without_step": false,
+              "used_at_park": 6,
+              "left_at_park": 2
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 8,
+              "used": 6,
+              "own_left": 2,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 2,
+              "acts_without_step": false,
+              "used_at_park": 8,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 8,
+              "used": 8,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 8,
+              "left_at_park": 0
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 8,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 8,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 6,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 8,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 8,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0074",
+      "title": "a child resumed outside the runner keeps the ceiling the runner gave it",
+      "since": "0.1.9",
+      "notes": "The runner gave the child min(its declared max_steps, what the parent had left) and saved that ceiling with its binding. A turn the runner did not start, with no context, a metadata one or a host one, takes that ceiling less what the child used, never its mode's max_steps (a child declared 2 in a mode of 8, resumed by its host after one step, making 7 more model requests).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": 2,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "metadata",
+          "mode_steps": 8,
+          "saved_ceiling": 2,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": 2,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 2,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 1,
+          "saved_ceiling": 4,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 2,
+              "used": 1,
+              "own_left": 1,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 2,
+              "used": 1,
+              "own_left": 1,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 2,
+              "used": 2,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 2,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 4,
+              "used": 1,
+              "own_left": 3,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 3,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 3
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 3
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 3
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 3,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 3
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0075",
+      "title": "a child the runner starts takes what the runner's context leaves it, as a fresh run",
+      "since": "0.1.9",
+      "notes": "The runner's context is already narrowed to min(the declaration, the parent's remainder): the child's ceiling is that, its mode's max_steps does not apply, and a count parked on the child session before is never carried into a new delegation. A runner context with no remainder is invalid (a child granted its mode's steps over its declaration, or a fresh delegation charged for an old one).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "runner",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": 2,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "runner",
+          "mode_steps": 2,
+          "saved_ceiling": null,
+          "context_left": 5,
+          "steps_ceiling": null,
+          "used": 3,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "runner",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": 0,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "runner",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 2,
+              "used": 0,
+              "own_left": 2,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 2,
+              "acts_without_step": false,
+              "used_at_park": 0,
+              "left_at_park": 2
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 5,
+              "used": 0,
+              "own_left": 5,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 5,
+              "acts_without_step": false,
+              "used_at_park": 0,
+              "left_at_park": 5
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 0,
+              "used": 0,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 0,
+              "left_at_park": 0
+            }
+          },
+          {
+            "invalid": true
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 5,
+                "used": 0,
+                "own_left": 5,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 5,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 5
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 5,
+                "used": 0,
+                "own_left": 5,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 5,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 5
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 5,
+                "used": 0,
+                "own_left": 5,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 5,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 5
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0076",
+      "title": "a host context can only lower what a run has left",
+      "since": "0.1.9",
+      "notes": "A host context on a session that saved a ceiling takes the lesser of that ceiling's remainder and the context's remainder; on a root it is the context's remainder, which is the host's own budget. A host context with no remainder is invalid (a host context resuming a spent child with a fresh budget of its own).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "host",
+          "mode_steps": 8,
+          "saved_ceiling": 2,
+          "context_left": 10,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "host",
+          "mode_steps": 8,
+          "saved_ceiling": 6,
+          "context_left": 2,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "host",
+          "mode_steps": 8,
+          "saved_ceiling": 2,
+          "context_left": 10,
+          "steps_ceiling": null,
+          "used": 2,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "host",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": 4,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "host",
+          "mode_steps": 8,
+          "saved_ceiling": 2,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 2,
+              "used": 1,
+              "own_left": 1,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 6,
+              "used": 1,
+              "own_left": 2,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 2,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 2
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 2,
+              "used": 2,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 2,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 4,
+              "used": 0,
+              "own_left": 4,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 4,
+              "acts_without_step": false,
+              "used_at_park": 0,
+              "left_at_park": 4
+            }
+          },
+          {
+            "invalid": true
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0077",
+      "title": "max_steps_ceiling bounds a run's whole count, under any context",
+      "since": "0.1.9",
+      "notes": "max_steps_ceiling is a ceiling on the run's own count across every pause, applied after the mode, the saved ceiling or the context's remainder: the same steps left whether the run resumes with no context or under a host context (a ceiling that restarts from the host's ledger, so a host-context resume of a capped run gets the whole ceiling again).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": 3,
+          "used": 2,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "host",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": 10,
+          "steps_ceiling": 3,
+          "used": 2,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": 6,
+          "context_left": null,
+          "steps_ceiling": 3,
+          "used": 1,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "runner",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": 5,
+          "steps_ceiling": 2,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 2,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": 5,
+          "used": 1,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": 0,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 3,
+              "used": 2,
+              "own_left": 1,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 2,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 3,
+              "used": 2,
+              "own_left": 1,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 2,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 3,
+              "used": 1,
+              "own_left": 2,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 2,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 2
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 2,
+              "used": 0,
+              "own_left": 2,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 2,
+              "acts_without_step": false,
+              "used_at_park": 0,
+              "left_at_park": 2
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 2,
+              "used": 1,
+              "own_left": 1,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 0,
+              "used": 0,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 0,
+              "left_at_park": 0
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 2,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 1,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 0,
+                "own_left": 2,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 1,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0078",
+      "title": "a sibling that spent the tree leaves a run its decisions and no model step",
+      "since": "0.1.9",
+      "notes": "The tree's record grants what it has left after every other run's steps and live holds; a run whose own budget has steps left but whose tree grant is 0 acts on the decisions it resumes and takes no model step. It is not refused: acting on a recorded decision costs no model step (a decision accepted and never acted on, or refused while the person's approval waits).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": 4,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": 1,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": 4,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": 0,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 2,
+          "tree_left": 0,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "host",
+          "mode_steps": 8,
+          "saved_ceiling": 4,
+          "context_left": 10,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": 2,
+          "plan_left": null,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 4,
+              "used": 1,
+              "own_left": 3,
+              "tree_left": 1,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 4,
+              "used": 1,
+              "own_left": 3,
+              "tree_left": 0,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 1,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 8,
+              "used": 2,
+              "own_left": 6,
+              "tree_left": 0,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 2,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 4,
+              "used": 1,
+              "own_left": 3,
+              "tree_left": 2,
+              "plan_left": null,
+              "allowance": 2,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 2
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 1,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 2,
+                "own_left": 6,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 1,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 2,
+                "own_left": 6,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 1,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 2,
+                "own_left": 6,
+                "tree_left": 0,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": null,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0079",
+      "title": "a plan step narrows the allowance, and its paused row says so",
+      "since": "0.1.9",
+      "notes": "A turn serving a plan step with a shared budget holds what the plan grants after the tree; the allowance is the least of the three, and the row it parks on carries that, not the run's own remainder alone (a paused row whose steps left ignore the plan, so the next check reads a different number than the next turn uses).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": null,
+          "plan_left": 2,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": null,
+          "plan_left": 2,
+          "took": 2
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": 4,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": 2,
+          "plan_left": 1,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 1,
+          "tree_left": 5,
+          "plan_left": 0,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 8,
+              "used": 1,
+              "own_left": 7,
+              "tree_left": null,
+              "plan_left": 2,
+              "allowance": 2,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 2
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 8,
+              "used": 1,
+              "own_left": 7,
+              "tree_left": null,
+              "plan_left": 2,
+              "allowance": 2,
+              "acts_without_step": false,
+              "used_at_park": 3,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 4,
+              "used": 1,
+              "own_left": 3,
+              "tree_left": 2,
+              "plan_left": 1,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 1,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 8,
+              "used": 1,
+              "own_left": 7,
+              "tree_left": 5,
+              "plan_left": 0,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 1,
+              "left_at_park": 0
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": 1,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": 5,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": 1,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": 5,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 2
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": null,
+                "plan_left": 2,
+                "allowance": 2,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 1,
+                "own_left": 3,
+                "tree_left": 2,
+                "plan_left": 1,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 1,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 8,
+                "used": 1,
+                "own_left": 7,
+                "tree_left": 5,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 1,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0080",
+      "title": "a run spent on its last step still acts on its decisions and takes no further step",
+      "since": "0.1.9",
+      "notes": "A run that parked on the approval of its last model step resumes with an allowance of 0: the approved calls run, nothing asks the model again, and no budget refuses the decision. The same for a run whose count somehow exceeds its ceiling: never a negative allowance (a decision refused because its run is spent, or a spent run granted steps by an underflow).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 3,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 3,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 3,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 5,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 8,
+          "saved_ceiling": 2,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 2,
+          "tree_left": 0,
+          "plan_left": 0,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 3,
+              "used": 3,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 3,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 3,
+              "used": 5,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 5,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 2,
+              "used": 2,
+              "own_left": 0,
+              "tree_left": 0,
+              "plan_left": 0,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 2,
+              "left_at_park": 0
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 3,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 5,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 5,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": 0,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 3,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 5,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 5,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": 0,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 3,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 3,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 5,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 5,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 2,
+                "used": 2,
+                "own_left": 0,
+                "tree_left": 0,
+                "plan_left": 0,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 2,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0081",
+      "title": "a run that parks again carries its whole count to the next resume",
+      "since": "0.1.9",
+      "notes": "A resumed run that takes steps and parks again writes used plus what it took, so a third resume continues from there. The count is the run's own, children included, never reset by a re-park (a run approved six times taking a fresh allowance each time).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 6,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 2
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 6,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 2,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 3
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 6,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 5,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 1
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 6,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 6,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 6,
+              "used": 0,
+              "own_left": 6,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 6,
+              "acts_without_step": false,
+              "used_at_park": 2,
+              "left_at_park": 4
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 6,
+              "used": 2,
+              "own_left": 4,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 4,
+              "acts_without_step": false,
+              "used_at_park": 5,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 6,
+              "used": 5,
+              "own_left": 1,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 6,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 6,
+              "used": 6,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 6,
+              "left_at_park": 0
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 0,
+                "own_left": 6,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 6,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 2,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 5,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 5,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 6,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 0,
+                "own_left": 6,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 6,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 2,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 5,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 5,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 6,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 0,
+                "own_left": 6,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 6,
+                "acts_without_step": false,
+                "used_at_park": 2,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 2,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 5,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 5,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 6,
+                "used": 6,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 6,
+                "left_at_park": 0
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0082",
+      "title": "a workflow node resumed after an approval continues its count",
+      "since": "0.1.9",
+      "notes": "A workflow node that parks is a run like any other: its resume reads the count it wrote, whatever context runs it, never 0 (a node approved repeatedly restarting its step count each time).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 4,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 3,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "host",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": 4,
+          "steps_ceiling": 4,
+          "used": 3,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 4,
+              "used": 3,
+              "own_left": 1,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 3,
+              "left_at_park": 1
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 4,
+              "used": 3,
+              "own_left": 1,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 1,
+              "acts_without_step": false,
+              "used_at_park": 3,
+              "left_at_park": 1
+            }
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 3,
+                "own_left": 1,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 1,
+                "acts_without_step": false,
+                "used_at_park": 3,
+                "left_at_park": 1
+              }
+            }
+          ],
+          "final": null
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "hpl-0083",
+      "title": "negative inputs clamp, and an unknown context kind has no allowance",
+      "since": "0.1.9",
+      "notes": "A negative count or remainder is treated as 0, and a context kind other than none, metadata, runner or host is invalid (an underflow granting steps, or a misspelled kind falling through to the mode's budget).",
+      "ops": [
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": 4,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": -3,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "host",
+          "mode_steps": 8,
+          "saved_ceiling": 3,
+          "context_left": -2,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "none",
+          "mode_steps": -1,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "root",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": null,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        },
+        {
+          "op": "step_allowance",
+          "context": "Host",
+          "mode_steps": 8,
+          "saved_ceiling": null,
+          "context_left": 4,
+          "steps_ceiling": null,
+          "used": 0,
+          "tree_left": null,
+          "plan_left": null,
+          "took": 0
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "allowance": {
+              "ceiling": 4,
+              "used": 0,
+              "own_left": 4,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 4,
+              "acts_without_step": false,
+              "used_at_park": 0,
+              "left_at_park": 4
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 3,
+              "used": 0,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 0,
+              "left_at_park": 0
+            }
+          },
+          {
+            "allowance": {
+              "ceiling": 0,
+              "used": 0,
+              "own_left": 0,
+              "tree_left": null,
+              "plan_left": null,
+              "allowance": 0,
+              "acts_without_step": true,
+              "used_at_park": 0,
+              "left_at_park": 0
+            }
+          },
+          {
+            "invalid": true
+          },
+          {
+            "invalid": true
+          }
+        ],
+        "final": null
+      },
+      "result": {
+        "php": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "ts": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
+            }
+          ],
+          "final": null
+        },
+        "py": {
+          "results": [
+            {
+              "allowance": {
+                "ceiling": 4,
+                "used": 0,
+                "own_left": 4,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 4,
+                "acts_without_step": false,
+                "used_at_park": 0,
+                "left_at_park": 4
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 3,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "allowance": {
+                "ceiling": 0,
+                "used": 0,
+                "own_left": 0,
+                "tree_left": null,
+                "plan_left": null,
+                "allowance": 0,
+                "acts_without_step": true,
+                "used_at_park": 0,
+                "left_at_park": 0
+              }
+            },
+            {
+              "invalid": true
+            },
+            {
+              "invalid": true
             }
           ],
           "final": null

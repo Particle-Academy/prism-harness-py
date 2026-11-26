@@ -258,16 +258,20 @@ What one run tree is:
 
 - A run that pauses for an approval and is resumed with `send(session, "")` is
   the same run. The approval row it paused on records what its agent had spent
-  (`harness_agent_spend`), and the resume counts that against the ceiling, as
-  it counts the steps already taken. A subagent child resumed this way also
+  (`harness_agent_spend`) and the model steps it had used, its subagent
+  children's included (`harness_steps_used`), and the resume counts both
+  against its limits. A subagent child resumed this way also
   keeps the provider and model its runner bound it to (`harness_binding`), and
   continues the run tree it was started in (`harness_tree`): the first time a
   root run starts a child, the tree's allowance is kept in the durable store
   with the root run holding all of it, and the root run settles what the whole
   tree spent when it ends. The resumed child holds what the tree has left
-  before it calls a model, settles what it spent when it ends, and is refused
-  (`run_not_permitted`) once the allowance is spent. A decision on its approval
-  is refused the same way before anything is recorded. The tree and the shared
+  before it calls a model and settles what it spent when it ends. Once the
+  allowance is spent (steps or cost) it takes no further model step; a
+  decision on its approval is still accepted and acted on, because acting on a
+  decision makes no provider call. A new message to it with nothing left is
+  refused (`run_not_permitted`) before anything is recorded. The tree and the
+  shared
   plan budget a child belongs to are also saved with the child session when
   the runner starts it, so EVERY turn on the child the runner did not start
   continues them: a new message instead of an answer as much as the answer,
@@ -275,6 +279,10 @@ What one run tree is:
   tree and the plan budget have left and can never widen them. A child started
   under a run context the host built outside a turn has no tree record and
   resumes as before.
+- A subagent child's step ceiling (the least of its declared `max_steps`, what
+  its parent had left and `max_steps_ceiling`) is saved with the child when
+  the runner starts it, and applies to every later turn on it the runner did
+  not start. A host `RunContext` can lower it, never raise it.
 - Every other `send()` starts a new run tree, with nothing spent.
 - So does every `runtime.plan(session).advance()` that is not handed a
   `RunContext`: each step of a plan gets the full ceiling. To hold a whole plan
@@ -550,12 +558,14 @@ refused for having one). Any other turn on the session,
 such as the person chatting while a step waits on their approval, spends
 nothing from the plan's budget and is never refused for it. A decision
 (`record_approval()` or `runtime.decide()`) on an approval the step asked for
-is refused with `plan_budget_exhausted`, recording nothing, when the shared
-budget is already spent, and the next `advance()` blocks the plan, so an
-approval is never consumed by a resume that cannot run. A subagent child paused
-inside a plan's turn carries the plan's ledger on its paused row
-(`harness_plan_ledger`), so its resume spends from that budget and a decision
-on it is refused the same way once the budget is spent.
+is accepted and acted on even when the shared budget is spent: acting on a
+decision makes no provider call, so the resume runs the approved call and
+takes no model step, and the next `advance()` blocks the plan. A plan turn with
+a new prompt and nothing left (another turn holds the remainder) is refused
+with `plan_budget_exhausted` before anything is recorded. A subagent child paused inside a
+plan's turn carries the plan's ledger on its paused row
+(`harness_plan_ledger`), so its resume spends from that budget, under the same
+rule.
 
 A subagent child started by a tool inside a turn spends from that turn's run
 context: its ledger, so a shared plan budget counts the child's steps, and its
