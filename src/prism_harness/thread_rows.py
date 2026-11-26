@@ -128,6 +128,10 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
 def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
     """Model steps the run paused at the transcript tail has already taken.
 
+    The LEGACY measure (G-387): read only for a root run whose paused row was
+    written before ``harness_steps_used`` existed. It counts the session's own
+    rows, so it never holds a subagent child's steps; the row's own count does.
+
     None when nothing at the tail is waiting on an approval. A run that pauses
     for a person and is resumed is the SAME run, so its step limit continues
     rather than starting again. Counted from the stored rows (one assistant row

@@ -412,10 +412,18 @@ class Plans:
         hold_ttl: int,
         prompt: str = "",
         kind: str | None = None,
-    ) -> RunContext:
-        """The run a turn executes under, when the turn is one of the plan's own
-        and its budget is shared: the per-turn budget, narrowed to what the
-        plan's ledger holds for it. Any other run is returned unchanged.
+        steps: int | None = None,
+    ) -> tuple[RunContext, int | None]:
+        """The run a turn executes under, and the steps the plan's ledger grants
+        it (``plan_left`` of its allowance, G-387), when the turn is one of the
+        plan's own and its budget is shared: the per-turn cost narrowed to what
+        the ledger holds for it, and up to ``steps`` steps held (by default,
+        what the run's own budget has left). Any other run is returned
+        unchanged, with None.
+
+        A ledger whose STEPS are spent grants 0 steps; it does not refuse the
+        turn: acting on recorded decisions costs no model step (G-387). A
+        ledger whose COST is spent still refuses, as the decision check does.
 
         The plan's own turns are the one advance() runs for the step it
         claimed, the resume of an approval that step asked for, and any turn on
@@ -434,7 +442,7 @@ class Plans:
             kind = "none" if context is None else "host"
         target = self._ledger_for(session, prompt, context, kind)
         if target is None:
-            return run
+            return run, None
         if target["refused"]:
             raise PlanRefused("plan.budget_context")
 
@@ -442,20 +450,28 @@ class Plans:
         own = run.budget
         base_steps = ledger.steps
         base_cost = ledger.cost_usd
+        asked = max(0, own.max_steps - base_steps if steps is None else steps)
         turn_cost = (
             None
             if own.max_cost_usd is None
             else budget.micros(max(0.0, own.max_cost_usd - base_cost))
         )
         now = self.now()
+
+        def hold(state: dict[str, Any]) -> tuple[dict[str, Any], Any]:
+            limit = budget.cost_refusal(state, now, hold_ttl)
+            if limit is not None:
+                return state, {"refused": budget.EXHAUSTED, "limit": limit}
+            if asked < 1:
+                return state, {"steps": 0, "cost_micros": None}
+            following, grant = budget.reserve(state, run_id, asked, turn_cost, now, hold_ttl)
+            if "refused" in grant:
+                # Spent on steps: 0 steps and no hold (cost was asked above).
+                return state, {"steps": 0, "cost_micros": None}
+            return following, grant
+
         _, grant = self._budget_write_at(
-            session.plan_store(),
-            target["session"],
-            target["plan"],
-            self._budget,
-            lambda state: budget.reserve(
-                state, run_id, max(0, own.max_steps - base_steps), turn_cost, now, hold_ttl
-            ),
+            session.plan_store(), target["session"], target["plan"], self._budget, hold
         )
         if "refused" in grant:
             raise HarnessError(
@@ -463,15 +479,13 @@ class Plans:
                 "This plan step may not proceed (plan_budget_exhausted): the plan's shared "
                 f"{grant['limit']} budget is spent.",
             )
-        narrowed = replace(
-            run,
-            budget=replace(
-                own,
-                max_steps=base_steps + int(grant["steps"]),
-                max_cost_usd=own.max_cost_usd
-                if grant["cost_micros"] is None
-                else base_cost + grant["cost_micros"] / 1_000_000,
-            ),
+        narrowed = (
+            run
+            if grant["cost_micros"] is None
+            else replace(
+                run,
+                budget=replace(own, max_cost_usd=base_cost + grant["cost_micros"] / 1_000_000),
+            )
         )
         ledger_ref = {"session": target["session"], "plan": target["plan"]}
         self._budget_turns[run_id] = {
@@ -484,7 +498,7 @@ class Plans:
             "unmetered": ledger.unmetered_runs,
             "token": _ACTIVE_LEDGER.set(ledger_ref),
         }
-        return narrowed
+        return narrowed, int(grant["steps"])
 
     def _settle_turn(self, session: Session) -> None:
         """Replace a finished turn's hold with what it spent."""
@@ -684,7 +698,7 @@ def _routed_ledger(
 
 def refuse_unfunded_decision(session: Session, approval_id: str, now: int, hold_ttl: int) -> None:
     """Refuse, before anything is recorded, a decision on an approval whose
-    resume would spend from a shared plan budget that is already spent.
+    resume would spend from a shared plan budget whose cost is already spent.
 
     Recorded, the decision would be consumed by a resume the budget then
     refuses, and the approved call would never run. Read from the stored plan
@@ -707,7 +721,11 @@ def refuse_unfunded_decision(session: Session, approval_id: str, now: int, hold_
     record = _shared_record(store, target["session"], target["plan"])
     if record is None:
         return
-    limit = budget.exhaustion(budget.expire(record, now, hold_ttl))
+    # The one decision rule (G-387): a spent STEP budget never refuses a
+    # decision, since acting on it costs no model step; the resume acts on it
+    # and takes none. Only a spent COST budget refuses, asked as plan_turn asks
+    # it, live holds counted.
+    limit = budget.cost_refusal(record, now, hold_ttl)
     if limit is not None:
         raise HarnessError(
             budget.EXHAUSTED,

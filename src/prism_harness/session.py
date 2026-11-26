@@ -318,13 +318,35 @@ class Session:
         depth = self._child_field("child_depth")
         return depth if type(depth) is int and depth > 0 else 0
 
-    def remember_child_binding(self, binding: dict[str, Any], depth: int = 0) -> Session:
-        """Internal: save the binding the runner gave a child run, and the
-        depth it started at, in the session's durable half."""
+    def child_ceiling(self) -> int | None:
+        """The step ceiling the subagent runner started this session's child
+        run with (G-387): the least of its declared ``max_steps``, what its
+        parent had left and ``max_steps_ceiling``. Re-applied on every turn on
+        the child the runner did not start, so a declaration holds however the
+        child is resumed. None for a session the runner never started, or one
+        started before the ceiling was saved.
+
+        Internal: read by the runtime."""
+        ceiling = self._child_field("child_ceiling")
+        return ceiling if type(ceiling) is int and ceiling >= 0 else None
+
+    def remember_child_binding(
+        self, binding: dict[str, Any], depth: int = 0, ceiling: int | None = None
+    ) -> Session:
+        """Internal: save the binding the runner gave a child run, the depth
+        it started at and its step ceiling, in the session's durable half. A
+        runner start always overwrites what an earlier start saved."""
         self._assert_writable()
         depth = depth if type(depth) is int and depth > 0 else 0
-        if self._child_field("child_binding") != binding or self.child_depth() != depth:
-            self._write_child({"child_binding": deepcopy(binding), "child_depth": depth})
+        ceiling = ceiling if type(ceiling) is int and ceiling >= 0 else None
+        if (
+            self._child_field("child_binding") != binding
+            or self.child_depth() != depth
+            or self.child_ceiling() != ceiling
+        ):
+            self._write_child(
+                {"child_binding": deepcopy(binding), "child_depth": depth, "child_ceiling": ceiling}
+            )
         return self
 
     def remember_child_refs(
@@ -367,7 +389,7 @@ class Session:
             stored = self._durable.get(key)
             current = dict(stored) if isinstance(stored, dict) else {}
             legacy = self._durable.get(self._durable_key()) or {}
-            for name in ("child_binding", "child_depth", "child_refs"):
+            for name in ("child_binding", "child_depth", "child_ceiling", "child_refs"):
                 if name not in current and name in legacy:
                     current[name] = deepcopy(legacy[name])
             self._durable.put(key, {**current, **fields})

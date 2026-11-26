@@ -37,6 +37,7 @@ __all__ = [
     "EXHAUSTED",
     "MODES",
     "PlanBudgetInvalid",
+    "cost_refusal",
     "exhaustion",
     "expire",
     "for_plan",
@@ -174,6 +175,26 @@ def exhaustion(state: State) -> str | None:
             return "cost_unmetered"
         if state["cost_micros"] >= state["max_cost_micros"]:
             return "cost"
+    return None
+
+
+def cost_refusal(state: State, now: int, hold_ttl: int) -> str | None:
+    """Which COST limit a turn spending from this ledger would be refused for
+    (``cost`` or ``cost_unmetered``), or None (G-387).
+
+    Steps are deliberately not asked: acting on a recorded decision costs no
+    model step, so a spent step budget never refuses a decision or a resume;
+    it grants 0 steps. A spent cost budget still refuses, at the decision and
+    at the resume alike, and both ask this one question, live holds counted
+    (what :func:`reserve` would leave)."""
+    state = expire(state, now, hold_ttl)
+    if state["mode"] != "shared" or state["max_cost_micros"] is None:
+        return None
+    if state["unmetered"] > 0:
+        return "cost_unmetered"
+    held = sum(hold["cost_micros"] for hold in state["holds"].values())
+    if state["cost_micros"] + held >= state["max_cost_micros"]:
+        return "cost"
     return None
 
 
