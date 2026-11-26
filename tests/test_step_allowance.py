@@ -106,6 +106,10 @@ class World:
         self.ran: list[str] = []
         #: Host code run once, at the start of the next model call.
         self.on_request: Callable[[], None] | None = None
+        #: The context the host builds each subagent tool with.
+        self.tool_context: Callable[[], RunContext] = lambda: RunContext.root(
+            "tool-run", RunBudget(100)
+        )
         self._call = 0
         self.harness = self._harness()
         self.runtime = self._runtime()
@@ -133,7 +137,7 @@ class World:
             def factory(session: Session) -> Any:
                 subagent = self.runtime.mode_for(session).subagents[name]
                 return SubagentRunner(self.harness, self.runtime).tool(
-                    subagent, session, RunContext.root("tool-run", RunBudget(100)), "tool-run"
+                    subagent, session, self.tool_context(), "tool-run"
                 )
 
             return factory
