@@ -49,6 +49,7 @@ from prism_harness import (
 from prism_harness.plans.service import Plans
 from prism_harness.run_starts import StartRefused
 from prism_harness.runtime import current_turn_run, current_turn_run_id
+from prism_harness.thread_rows import pending_approval_ids
 
 
 @pytest.fixture(autouse=True)
@@ -230,6 +231,7 @@ def test_a_restore_never_clobbers_a_later_writer(monkeypatch: pytest.MonkeyPatch
             current = store.get(key)
             assert isinstance(current, dict)
             store.put(key, {**current, "child_depth": 2})  # someone else wrote since
+            self.using_mode("free")  # and the mode too
             raise OSError("store down")
         return original(self, *args, **kwargs)
 
@@ -241,6 +243,7 @@ def test_a_restore_never_clobbers_a_later_writer(monkeypatch: pytest.MonkeyPatch
     record = child_state(world)["child"]
     assert isinstance(record, dict)
     assert record["child_depth"] == 2  # the later write stands
+    assert child_state(world)["mode"] == "free"  # so does the later mode
     assert live_holds(world) == {}  # the failed start's hold is gone
 
 
@@ -279,6 +282,43 @@ def test_an_answerable_approval_parked_after_the_read_refuses_the_start(
     (approval,) = world.pending(world.child("worker"))
     record_approval(world.fresh().child("worker"), approval, True)  # still answerable
     assert tree_records(world) == {}
+
+
+def test_a_pending_re_read_that_raises_refuses_the_start_writing_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The re-read under (b)'s lock fails closed: framed failed, nothing
+    written on the child, and the dead approval stays dead."""
+    world = World()
+    approval = dead_approval_child(world)
+    world.fresh()
+    calls: list[int] = []
+    original_pending = pending_approval_ids
+    original_refs = Session.child_refs
+
+    def counting(rows: Any) -> Any:
+        calls.append(1)
+        return original_pending(rows)
+
+    def refs(self: Session) -> Any:
+        if is_child(self) and len(calls) >= 2:
+            raise HarnessError("session_locked", "SECRET store text")
+        return original_refs(self)
+
+    monkeypatch.setattr("prism_harness.runtime.pending_approval_ids", counting)
+    monkeypatch.setattr(Session, "child_refs", refs)
+    before = stored(world)
+
+    result = direct(world, world.root(), RunContext.root("host", RunBudget(8)), "Again.")
+
+    assert len(calls) >= 2  # the re-read under the lock ran, and raised
+    assert result.outcome == "failed"
+    assert "SECRET" not in result.text
+    assert stored(world) == before
+    monkeypatch.undo()
+    with pytest.raises(HarnessError) as caught:
+        record_approval(world.fresh().child("worker"), approval, True)
+    assert caught.value.code == "child_binding_missing"
 
 
 # -- 4. no foreign text reaches the parent model ------------------------------
@@ -335,7 +375,7 @@ def test_a_host_cancel_reason_never_reaches_the_parent_model(
 
 
 class CodeThatRaises(HarnessError):
-    @property  # type: ignore[override]
+    @property
     def code(self) -> str:
         raise OSError("SECRET getter")
 
@@ -347,7 +387,7 @@ class CodeThatRaises(HarnessError):
 class CodeThatChanges(HarnessError):
     reads = 0
 
-    @property  # type: ignore[override]
+    @property
     def code(self) -> str:
         CodeThatChanges.reads += 1
         return "run_not_permitted" if CodeThatChanges.reads == 1 else "SECRET-GETTER-TEXT"
@@ -498,10 +538,8 @@ def test_a_foreign_error_in_the_answerability_read_refuses_the_start(
     parked_child(world)
     (approval,) = world.pending(world.child("worker"))
     world.fresh()
-    import prism_harness.runtime as runtime_module
-
     armed: list[bool] = []
-    original_pending = runtime_module.pending_approval_ids
+    original_pending = pending_approval_ids
     original_depth = Session.child_depth
 
     def arming(rows: Any) -> Any:
@@ -516,7 +554,7 @@ def test_a_foreign_error_in_the_answerability_read_refuses_the_start(
             raise HarnessError("session_locked", "SECRET store text")
         return original_depth(self)
 
-    monkeypatch.setattr(runtime_module, "pending_approval_ids", arming)
+    monkeypatch.setattr("prism_harness.runtime.pending_approval_ids", arming)
     monkeypatch.setattr(Session, "child_depth", depth)
     before = stored(world)
 
@@ -536,8 +574,9 @@ def test_a_foreign_error_in_the_answerability_read_refuses_the_start(
 @pytest.mark.parametrize("field", ["max_seconds", "max_cost_usd"])
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, -1])
 def test_a_budget_refuses_a_non_finite_or_negative_limit(field: str, value: float) -> None:
+    limits: dict[str, Any] = {field: value}
     with pytest.raises(ValueError):
-        RunBudget(8, **{field: value})
+        RunBudget(8, **limits)
     with pytest.raises(ValueError):
         RunBudget.from_config({"max_steps": 8, field: value})
 
@@ -551,9 +590,12 @@ def test_a_forged_non_finite_limit_is_spent_for_a_host_turn(field: str) -> None:
     limits = RunBudget(8)
     object.__setattr__(limits, field, math.nan)
 
-    response = world.runtime.send(world.root(), "Go", context=RunContext.root("host", limits))
-
-    assert response.finish_reason == "budget_exhausted"
+    try:
+        response = world.runtime.send(world.root(), "Go", context=RunContext.root("host", limits))
+    except ValueError:
+        pass  # refused when the run's budget is narrowed: failed closed
+    else:
+        assert response.finish_reason == "budget_exhausted"
     assert world.requests == []
 
 

@@ -315,10 +315,17 @@ What one run tree is:
   could still answer (so a model cannot dismiss a person's pending decision
   by delegating again), and a run tree that cannot fund it. A refused start
   writes nothing at all and comes back as a framed result. A start the gate
-  lets through commits the tree hold, then the child's records, then the run;
-  after that a stop only stops model steps. Anything that raises around a
-  child comes back as a framed `failed` result naming the exception's class,
-  never its message.
+  lets through commits the tree hold, then the child's records and its mode
+  (one locked write that re-checks the child is not busy and has no approval
+  a person could answer), then the run. Until the start's task is recorded a
+  failure puts the child's records and mode back as they were, so a failed
+  start never re-binds a child; after that a stop only stops model steps. The
+  start is narrowed from the ledger as the gate read it, so steps spent on a
+  shared context after the read count against the child. Anything that raises
+  around a child comes back as a framed `failed` result naming the exception's
+  class, never its message, and a child that stopped early is described by a
+  fixed sentence per stop (`AgentResponse.stopped_code`), never by the host's
+  cancel reason.
 - A decision is refused before anything is recorded only when its resume could
   not act on it at all: a linked child with no saved binding
   (`child_binding_missing`) or one too deep (`run_not_permitted`). Recording
@@ -404,8 +411,10 @@ never an empty document. An empty plan settles a batch as `done`, which reads
 exactly like a considered answer of "nothing to propose" — the failure this
 refusal exists to prevent. The exchange is still recorded, and the run is marked
 failed: a thread that omits the answer it did not like cannot explain the retry
-sitting next to it. The run row and the `RunFailed` event name the CODE, not the
-message — the message quotes the values that missed, and an event carrying those
+sitting next to it. (Every failed run's row and `RunFailed` event name the
+exception's class and harness code with a fixed description, never its message:
+the harness has no content capture of its own.) The run row and the `RunFailed`
+event name the CODE, not the message — the message quotes the values that missed, and an event carrying those
 would ship model output to every listener, which is the same reason tool
 arguments are names-only here.
 

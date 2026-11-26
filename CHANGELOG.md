@@ -75,18 +75,36 @@
   context the host wired a subagent tool with are facts of that gate too, so
   they stop the tool inside a turn. The reason the parent model reads is
   written by the harness, never the host's cancel text.
+- A runner start is narrowed from the ledger as its gate read it: steps spent
+  on the run context after that read (by another turn sharing the ledger)
+  count against the child, so the context's `max_steps` holds however the
+  start is timed.
 - A refused start writes nothing: not the child's records (its binding,
   ceiling, references and count), not a run state or run history entry, not
   its mode, not the parent's tree record. A start the gate lets through
   commits in one order: the tree hold, a conditional locked write that
   refuses the start (`exhausted`) when the tree's grant shrank since the
   read; then the child's records, in one locked write that refuses the start
-  (`denied`) when a turn claimed steps on the child since the read, releasing
-  the tree hold; then the run itself. Once committed, a later cancel or
-  time-out only stops its model steps, and its task is recorded as any runner
-  start's is. A read that raises refuses the start as `failed`, naming the
-  exception's class, with nothing written. A child stuck on an approval no
-  decision could act on can be started again.
+  (`denied`) when a turn claimed steps on the child since the read, or when
+  the child now has a pending approval a person could answer (re-read under
+  that lock with the gate's rule), releasing the tree hold; then the run
+  itself. The child's records and its session mode are written together in
+  that one locked write. Until the start's task is recorded, the write is
+  reversible: if anything fails in between (the run's begin, its run state,
+  the tool registry or offer, the plan context), the child's records and mode
+  are put back as they were, in one locked write and only where they are still
+  what the start wrote (a later writer's change is never overwritten), its
+  hold on the child's count goes with them, and the tree hold is released. So
+  a failed start never re-binds a child or revives an approval nobody could
+  answer. Once the task is recorded, a later cancel or time-out only stops its
+  model steps. A read that raises refuses the start as `failed`, naming the
+  exception's class, with nothing written; the answerability read counts only
+  its own answers (no saved binding, too deep) as unanswerable, and any other
+  error refuses the start. A child stuck on an approval no decision could act
+  on can be started again.
+- A tree hold records the start that took it, and only that start releases or
+  hands it over: a re-entrant start (from a `RunStarted` listener) that fails
+  never releases the hold of the start it re-entered.
 - Everything the runner does around a child (building its session, reading
   its thread, its count, the budget arithmetic) is framed: any exception comes
   back to the parent as a `failed` result naming the exception's class (and a
@@ -94,6 +112,27 @@
   text reaches the model. That covers the subagent tool's narrowing of its
   host context and everything inside the child's own run (its store writes,
   its count, its provider client).
+- What the runner tells the parent model is chosen by code from fixed
+  sentences only: the gate's reasons; for a child that stopped early, one
+  sentence per stop (`AgentResponse.stopped_code`, new: `cancelled`, `steps`,
+  `cost`, `cost_unenforceable`, `time`), never `stopped_because`, which keeps
+  the host's own cancel reason for the host; the child agent's spend ceiling as
+  a fixed sentence; and for anything else the exception's class and a code the
+  harness itself raises. A refusal's outcome is one of `denied`, `cancelled`
+  or `exhausted`, anything else is `failed`, and an exception's `code` is read
+  once, guarded. A task lease refused on a cancelled run no longer repeats the
+  cancel reason in its message.
+- A failed run's state (`session.run()["failure"]`) and its `RunFailed` event
+  record the exception's class, the harness error code where there is one, and
+  a fixed description (`"HarnessError (model_step_failed): the run failed."`),
+  never the exception's message: the harness has no content capture of its
+  own, so text a provider, store, host or tool wrote is never kept or emitted.
+  The exception itself still reaches the caller. A schema violation still
+  records its code.
+- `RunBudget` refuses a `max_cost_usd` or `max_seconds` that is NaN, infinite
+  or negative (`ValueError`), and so does `RunBudget.from_config`. A limit
+  forged past the constructor is read as spent by the loop's gate and the start
+  gate, never as no limit.
 - `send_structured()` returns a `StructuredAgentResponse`, with no document,
   when the run parks on an approval or runs out of steps.
 

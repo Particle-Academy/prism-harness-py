@@ -707,7 +707,9 @@ def test_a_cancelled_run_cannot_extend_its_lease() -> None:
         source.extend_lease(claimed, "worker-1", ledger, budget)
 
     assert failure.value.code == "run_not_permitted"
-    assert "the operator stopped it" in failure.value.message
+    # The host's cancel reason stays the host's: never in an exception message.
+    assert "its run was cancelled" in failure.value.message
+    assert "the operator stopped it" not in failure.value.message
 
 
 def test_a_step_exhausted_run_cannot_extend_its_lease() -> None:
