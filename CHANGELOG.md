@@ -74,8 +74,13 @@
   can be started again. The refusal for a turn still holding steps is part of the
   reset's own locked write, and a refused start leaves the child's saved
   records (its binding, ceiling, references and count) unchanged. A runner
-  start whose run is cancelled or out of time by the time it reaches the
-  child is refused before anything is written for it.
+  start whose run is stopped after the runner's pre-check (cancelled, or out
+  of steps, time or an enforceable cost) is refused at a gate immediately
+  before its first write on the child, so those records stay unchanged. Past
+  that gate the start is committed: a later cancel or time-out only stops its
+  model steps, and its task is recorded as any runner start's is. A run tree that
+  cannot fund the delegation refuses it the same way: the tree hold is taken
+  before anything is written on the child.
 - Everything the runner does around a child (building its session, reading
   its thread, its count, the budget arithmetic) is framed: any exception comes
   back to the parent as a `failed` result naming the exception's class (and a
