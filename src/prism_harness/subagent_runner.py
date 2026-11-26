@@ -12,6 +12,7 @@ from prism_harness.modes import AgentMode
 from prism_harness.runtime import AgentRuntime, current_turn_run, current_turn_run_id
 from prism_harness.session import Session
 from prism_harness.subagents import MAX_DEPTH, ChildBinding, RunBudget, RunContext, Subagent
+from prism_harness.thread_rows import pending_approval_ids
 from prism_harness.tools import HarnessTool
 
 __all__ = ["SubagentResult", "SubagentRunner", "SubagentTool"]
@@ -99,6 +100,12 @@ class SubagentRunner:
     ) -> SubagentResult:
         run_id = f"run_{secrets.token_hex(6)}"
 
+        # A delegation with nothing to do is refused before anything is built
+        # or written: an empty task on a child is not an instruction, and on a
+        # parked child it would only continue that run under a new start.
+        if task.strip() == "":
+            return _refused(subagent.name, run_id, parent_run_id, "denied", "the task is empty")
+
         # Checked BEFORE spawning, so an exhausted tree does not pay for a
         # session, a thread write and a provider call to discover it is
         # exhausted.
@@ -160,6 +167,22 @@ class SubagentRunner:
         child = self._harness._pending(parent.participant, child_agent, parent.actor).session(
             subagent.scope_under(parent.scope)
         )
+
+        # A child a person's approval is pending on is never delegated into
+        # again: the new start would answer that approval "not provided" and
+        # move on, so a model could dismiss a person's decision by delegating.
+        # Read only; nothing is written to the child.
+        existing = child.find_thread()
+        if existing is not None and pending_approval_ids(
+            [entry.message for entry in existing.messages()]
+        ):
+            return _refused(
+                subagent.name,
+                run_id,
+                parent_run_id,
+                "denied",
+                "it is waiting on a person's approval",
+            )
 
         # The child's authority comes from ITS mode, not the parent's.
         child.using_mode(subagent.mode)

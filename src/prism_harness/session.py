@@ -327,8 +327,92 @@ class Session:
         started before the ceiling was saved.
 
         Internal: read by the runtime."""
-        ceiling = self._child_field("child_ceiling")
-        return ceiling if type(ceiling) is int and ceiling >= 0 else None
+        state, ceiling = self.child_ceiling_state()
+        return ceiling if state == "valid" else None
+
+    def child_ceiling_state(self) -> tuple[str, int | None]:
+        """Whether this session saved a step ceiling (G-387): ``("valid", n)``
+        for a whole number from 0 to 2^53-1, ``("absent", None)`` when none was
+        ever saved, and ``("garbage", None)`` for any other value, which the
+        runtime fails closed on rather than read as "never saved".
+
+        Internal: read by the runtime."""
+        present, ceiling = self._child_field_raw("child_ceiling")
+        if not present:
+            return "absent", None
+        if type(ceiling) is int and 0 <= ceiling <= _MAX_SAFE_INTEGER:
+            return "valid", ceiling
+        return "garbage", None
+
+    def claim_child_steps(
+        self,
+        run_id: str,
+        now: int,
+        hold_ttl: int,
+        reset: bool,
+        decide: Callable[[int | None], int],
+    ) -> int | None:
+        """Claim steps from the child's delegation budget, in ONE locked write
+        (G-387): the steps this child has used since the runner last started
+        it, counted durably beside its saved ceiling, plus every live hold.
+
+        ``decide`` is handed that count (None when the stored count is not one
+        the harness wrote) and returns how many steps this run holds; the hold
+        is kept under ``run_id`` until :meth:`settle_child_steps`. A hold
+        older than ``hold_ttl`` is charged in full first, so a run that never
+        settles can only over-charge the delegation. ``reset`` (a runner
+        start) begins the count again at 0. Returns the count it decided on.
+
+        Internal: called by the runtime when a run begins."""
+        self._assert_writable()
+        key = self._child_key()
+        found: list[int | None] = [None]
+
+        def change() -> None:
+            stored = self._durable.get(key)
+            current = dict(stored) if isinstance(stored, dict) else {}
+            record: dict[str, Any] | None = (
+                {"steps": 0, "holds": {}}
+                if reset or "child_steps" not in current
+                else _child_steps(current["child_steps"])
+            )
+            if record is None:
+                decide(None)
+                return
+            for hold_id, hold in list(record["holds"].items()):
+                if now - hold["at"] >= hold_ttl:
+                    del record["holds"][hold_id]
+                    record["steps"] += hold["steps"]
+            counted = record["steps"] + sum(hold["steps"] for hold in record["holds"].values())
+            found[0] = counted
+            taken = max(0, decide(counted))
+            if taken > 0:
+                record["holds"][run_id] = {"steps": taken, "at": now}
+            self._durable.put(key, {**current, "child_steps": record})
+
+        self._durable.with_lock(key, change, 10, 5)
+        return found[0]
+
+    def settle_child_steps(self, run_id: str, took: int) -> None:
+        """Replace a run's hold on the child's delegation budget with the steps
+        it took (G-387). A hold already gone (charged in full when it expired)
+        changes nothing.
+
+        Internal: called by the runtime when a run ends, parks or fails."""
+        self._assert_writable()
+        key = self._child_key()
+
+        def change() -> None:
+            stored = self._durable.get(key)
+            current = dict(stored) if isinstance(stored, dict) else {}
+            record = _child_steps(current.get("child_steps"))
+            if record is None or run_id not in record["holds"]:
+                return
+            del record["holds"][run_id]
+            record["steps"] += max(0, took)
+            self._durable.put(key, {**current, "child_steps": record})
+
+        self._durable.with_lock(key, change, 10, 5)
 
     def remember_child_binding(
         self, binding: dict[str, Any], depth: int = 0, ceiling: int | None = None
@@ -378,6 +462,14 @@ class Session:
             return stored[name]
         legacy = self._durable.get(self._durable_key()) or {}
         return legacy.get(name)
+
+    def _child_field_raw(self, name: str) -> tuple[bool, Any]:
+        """Whether a child field was saved at all, and its value."""
+        stored = self._durable.get(self._child_key())
+        if isinstance(stored, dict) and name in stored:
+            return True, stored[name]
+        legacy = self._durable.get(self._durable_key()) or {}
+        return (name in legacy), legacy.get(name)
 
     def _write_child(self, fields: dict[str, Any]) -> None:
         """One locked change to the child key. A field never written there yet
@@ -633,3 +725,31 @@ def _stored_pair(value: object, first: str, second: str) -> dict[str, str] | Non
         return None
     a, b = value.get(first), value.get(second)
     return {first: a, second: b} if isinstance(a, str) and a and isinstance(b, str) and b else None
+
+
+_MAX_SAFE_INTEGER = 2**53 - 1
+
+
+def _whole(value: object) -> bool:
+    return type(value) is int and 0 <= value <= _MAX_SAFE_INTEGER
+
+
+def _child_steps(value: object) -> dict[str, Any] | None:
+    """A child's durable step count as the harness writes it, copied, or None
+    for anything else."""
+    if not isinstance(value, dict) or not _whole(value.get("steps")):
+        return None
+    holds = value.get("holds")
+    if not isinstance(holds, dict):
+        return None
+    copied: dict[str, dict[str, int]] = {}
+    for hold_id, hold in holds.items():
+        if (
+            not isinstance(hold_id, str)
+            or not isinstance(hold, dict)
+            or not _whole(hold.get("steps"))
+            or type(hold.get("at")) is not int
+        ):
+            return None
+        copied[hold_id] = {"steps": hold["steps"], "at": hold["at"]}
+    return {"steps": value["steps"], "holds": copied}
