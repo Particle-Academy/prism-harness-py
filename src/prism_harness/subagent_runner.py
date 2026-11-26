@@ -255,12 +255,11 @@ class SubagentRunner:
             # Its agent's ceiling is spent, or cannot be enforced: a gate on the
             # tree, not the child's failure, and only that agent stops.
             stopped = child_context.ledger.exhaustion(child_context.budget)
-            if stopped is not None and (
-                child_context.ledger.cancelled or stopped.startswith("time budget")
-            ):
-                # Cancelled or out of time after the pre-check: refused by the
-                # runtime before it wrote anything, and framed as the pre-check
-                # frames it.
+            if stopped is not None and error.code == "run_not_permitted":
+                # Stopped after the pre-check (cancelled, or out of steps, time
+                # or an enforceable cost): refused by the runtime at its gate,
+                # before the child's records were written, and framed as the
+                # pre-check frames it.
                 return _refused(
                     subagent.name,
                     run_id,

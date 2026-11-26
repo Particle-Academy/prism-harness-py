@@ -672,13 +672,12 @@ class AgentRuntime:
                 "reporting rather than executing."
             )
 
-        if kind == "runner" and (run.ledger.cancelled or _time_spent(run)):
-            # A runner start whose run was cancelled, or ran out of time,
-            # after the runner's own pre-check is refused before anything is
-            # written: no run state, no tree hold, no binding, ceiling, count
-            # or references on the child.
+        if kind == "runner" and run.ledger.exhaustion(run.budget) is not None:
+            # A runner start whose run was stopped after the runner's own
+            # pre-check (cancelled, out of steps, time or an enforceable cost)
+            # is refused before anything is written for it.
             raise HarnessError.run_not_permitted(
-                "This run may not proceed: its run tree is cancelled or out of time."
+                "This run may not proceed: its run tree is stopped."
             )
 
         session.begin_run(
@@ -760,6 +759,19 @@ class AgentRuntime:
             begin_steps = run.ledger.steps
             self._trees.members[run_id]["begin_steps"] = begin_steps
             self._trees.members[run_id]["child_claim"] = claimed
+            if (
+                context is not None
+                and runner_binding is not None
+                and run.ledger.exhaustion(run.budget) is not None
+            ):
+                # The runner start's gate, IMMEDIATELY before its first durable
+                # write on the child: a stop that landed since the check above
+                # (during begin_run or its listeners) refuses the start with
+                # the child's records unchanged. Past this point the start is
+                # committed: a later stop only ends its model steps.
+                raise HarnessError.run_not_permitted(
+                    "This run may not proceed: its run tree is stopped."
+                )
             if context is not None and runner_binding is not None:
                 # The runner is starting a child: save its binding, its depth
                 # and its step ceiling, and the run tree and plan budget it
@@ -861,13 +873,15 @@ class AgentRuntime:
             offered, plan_gates = self._with_plan_tools(session, mode, offered, scope)
             called: list[str] = []
 
-            if run.ledger.cancelled or _time_spent(run):
+            if kind != "runner" and (run.ledger.cancelled or _time_spent(run)):
                 # A cancelled tree, or a context whose time is spent, acts on
                 # no decision (an approval or a denial) and records no new
                 # prompt: an approved call never runs after its tree was
                 # cancelled or its time ran out. The decisions stay recorded
                 # for a later resume that can act; the loop ends the run on the
-                # cancellation or the time before any model step.
+                # cancellation or the time before any model step. A runner
+                # start is committed once past its gate, so it records its task
+                # as any runner start does, and the loop's gate stops it.
                 return self._loop(
                     session,
                     mode,

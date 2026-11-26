@@ -65,7 +65,7 @@ def start_again(world: World) -> Any:
     parent = world.fresh().root()
     subagent = world.runtime.mode_for(parent).subagents["worker"]
     return SubagentRunner(world.harness, world.runtime).run(
-        subagent, parent, RunContext.root("root2", RunBudget(8)), "root2", "Again."
+        subagent, parent, RunContext.root("root2", RunBudget(8, max_seconds=60)), "root2", "Again."
     )
 
 
@@ -75,8 +75,7 @@ def stop(context: RunContext, how: str) -> None:
     elif how == "steps":
         context.ledger.record_steps(100)
     elif how == "time":
-        object.__setattr__(context, "budget", RunBudget(8, max_seconds=1))
-        context.ledger._started_at -= 100
+        context.ledger._started_at -= 100  # its 60 s run out
     else:
         object.__setattr__(context, "budget", RunBudget(8, max_cost_usd=1.0))
         context.ledger.record_cost(None)
