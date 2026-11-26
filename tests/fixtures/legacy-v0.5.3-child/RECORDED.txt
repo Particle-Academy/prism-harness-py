@@ -1,0 +1,12 @@
+A FileSessionStore directory written by RELEASED prism-harness-py v0.5.3
+(tag v0.5.3, 5019668), not by hand: a root turn on session "support" of
+User "ada" delegated to subagent "worker" (declared max_steps 2, mode "work"
+with max_steps 8), and the child parked on an approval for "echo" after one
+model step. v0.5.3 saves nothing about the child beyond its thread and
+ephemeral half: no binding, no ceiling, no run tree references, and its
+parked row carries no harness_binding or harness_steps_used.
+
+Recorded with record_v053_child.py.txt (renamed so no tool collects it):
+    git worktree add --detach <dir> v0.5.3
+    python -I record_v053_child.py <dir>/src <output directory>
+Read by tests/test_step_allowance_r3.py.
