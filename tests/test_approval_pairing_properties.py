@@ -67,6 +67,7 @@ from prism_harness import (
 from prism_harness.thread_rows import pending_approval_ids
 
 REPEATED = "Tool call was not run because another call in this step has the same id"
+SUPERSEDED = "Not run: a later step replaced it."
 NO_DECISION = "No approval response provided"
 DEFAULT_DENIAL = "User denied tool execution"
 
@@ -187,10 +188,11 @@ class Case:
 
 
 #: The rows G-397 records between the park and the decisions (``Thread.record``
-#: is public). An assistant row or a user row ends the step a decision may
-#: apply to: every decision after it is refused, and the resume closes the
-#: step's calls as undecided. A system row, or a tool result for a call that is
-#: not in the step, changes nothing.
+#: is public, and the host records them with no run id). An assistant row or a
+#: user row ends the step a decision may apply to and SUPERSEDES it (DECISION
+#: B): every decision after it is refused, each call a request was paired with
+#: is denied once, and the resume closes any other as undecided. A system row,
+#: or a tool result for a call that is not in the step, changes nothing.
 INSERTED: dict[str, dict[str, Any]] = {
     "assistant": {
         "type": "assistant",
@@ -301,6 +303,25 @@ class Expected:
     repeated: bool = False
 
 
+def asked_calls(case: Case) -> set[int]:
+    """The calls an approval request is paired with, by position: each
+    request, in stored order, takes the first call in call order with its id
+    that has no request yet and no prior result. A live step's requests are
+    its gated calls."""
+    if case.path == "live":
+        return {i for i, c in enumerate(case.calls) if c.gated}
+    taken: set[int] = set()
+    for request in case.requests:
+        free = [
+            i
+            for i, c in enumerate(case.calls)
+            if c.id == request.tool_call_id and i not in taken and not c.prior
+        ]
+        if free:
+            taken.add(free[0])
+    return taken
+
+
 def oracle(case: Case) -> Expected:
     ids = [c.id for c in case.calls]
     if case.path == "live":
@@ -310,19 +331,26 @@ def oracle(case: Case) -> Expected:
         asked = [r.tool_call_id for r in case.requests]
     repeated = len(set(ids)) != len(ids) or len(set(asked)) != len(asked)
     expected = Expected(repeated=repeated)
+    asked_for = asked_calls(case)
 
-    for call in case.calls:
+    for index, call in enumerate(case.calls):
         if not call.gated:
             continue
         if call.prior:
             expected.outcomes[call.token] = f"prior:{call.token}"
             continue
+        if case.inserted in ENDS_THE_STEP:
+            # A host-recorded assistant or user row supersedes the step
+            # (DECISION B): each call a request was paired with is denied
+            # once; any other is closed undecided by the resume, and no
+            # decision applies after it (G-397).
+            if index in asked_for:
+                expected.outcomes[call.token] = SUPERSEDED
+            else:
+                expected.outcomes[call.token] = REPEATED if repeated else NO_DECISION
+            continue
         if repeated:
             expected.outcomes[call.token] = REPEATED
-            continue
-        if case.inserted in ENDS_THE_STEP:
-            # No decision applies once the step has ended (G-397).
-            expected.outcomes[call.token] = NO_DECISION
             continue
         if case.path == "live":
             decision, reason = call.decision, call.reason

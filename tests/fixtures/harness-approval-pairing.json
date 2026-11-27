@@ -3,7 +3,7 @@
   "schema_version": 1,
   "corpus_version": "0.2.0",
   "generated_by": "Hand-written expectations (G-392), written before any language ran. Each language's runner drives its real runtime offline with a fake model and asserts the outcome equals `expected`; `result` records those measured outcomes.",
-  "pins_note": "Whether each approval decision reaches exactly the call it was issued for. Tools: `echo` (gated by mode, integer arg `n`) and `free` (ungated). The fake model's first reply is the row's `calls` in order; every later reply is the text `done`. Each round decides the listed approvals, by index into the parked step's pending approvals in issue order, as one batch where the language has one, then resumes once with an empty prompt; a decision the harness refuses is swallowed and the row continues. Recorded: `approvals` (how many approvals the first step issued), `free` (times the ungated tool ran), `ran` (the sorted `n` of every echo that ran) and (0.2.0) `decided`: the decision the thread RECORDED for each approval the first step issued, in issue order, the first answer or null when none was recorded. On a step whose call ids repeat, every recorded decision is a denial whatever was decided.",
+  "pins_note": "Whether each approval decision reaches exactly the call it was issued for. Tools: `echo` (gated by mode, integer arg `n`) and `free` (ungated). The fake model's first reply is the row's `calls` in order; every later reply is the text `done`. Each round decides the listed approvals, by index into the parked step's pending approvals in issue order, as one batch where the language has one, then resumes once with an empty prompt; a decision the harness refuses is swallowed and the row continues. Recorded: `approvals` (how many approvals the first step issued), `free` (times the ungated tool ran), `ran` (the sorted `n` of every echo that ran) and (0.2.0) `decided`: the decision the thread RECORDED for each approval the first step issued, in issue order, the first answer or null when none was recorded. On a step whose call ids repeat, every recorded decision is a denial whatever was decided. Rows with `supersede` (0.2.0, DECISION B) first write a row that supersedes the parked step (`assistant_tool_step`, `assistant_text`, `user`, recorded by a host, or `new_message` sent through the harness), then run the rounds, and also record `outcomes`: the first result each call of the first step ended with, in call order, or null.",
   "cases": [
     {
       "id": "apr-0001",
@@ -959,6 +959,270 @@
           "ran": [],
           "decided": [
             false
+          ]
+        },
+        "ts": null,
+        "py": null
+      },
+      "agrees": false
+    },
+    {
+      "id": "apr-0016",
+      "title": "a later assistant step with tool calls supersedes the parked step",
+      "since": "0.2.0",
+      "notes": "DECISION B (G-387 round 13). A host records an assistant row with a tool call (`later`, `free`, no arguments) after the park. Each gated call of the parked step with no result gets exactly ONE result, `Not run: a later step replaced it.`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused (no decision recorded), and the run is resumed once anyway.",
+      "supersede": "assistant_tool_step",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "c2",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": [],
+        "decided": [
+          null,
+          null
+        ],
+        "outcomes": [
+          "Not run: a later step replaced it.",
+          "Not run: a later step replaced it."
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Not run: a later step replaced it.",
+            "Not run: a later step replaced it."
+          ]
+        },
+        "ts": null,
+        "py": null
+      },
+      "agrees": false
+    },
+    {
+      "id": "apr-0017",
+      "title": "a later assistant text row recorded outside the run supersedes the parked step",
+      "since": "0.2.0",
+      "notes": "DECISION B (G-387 round 13). A host records an assistant text row `A later answer.` after the park (outside the run that owns the step). Each gated call of the parked step with no result gets exactly ONE result, `Not run: a later step replaced it.`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused (no decision recorded), and the run is resumed once anyway.",
+      "supersede": "assistant_text",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "c2",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": [],
+        "decided": [
+          null,
+          null
+        ],
+        "outcomes": [
+          "Not run: a later step replaced it.",
+          "Not run: a later step replaced it."
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Not run: a later step replaced it.",
+            "Not run: a later step replaced it."
+          ]
+        },
+        "ts": null,
+        "py": null
+      },
+      "agrees": false
+    },
+    {
+      "id": "apr-0018",
+      "title": "a later user row recorded outside the run supersedes the parked step",
+      "since": "0.2.0",
+      "notes": "DECISION B (G-387 round 13). A host records a user row `A later message.` after the park (outside the run that owns the step). Each gated call of the parked step with no result gets exactly ONE result, `Not run: a later step replaced it.`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused (no decision recorded), and the run is resumed once anyway.",
+      "supersede": "user",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "c2",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": [],
+        "decided": [
+          null,
+          null
+        ],
+        "outcomes": [
+          "Not run: a later step replaced it.",
+          "Not run: a later step replaced it."
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Not run: a later step replaced it.",
+            "Not run: a later step replaced it."
+          ]
+        },
+        "ts": null,
+        "py": null
+      },
+      "agrees": false
+    },
+    {
+      "id": "apr-0019",
+      "title": "a new message supersedes the parked step",
+      "since": "0.2.0",
+      "notes": "DECISION B (G-387 round 13). The session is sent the new message `Something else.` after the park, through the harness. Each gated call of the parked step with no result gets exactly ONE result, `Not run: a later step replaced it.`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused (no decision recorded), and the run is resumed once anyway.",
+      "supersede": "new_message",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "c2",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": [],
+        "decided": [
+          null,
+          null
+        ],
+        "outcomes": [
+          "Not run: a later step replaced it.",
+          "Not run: a later step replaced it."
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Not run: a later step replaced it.",
+            "Not run: a later step replaced it."
           ]
         },
         "ts": null,

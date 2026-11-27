@@ -32,7 +32,9 @@ from prism_harness import (
     ModeRegistry,
     Participant,
     PrismHarness,
+    ToolCallInput,
     ToolRegistry,
+    assistant_row,
     record_approval,
 )
 
@@ -114,6 +116,17 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
     runtime = AgentRuntime(client=client, modes=modes, tools=tools)
 
     pending = runtime.send(session, "go").pending_approvals
+    # DECISION B (0.2.0): a row that supersedes the parked step, recorded by a
+    # host (outside the run that owns the step), or a new message.
+    supersede = row.get("supersede")
+    if supersede == "assistant_tool_step":
+        session.thread().record([assistant_row("", [ToolCallInput("later", "free", {})])])
+    elif supersede == "assistant_text":
+        session.thread().record([assistant_row("A later answer.", [])])
+    elif supersede == "user":
+        session.thread().record([{"type": "user", "content": "A later message."}])
+    elif supersede == "new_message":
+        runtime.send(session, "Something else.")
     for round_ in row["rounds"]:
         for index, approved in round_:
             try:
@@ -132,12 +145,27 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
             continue
         for response in entry.message.get("tool_approval_responses", []):
             recorded.setdefault(response["approval_id"], response["approved"] is True)
-    return {
+    outcome: dict[str, Any] = {
         "approvals": len(pending),
         "free": free.count,
         "ran": sorted(ran),
         "decided": [recorded.get(approval.id) for approval in pending],
     }
+    if "supersede" in row:
+        # The result each call of the first step ended with, in call order:
+        # its first result, or None.
+        first: dict[str, str] = {}
+        after = False
+        for entry in session.thread().messages():
+            message = entry.message
+            if message.get("type") == "assistant" and message.get("tool_calls") and not after:
+                after = True
+                continue
+            if after and message.get("type") == "tool_result":
+                for result in message.get("tool_results", []):
+                    first.setdefault(result["tool_call_id"], result["result"])
+        outcome["outcomes"] = [first.get(call["id"]) for call in row["calls"]]
+    return outcome
 
 
 def test_has_rows() -> None:
