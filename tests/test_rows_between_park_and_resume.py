@@ -240,3 +240,75 @@ def test_a_retry_after_a_failed_model_step_does_not_run_an_approved_call_again()
 
     assert counts == {"echo": 1}
     assert outcomes(session)["P"] == ["echo:P"]
+
+
+# -- who recorded the row ------------------------------------------------------
+#
+# A text or user row supersedes the parked step when it is recorded OUTSIDE the
+# run that owns the step. In this runtime every such row recorded after the
+# park and before the step is resolved is outside it: the run that parked
+# returned and writes nothing more, and a resuming run resolves the step FIRST
+# (inside the session lock), before it records the person's prompt or the
+# model's answer. So no run id is consulted; a row cannot be made "inside" by
+# carrying the parking run's id, which Thread.record accepts from any caller.
+
+
+@pytest.mark.parametrize("shape", ["text", "structured"])
+def test_the_runtimes_own_answer_after_resolving_does_not_supersede_the_step(shape: str) -> None:
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    runtime = a_runtime(once([LlmToolCall("p", "echo", {"value": "P"})]), counts, 4)
+    schema = {
+        "name": "answer",
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"],
+    }
+
+    def answers(request: LlmRequest) -> LlmResponse:
+        if request.schema is not None:
+            return LlmResponse(text='{"ok": true}', finish_reason="stop", structured={"ok": True})
+        return LlmResponse(text="Done.", finish_reason="stop")
+
+    first = runtime.send(session, "go")
+    record_approval(session, first.pending_approvals[0].id, True)
+    resuming = a_runtime(answers, counts, 4)
+    for _ in range(3):
+        if shape == "structured":
+            resuming.send_structured(session, "", schema)
+        else:
+            resuming.send(session, "")
+
+    assert counts == {"echo": 1}
+    assert outcomes(session) == {"P": ["echo:P"]}
+    # The answer rows are the resuming runs' own.
+    answers_recorded = [
+        entry
+        for entry in session.thread().messages()
+        if entry.message["type"] == "assistant" and not entry.message.get("tool_calls")
+    ]
+    assert len(answers_recorded) == 3
+    assert all(entry.run_id is not None for entry in answers_recorded)
+
+
+@pytest.mark.parametrize("kind", ["assistant_text", "user"])
+@pytest.mark.parametrize("run", ["parking-run", "no-run", "invented-run"])
+def test_a_text_or_user_row_recorded_by_a_host_supersedes_whatever_run_id_it_carries(
+    kind: str, run: str
+) -> None:
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    runtime = a_runtime(once([LlmToolCall("p", "echo", {"value": "P"})]), counts, 4)
+
+    first = runtime.send(session, "go")
+    parked = session.run()
+    assert parked is not None
+    # Thread.record is public and takes any run id, the parking run's included.
+    run_id = {"parking-run": parked["id"], "no-run": None, "invented-run": "run-x"}[run]
+    session.thread().record([INSERTED[kind]], run_id)
+    record_approval(session, first.pending_approvals[0].id, True)
+    runtime.send(session, "")
+    runtime.send(session, "")
+
+    assert counts == {}
+    assert outcomes(session) == {"P": [REPLACED]}
