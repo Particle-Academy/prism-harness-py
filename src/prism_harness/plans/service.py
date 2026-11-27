@@ -694,4 +694,13 @@ def _report_quietly(failure: BaseException) -> None:
     """Report a failure by its class only. A store error's message can carry the
     data it was writing, which here would be plan text the model wrote, and
     plan text never goes into a log."""
-    _log.warning("A plan update failed: %s.", type(failure).__name__)
+    _log.warning("A plan update failed: %s.", _label(failure))
+
+
+def _label(failure: BaseException) -> str:
+    """A class named by the identifier rule (G-387 rounds 10 and 11): never a
+    forged name carrying a path. Imported here, not at the top: the failures
+    module reads the plan refusals."""
+    from prism_harness.failures import class_label
+
+    return class_label(failure)

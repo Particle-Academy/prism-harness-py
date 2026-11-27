@@ -107,6 +107,15 @@
   and the attempted run is absent from its run history. So is the session
   mode it writes: `session.mode()` reads the mode from before the start until
   the task row exists, and a mode the host sets afterwards reads as set.
+  The start's OWN run is the one exception: from its commit to the end of that
+  run, every reader of the Session object the run uses (a tool provider or
+  factory, the authorizer, the plan service, a tool body) reads what the
+  start committed, its mode, binding, run tree references, depth, ceiling and
+  run, so host code that decides tools from `session.mode()` sees the mode the
+  child runs in. Every reader outside that run (another Session object, a
+  host turn or a decision, even one entered from inside the run) keeps the
+  provisional rule. The view is held in memory only and cleared with the run,
+  before a failed start is cleaned up.
   Absent never widens anything: while a start is unconfirmed the child still
   reads as in the run tree and shared plan budget it was last CONFIRMED in,
   so a later start the host drives keeps them, and the child's turns stay
@@ -118,7 +127,14 @@
   would refuse, and no later turn acts on it either. A call it ended reads as
   ended, never as approved (a plan reading the thread sees no decision on
   it), and the `ToolDenied` events for those calls are emitted only after the
-  task row recording them is durable.
+  task row recording them is durable and the start is marked recorded, so a
+  listener that raises cannot undo a start whose task row exists. "Ended by a
+  start" is recognised only by `harness_ended_by_start`, a field the harness
+  writes on the row that closes those calls, naming the approval ids it
+  ended, and only for the approvals the turn before it asked for: never by a
+  result's text (a tool may return any text) and never by a tool call id
+  (providers reuse them across turns), so a person's approval of a call that
+  ran, or of a later call under a reused id, always stands.
 - A decision a person recorded that a resume could still act on (an approved
   or denied call with no result yet, on a child whose approvals are
   answerable) refuses a runner start exactly like a pending one
@@ -131,7 +147,9 @@
   `HarnessError`'s constructor, or whose `code` or `document` raises, is
   named by its class and skips none of it. A `BaseException` that is not an
   `Exception` (host code stopping the process) still releases the start's and
-  the run's holds and marks the run failed, and propagates unchanged. A read that raises refuses the start as `failed`, naming the
+  the run's holds, marks the run failed and emits `RunFailed` (its class
+  only), and propagates unchanged. The harness's own log lines name a class
+  by the same identifier rule as a failed run. A read that raises refuses the start as `failed`, naming the
   exception's class, with nothing written; the answerability read counts only
   its own answers (no saved binding, too deep) as unanswerable, and any other
   error refuses the start. A child stuck on an approval no decision could act

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -90,6 +92,11 @@ class Session:
         self._cached_state: dict[str, Any] | None = None
         self._resolution_only = False
         self._resolved_mode: str | None = None
+        # The runner start whose OWN run uses this Session object (G-387
+        # round 11), and which Session objects count as this one: the
+        # read-only views copied from it share the lineage.
+        self._lineage = secrets.token_hex(8)
+        self._own_start: str | None = None
         self._lock_store = self._ephemeral
         if address_index is not None and store_lock_rank(durable) > store_lock_rank(ephemeral):
             self._lock_store = self._durable
@@ -150,7 +157,8 @@ class Session:
     def mode(self) -> str | None:
         """The session's mode. One a runner start wrote is ABSENT until that
         start's task row is in the thread (G-387 round 10), like every other
-        record the start writes: the mode it replaced is read meanwhile."""
+        record the start writes: the mode it replaced is read meanwhile. The
+        start's OWN run reads it on its own Session (round 11)."""
         if self._resolved_mode is not None:
             return self._resolved_mode
         return self._mode_of(self.state())
@@ -158,7 +166,7 @@ class Session:
     def _mode_of(self, state: Mapping[str, Any]) -> str | None:
         if _MODE_PROVISIONAL in state:
             mark = state[_MODE_PROVISIONAL]
-            if not (type(mark) is str and mark != "" and mark in self._task_runs()):
+            if not (type(mark) is str and mark != "" and self._mark_confirmed(mark)):
                 # Unconfirmed: the mode before the start. A mark that is not a
                 # run id never confirms, and reads as no mode at all.
                 prior = state.get(_MODE_PRIOR) if type(mark) is str and mark != "" else None
@@ -708,7 +716,47 @@ class Session:
         if _PROVISIONAL not in stored:
             return True
         run_id = stored[_PROVISIONAL]
-        return type(run_id) is str and run_id != "" and run_id in self._task_runs()
+        return type(run_id) is str and run_id != "" and self._mark_confirmed(run_id)
+
+    def _mark_confirmed(self, run_id: str) -> bool:
+        """Whether a ``provisional`` mark naming ``run_id`` reads as confirmed
+        HERE: inside that start's own run, on its own Session (G-387 round
+        11), or anywhere once its task row is in the thread."""
+        return self._own_run_is(run_id) or run_id in self._task_runs()
+
+    def _own_run_is(self, run_id: str) -> bool:
+        """Whether this Session object is the one a runner start's own run
+        ``run_id`` uses, and that run is the one in progress in this context.
+        Every other reader (a fresh Session, another thread, or an entry point
+        such as a host turn or a decision, which leaves the start's run
+        first) keeps the provisional rule."""
+        return (
+            self._own_start is not None
+            and run_id == self._own_start
+            and _OWN_START.get() == (self._lineage, run_id)
+        )
+
+    def enter_own_start(self, run_id: str) -> Callable[[], None]:
+        """The resolved view of a runner start's OWN run (G-387 round 11):
+        from its commit (b) to the end of that run, every reader of this
+        Session object in that run reads what the start committed (its mode,
+        binding, refs, depth, ceiling and run), as if its task row already
+        existed. Nothing is written. Returns the leave, which clears it and
+        is safe to call twice.
+
+        Internal: entered by the runtime."""
+        self._own_start = run_id
+        token = _OWN_START.set((self._lineage, run_id))
+        left = [False]
+
+        def leave() -> None:
+            if left[0]:
+                return
+            left[0] = True
+            self._own_start = None
+            _OWN_START.reset(token)
+
+        return leave
 
     def _task_runs(self) -> set[str]:
         """The run ids the thread holds a task row (a user row) for. Read
@@ -823,7 +871,7 @@ class Session:
         if not isinstance(run, dict) or not isinstance(run.get("id"), str):
             return None
         if _PROVISIONAL in run and not (
-            run.get(_PROVISIONAL) == run["id"] and run["id"] in self._task_runs()
+            run.get(_PROVISIONAL) == run["id"] and self._mark_confirmed(run["id"])
         ):
             previous = run.get(_PREVIOUS)
             return (
@@ -969,7 +1017,7 @@ class Session:
         if (
             isinstance(recorded, dict)
             and _PROVISIONAL in recorded
-            and not (recorded.get(_PROVISIONAL) == run_id and run_id in self._task_runs())
+            and not (recorded.get(_PROVISIONAL) == run_id and self._mark_confirmed(run_id))
         ):
             return None
         tree = recorded.get("tree") if isinstance(recorded, dict) else None
@@ -1097,6 +1145,26 @@ class Session:
                 **extra,
             },
         )
+
+
+#: The runner start whose own run is in progress in this context, with the
+#: lineage of the Session object it uses (G-387 round 11). An entry point that
+#: is not that run (a turn, a decision) clears it for its own duration.
+_OWN_START: ContextVar[tuple[str, str] | None] = ContextVar("prism_harness_own_start", default=None)
+
+
+@contextmanager
+def outside_any_start() -> Iterator[None]:
+    """An entry point that is not a runner start's own run: a host turn, a
+    resume, a decision. Every reader in it keeps the provisional rule, even
+    on the Session object a start's run is using (G-387 round 11).
+
+    Internal: entered by the runtime."""
+    token = _OWN_START.set(None)
+    try:
+        yield
+    finally:
+        _OWN_START.reset(token)
 
 
 def _refs_pair(value: object) -> dict[str, dict[str, str] | None]:

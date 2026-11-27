@@ -517,7 +517,7 @@ class RunTrees:
         try:
             store.with_lock(key, undo, 10, 5)
         except Exception as failure:  # noqa: BLE001 - the hold is charged in full once it expires
-            _log.warning("A run tree hold release failed: %s.", type(failure).__name__)
+            _log.warning("A run tree hold release failed: %s.", _label(failure))
 
     def committed(self, member: Mapping[str, Any], run_id: str | None = None) -> None:
         """A runner start's commit finished (its task is recorded): the tree
@@ -562,7 +562,7 @@ class RunTrees:
         try:
             _write(session.plan_store(), entry["tree"], settle)
         except Exception as failure:  # noqa: BLE001 - the hold is charged in full once it expires
-            _log.warning("A run tree budget update failed: %s.", type(failure).__name__)
+            _log.warning("A run tree budget update failed: %s.", _label(failure))
 
 
 def saved_tree(row: Mapping[str, Any] | None) -> Tree | None:
@@ -626,3 +626,12 @@ def _write(
 
 def _key(tree: Tree) -> str:
     return f"{tree['session']}:run-tree:{tree['run']}"
+
+
+def _label(failure: BaseException) -> str:
+    """A class named by the identifier rule (G-387 rounds 10 and 11): never a
+    forged name carrying a path. Imported here, not at the top: the failures
+    module reads the plan refusals."""
+    from prism_harness.failures import class_label
+
+    return class_label(failure)

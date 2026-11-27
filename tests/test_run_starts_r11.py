@@ -32,7 +32,7 @@ import pytest
 from test_agent_plans import Rig as PlanRig
 from test_agent_plans import draft
 from test_run_starts import direct
-from test_run_starts_r8 import is_child
+from test_run_starts_r8 import is_child, live_holds
 from test_run_starts_r9 import (
     fail_the_undo,
     listening,
@@ -65,6 +65,7 @@ from prism_harness import (
 )
 from prism_harness.plans.service import Plans
 from prism_harness.plans.thread_facts import approval_decisions
+from prism_harness.run_trees import RunTrees
 from prism_harness.thread_rows import DELEGATION_ENDED, ended_approval_ids, pending_approval_ids
 
 
@@ -588,7 +589,8 @@ def test_an_outside_entry_point_on_the_same_session_keeps_the_provisional_rule()
             found["inside_binding"] = session.child_binding() is not None
             refused_as_unbound(lambda: record_approval(session, approval, True))
             refused_as_unbound(lambda: world.runtime.send(session, ""))
-            found["checked"] = True
+            # Back inside the run once the entry point returns.
+            found["checked"] = session.child_binding() is not None
         return original(self, session, prompt, *args)
 
     with pytest.MonkeyPatch.context() as patch:
@@ -621,3 +623,111 @@ def test_the_own_run_view_is_cleared_when_the_run_ends() -> None:
     assert own.child_provisional()
     assert own.mode() is None
     assert own.run() is None
+
+
+# -- new channels ----------------------------------------------------------------
+
+
+def test_a_mark_naming_another_turns_approval_ends_nothing() -> None:
+    """A mark ends only the approvals of the turn before it: one naming an
+    earlier turn's approval (a stale or forged row) ends nothing."""
+    world = World()
+    world.run_child_in_runner("worker")
+    (first,) = world.pending(world.child("worker"))
+    record_approval(world.fresh().child("worker"), first, True)
+    world.fresh().runtime.send(world.child("worker"), "")  # runs, then parks again
+    rows = rows_of(world)
+    assert world.pending(world.child("worker"))
+    forged = [
+        *rows,
+        {
+            "type": "tool_result",
+            "tool_results": [],
+            "tool_approval_responses": [],
+            "harness_ended_by_start": [first],
+        },
+    ]
+
+    assert first not in ended_approval_ids(forged)
+    assert approval_decisions(forged).get(first) is True
+
+
+def test_another_thread_reads_the_starts_own_session_by_the_provisional_rule() -> None:
+    import threading
+
+    world = World()
+    found: dict[str, Any] = {}
+    original = Plans.context
+
+    def hooked(self: Plans, session: Session, prompt: str, *args: Any) -> str:
+        if is_child(session) and not found:
+            found["inside"] = session.child_binding() is not None
+
+            def other() -> None:
+                session._cached_state = None
+                found["other"] = session.child_binding()
+                found["other_mode"] = session.mode()
+
+            worker = threading.Thread(target=other)
+            worker.start()
+            worker.join()
+        return original(self, session, prompt, *args)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Plans, "context", hooked)
+        assert "Child answer." in start(world, "direct", "New task.")
+
+    assert found == {"inside": True, "other": None, "other_mode": None}
+
+
+def test_a_failure_after_the_task_row_never_undoes_the_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tree hand-over raising after the task row: the run fails, and the
+    start's records stand (its task row is in the thread)."""
+    world = World()
+    undone: list[str] = []
+    original_undo = Session.undo_child_start
+
+    def spying(self: Session, run_id: str, handle: Any) -> None:
+        undone.append(run_id)
+        original_undo(self, run_id, handle)
+
+    def failing(self: RunTrees, member: Any, run_id: str | None = None) -> None:
+        raise OSError("store down")
+
+    monkeypatch.setattr(Session, "undo_child_start", spying)
+    monkeypatch.setattr(RunTrees, "committed", failing)
+
+    text = start(world, "direct", "New task.", answer=False)
+
+    assert "did not run: OSError" in text
+    assert undone == []
+    child = world.fresh().child("worker")
+    assert not child.child_provisional()
+    assert child.child_binding() is not None
+
+
+def test_a_run_failed_listener_that_raises_cannot_skip_the_holds() -> None:
+    world = World()
+    approval = dead_approval_child(world)
+    world.fresh()
+    events = HarnessEvents()
+
+    class Other(BaseException):
+        pass
+
+    def abort(event: HarnessEvent) -> None:
+        if isinstance(event, RunFailed):
+            raise Other()
+
+    events.listen(abort)
+    world.runtime._events = events
+
+    with pytest.MonkeyPatch.context() as patch:
+        raise_from_the_child_tools(patch, Abort)
+        with pytest.raises(Other):
+            direct(world, world.root(), RunContext.root("host", RunBudget(8)), "Again.")
+
+    assert live_holds(world) == {}
+    refused_as_unbound(lambda: record_approval(world.fresh().child("worker"), approval, True))

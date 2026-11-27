@@ -35,7 +35,7 @@ from prism_harness.plans.service import Plans
 from prism_harness.run_budgets import allowance, fail_closed, steps_used
 from prism_harness.run_starts import StartRefused, gate
 from prism_harness.run_trees import RunTrees, kept_refs, saved_refs
-from prism_harness.session import CHILD_TURN_LIVE, Session
+from prism_harness.session import CHILD_TURN_LIVE, Session, outside_any_start
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import (
     MAX_DEPTH,
@@ -47,6 +47,7 @@ from prism_harness.subagents import (
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     DELEGATION_ENDED,
+    ENDED_BY_START,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
@@ -622,6 +623,22 @@ class AgentRuntime:
         additional_content: Sequence[object] = (),
         schema: dict[str, Any] | None = None,
     ) -> AgentResponse:
+        # A turn is never a runner start's OWN run, even one entered from
+        # inside one (a hook or a host callback sending on a session): every
+        # reader in it keeps the provisional rule until its own start, if it
+        # is one, commits (G-387 round 11).
+        with outside_any_start():
+            return self._run_turn(session, prompt, tool_names, context, additional_content, schema)
+
+    def _run_turn(
+        self,
+        session: Session,
+        prompt: str,
+        tool_names: Sequence[str] | None,
+        context: RunContext | None,
+        additional_content: Sequence[object],
+        schema: dict[str, Any] | None,
+    ) -> AgentResponse:
         # Refused before a run exists: a bad attachment is a mistake in the call,
         # and it should not cost a run, events or budget.
         attachments = admit_attachments(prompt, additional_content)
@@ -705,6 +722,12 @@ class AgentRuntime:
             if kind == "runner"
             else None
         )
+        # Committed: from here to the end of its run, the start's own run
+        # reads what it committed on its own Session (G-387 round 11): its
+        # mode, binding, refs, depth, ceiling and run. Every other reader
+        # keeps the provisional rule until the task row. Left before any
+        # failure is cleaned up, so the cleanup reads as any outside reader.
+        leave_own = session.enter_own_start(run_id) if started is not None else _nothing
         try:
             # The run itself: for a runner start, only now that it is committed
             # (its mode was written with the child's records, in (b)).
@@ -739,6 +762,7 @@ class AgentRuntime:
             # Every exception, a BaseException included (G-387 round 10):
             # releasing the start's holds does not depend on what was raised,
             # and the exception still propagates.
+            leave_own()
             if started is not None:
                 # The run could not begin: the child is put back as it was,
                 # and the start's tree hold released. Housekeeping: the
@@ -913,8 +937,9 @@ class AgentRuntime:
                     session, mode, offered, run_id, called, scope is not None and scope[1]
                 )
 
+            ended: list[ToolCallInput] = []
             if prompt != "" and started is not None:
-                self._record_task(session, mode, run_id, prompt, attachments)
+                ended = self._record_task(session, mode, run_id, prompt, attachments)
             elif prompt != "":
                 # With attachments, the shape prism-ai-core's UserMessage.to_dict()
                 # writes: the media parts, then the turn's own text as a trailing
@@ -937,9 +962,21 @@ class AgentRuntime:
                 # authority that confirms the start's provisional writes;
                 # dropping the mark is housekeeping, and its failure changes
                 # nothing.
-                self._trees.committed(member, run_id)
+                # Marked recorded FIRST, right after the write and before any
+                # event (G-387 round 11): a listener that raises or re-enters
+                # never makes a start whose task row exists be undone.
                 started = None
+                self._trees.committed(member, run_id)
                 _quietly(lambda: session.confirm_child_start(run_id))
+            # Only now, with the row that ended them durable and the start
+            # marked recorded, the decision events for the calls it ended.
+            for call in ended:
+                try:
+                    self._tool_decision(ToolDenied, session, run_id, call, None, "policy")
+                except Exception as problem:  # noqa: BLE001 - the task row is recorded either way
+                    logging.getLogger(__name__).warning(
+                        "A tool decision event failed: %s.", class_label(problem)
+                    )
 
             return self._loop(
                 session,
@@ -969,6 +1006,7 @@ class AgentRuntime:
             # CLEANUP FIRST, and every step on its own: an exception whose
             # attributes cannot be read (a host subclass that never ran the
             # base constructor, a getter that raises) must not skip any of it.
+            leave_own()
             if started is not None:
                 # Failed before its task was recorded: the child is put back
                 # as it was before the start, and the tree hold released.
@@ -996,17 +1034,34 @@ class AgentRuntime:
             # Not an Exception (G-387 round 10): host code stopping the
             # process. What does not depend on the exception still runs (the
             # start's holds and the run's own holds released, the run marked
-            # failed by class), and it propagates unchanged.
+            # failed by class, and RunFailed emitted naming the class only, so
+            # a listener never sees a run start with no end: round 11), and it
+            # propagates unchanged.
+            leave_own()
             if started is not None:
                 self._undo_start(session, member, run_id, started)
             failure = _failure(error)
             _quietly(lambda: session.fail_run(run_id, failure))
             _quietly(lambda: self._settle_child(session, run_id))
             _quietly(lambda: self._trees.finished(session, run_id))
+            # Last: a listener's own BaseException cannot skip the holds.
+            _quietly(
+                lambda: self._emit(
+                    RunFailed(
+                        run_id=run_id,
+                        session_key=session.key(),
+                        failure=failure,
+                        steps=run.ledger.steps,
+                        at=_now(),
+                        harness_agent=session.agent,
+                    )
+                )
+            )
             raise
         finally:
             if turn_token is not None:
                 _TURN_RUN.reset(turn_token)
+            leave_own()
 
     def _start_child(
         self,
@@ -1154,7 +1209,7 @@ class AgentRuntime:
                 session.undo_child_start(run_id, written)
             except Exception as failure:  # noqa: BLE001 - charged in full once it expires
                 logging.getLogger(__name__).warning(
-                    "A child start could not be undone: %s.", type(failure).__name__
+                    "A child start could not be undone: %s.", class_label(failure)
                 )
         _quietly(lambda: self._trees.release_start(session, member, run_id))
 
@@ -1165,12 +1220,17 @@ class AgentRuntime:
         run_id: str,
         prompt: str,
         attachments: Sequence[object],
-    ) -> None:
+    ) -> list[ToolCallInput]:
         """A runner start's task row (G-387 round 9). It ENDS every call still
         pending on the child: each is recorded as not run, in the same write
         as the task, so no decision recorded on it (before the start, or by
         anyone while it ran) is ever acted on, by this start or any later
-        turn. Under the session lock, reading the pending calls inside it."""
+        turn. Under the session lock, reading the pending calls inside it.
+
+        The row closing them carries :data:`ENDED_BY_START`, the approval ids
+        it ended (round 11): the only thing that marks them ended. Returns the
+        calls it ended; their events are the caller's, once the start is
+        marked recorded."""
         turn: dict[str, Any] = (
             {"type": "user", "content": prompt}
             if not attachments
@@ -1187,15 +1247,20 @@ class AgentRuntime:
             rows: list[dict[str, Any]] = []
             work = self._unresolved(live, mode)
             if work is not None:
-                calls, results, decisions, _, _, _ = work
+                calls, results, decisions, approval_ids, _, _ = work
                 closed: list[dict[str, Any]] = []
+                approvals: list[str] = []
                 for row in calls:
                     call = ToolCallInput(
                         id=row["id"], name=row["name"], arguments={}, result_id=row["result_id"]
                     )
                     ended.append(call)
                     closed.append(tool_result_entry(call, _DELEGATION_ENDED))
-                rows.append(tool_result_row([*results.values(), *closed], list(decisions.values())))
+                    if row["id"] in approval_ids:
+                        approvals.append(approval_ids[row["id"]])
+                closing = tool_result_row([*results.values(), *closed], list(decisions.values()))
+                closing[ENDED_BY_START] = list(dict.fromkeys(approvals))
+                rows.append(closing)
             live.thread().record([*rows, turn], run_id)
 
         options = self._settings(session)
@@ -1204,13 +1269,7 @@ class AgentRuntime:
             options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
             options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
         )
-        for call in ended:
-            try:
-                self._tool_decision(ToolDenied, session, run_id, call, None, "policy")
-            except Exception as failure:  # noqa: BLE001 - the task row is recorded either way
-                logging.getLogger(__name__).warning(
-                    "A tool decision event failed: %s.", type(failure).__name__
-                )
+        return ended
 
     def _allowance_facts(
         self,
@@ -1886,7 +1945,7 @@ class AgentRuntime:
             session.settle_child_steps(run_id, took)
         except Exception as failure:  # noqa: BLE001 - the hold is charged in full once it expires
             logging.getLogger(__name__).warning(
-                "A child step count update failed: %s.", type(failure).__name__
+                "A child step count update failed: %s.", class_label(failure)
             )
 
     def _emit(self, event: HarnessEvent) -> None:
@@ -1923,8 +1982,12 @@ def _quietly(step: Callable[[], object]) -> None:
         step()
     except Exception as failure:  # noqa: BLE001 - cleanup reports, never raises
         logging.getLogger(__name__).warning(
-            "A failed run's cleanup step failed: %s.", type(failure).__name__
+            "A failed run's cleanup step failed: %s.", class_label(failure)
         )
+
+
+def _nothing() -> None:
+    """The leave of a turn that is not a runner start: it entered no view."""
 
 
 def _failure(error: BaseException) -> str:
@@ -2104,7 +2167,10 @@ def _record_decision(
             run["id"] if run else None,
         )
 
-    session.lock(write, ttl_seconds, wait_seconds)
+    # A decision is never a runner start's own run: it reads the child's
+    # records by the provisional rule, even from inside one (G-387 round 11).
+    with outside_any_start():
+        session.lock(write, ttl_seconds, wait_seconds)
 
 
 def assert_decidable(session: Session, rows: Sequence[Mapping[str, Any]]) -> None:
