@@ -1,0 +1,684 @@
+{
+  "suite": "harness-approval-pairing",
+  "schema_version": 1,
+  "corpus_version": "0.1.0",
+  "generated_by": "Hand-written expectations (G-392), written before any language ran. Each language's runner drives its real runtime offline with a fake model and asserts the outcome equals `expected`; `result` records those measured outcomes.",
+  "pins_note": "Whether each approval decision reaches exactly the call it was issued for. Tools: `echo` (gated by mode, integer arg `n`) and `free` (ungated). The fake model's first reply is the row's `calls` in order; every later reply is the text `done`. Each round decides the listed approvals, by index into the parked step's pending approvals in issue order, as one batch where the language has one, then resumes once with an empty prompt; a decision the harness refuses is swallowed and the row continues. Recorded: `approvals` (how many approvals the first step issued), `free` (times the ungated tool ran) and `ran` (the sorted `n` of every echo that ran).",
+  "cases": [
+    {
+      "id": "apr-0001",
+      "title": "distinct ids: deny the first, approve the second",
+      "since": "0.1.0",
+      "notes": "Control. Each call is decided by its own approval, so only the approved call runs and the denied one never does.",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "c2",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            false
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": [
+          2
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [
+            2
+          ]
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [
+            2
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [
+            2
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0002",
+      "title": "distinct ids: approve the first, deny the second",
+      "since": "0.1.0",
+      "notes": "Control, the other order. A decision must reach the call its approval names and never its neighbour.",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "c2",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            false
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": [
+          1
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [
+            1
+          ]
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [
+            1
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [
+            1
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0003",
+      "title": "distinct ids: approve both",
+      "since": "0.1.0",
+      "notes": "Control. Two distinct, approved calls both run; the guard must not deny a step whose ids are unique.",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "c2",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": [
+          1,
+          2
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [
+            1,
+            2
+          ]
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [
+            1,
+            2
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [
+            1,
+            2
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0004",
+      "title": "one id for both calls: deny the first, approve the second",
+      "since": "0.1.0",
+      "notes": "Two calls in one step share a tool call id, so a decision cannot be paired with one call. No gated call in the step runs, whatever was decided.",
+      "calls": [
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            false
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": []
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0005",
+      "title": "one id for both calls: approve the first, deny the second",
+      "since": "0.1.0",
+      "notes": "The same shared id with the decisions reversed. Neither call runs: an approval must never be applied to a call it was not issued for.",
+      "calls": [
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            false
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": []
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0006",
+      "title": "one id for both calls: approve both",
+      "since": "0.1.0",
+      "notes": "Both approvals granted on a step whose call ids repeat. The step is still denied: approving everything must not make an ambiguous step runnable.",
+      "calls": [
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": []
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0007",
+      "title": "empty ids on both calls: approve both",
+      "since": "0.1.0",
+      "notes": "An empty id counts as a repeat. Two calls with empty ids are as ambiguous as two with one id, and neither runs.",
+      "calls": [
+        {
+          "id": "",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": []
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0008",
+      "title": "three calls, two sharing an id: approve all three",
+      "since": "0.1.0",
+      "notes": "A repeat anywhere in the step denies every gated call in it, including the one whose id is unique. A partial pairing is never attempted.",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "dup",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        },
+        {
+          "id": "dup",
+          "name": "echo",
+          "args": {
+            "n": 3
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ],
+          [
+            2,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 3,
+        "free": 0,
+        "ran": []
+      },
+      "result": {
+        "php": {
+          "approvals": 3,
+          "free": 0,
+          "ran": []
+        },
+        "ts": {
+          "approvals": 3,
+          "free": 0,
+          "ran": []
+        },
+        "py": {
+          "approvals": 3,
+          "free": 0,
+          "ran": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0009",
+      "title": "an ungated call shares the gated calls' id: approve both",
+      "since": "0.1.0",
+      "notes": "The ungated call runs at once, as an ungated call always does, and asks nothing. The two gated calls sharing its id never run, whatever was decided.",
+      "calls": [
+        {
+          "id": "dup",
+          "name": "free",
+          "args": {}
+        },
+        {
+          "id": "dup",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "dup",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 1,
+        "ran": []
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 1,
+          "ran": []
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 1,
+          "ran": []
+        },
+        "py": {
+          "approvals": 2,
+          "free": 1,
+          "ran": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0010",
+      "title": "one id for both calls: deny the first, then approve the second in a later round",
+      "since": "0.1.0",
+      "notes": "Decisions arrive one round at a time. Once the first decision settles the step, a later approval cannot revive the other call; a refused decision is swallowed and the row continues.",
+      "calls": [
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            false
+          ]
+        ],
+        [
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": []
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0011",
+      "title": "one id for both calls: approve the first, then approve the second in a later round",
+      "since": "0.1.0",
+      "notes": "Two approvals in separate rounds on a step whose call ids repeat. Neither call runs, and no later decision or resume must revive one.",
+      "calls": [
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "weather",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ]
+        ],
+        [
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": []
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": []
+        }
+      },
+      "agrees": true
+    }
+  ]
+}
