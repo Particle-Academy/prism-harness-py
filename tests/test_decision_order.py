@@ -3,7 +3,8 @@
 Two decisions for the same approval id (a double click, two reviewers, a retry
 racing the original) must not both be recorded. And a thread that already holds
 two -- written before this was enforced -- is read the same way everywhere:
-the FIRST recorded decision is the one that counts.
+the FIRST recorded decision is the one that counts, except that ANY DENY IS
+FINAL (G-401): a deny recorded after an approve revokes it.
 """
 
 from __future__ import annotations
@@ -189,7 +190,10 @@ def test_a_deny_recorded_before_an_approve_stands(separate: bool) -> None:
     assert "no" in str(rig.requests[-1].messages)
 
 
-def test_an_approve_recorded_before_a_deny_stands() -> None:
+def test_a_deny_recorded_after_an_approve_revokes_it() -> None:
+    """ANY DENY IS FINAL (G-401, the recommended rule, G-387 round 15): a
+    deny recorded after an approve that has not been acted on revokes it.
+    This pinned "the approve stands" before round 15."""
     rig = Rig()
     approval = rig.pause()
     _record(
@@ -203,4 +207,4 @@ def test_an_approve_recorded_before_a_deny_stands() -> None:
 
     rig.agent.send(rig.session, "")
 
-    assert rig.ran == ["x"]
+    assert rig.ran == []

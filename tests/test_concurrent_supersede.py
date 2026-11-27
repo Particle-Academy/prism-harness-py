@@ -1,21 +1,23 @@
-"""G-404 (G-387 round 14): a SUPERSEDE never races the resolution of a step.
+"""G-404 (G-387 rounds 14 and 15): a SUPERSEDE never races the resolution of a step.
 
 A row that supersedes a parked step (DECISION B: a new message, or a host's
 user or assistant row) denies each of its calls that has no result, "Tool
 call was not run because a later step replaced it". The resolver runs an
-approved call and records its result under the session lock. Unserialised,
-a superseding write landing WHILE the approved call ran gave that call two
-outcomes, the false "not run" first.
+approved call and records its result. Unserialised, a superseding write
+landing WHILE the approved call ran gave that call two outcomes, the false
+"not run" first.
 
-The rule: a superseding write and the resolver are serialised. The resolver
-claims the step's calls in the thread itself before it runs any of them; a
-superseding row recorded while the claim stands is refused
-(``session_locked``) with nothing written, whoever records it and through
-whatever object, and a new message waits on the session lock the resolver
-holds. The replaced denial and the superseding row are ONE write, and every
-pending reader honours the superseded mark. Every gated call ends with
-exactly one outcome, and a decision on a replaced step is refused in every
-window.
+The rule (round 15, the write-ahead STARTED row, option (i)): immediately
+before the resolver runs an approved call it records a started row for that
+call, in one write with the check that the call is still open. A superseding
+write treats a call with a started row and no result as ANSWERED-IN-PROGRESS:
+it writes no denial for it, and it is NEVER refused and never waits on the
+session lock, whoever records it and through whatever object (a tool
+recording on its own session included). The call's real result carries the
+step's mark and pairs to it wherever it lands: exactly one stored outcome per
+call. A started call that never gets a result reads "interrupted, it may have
+run" and never runs again. The replaced denial and the superseding row are
+ONE write, and every pending reader honours the superseded mark.
 
 Deterministic: every interleaving is forced by a hook inside the approved
 tool or around a store write, never by timing. Each wait has a generous
@@ -24,6 +26,7 @@ bound only so a regression fails instead of hanging.
 
 from __future__ import annotations
 
+import json
 import socket
 import threading
 from collections.abc import Callable, Iterator
@@ -36,9 +39,16 @@ from prism_harness import AgentRuntime, HarnessError, Session, record_approval
 from prism_harness.plans.thread_facts import approval_decisions
 from prism_harness.stores.file import FileSessionStore
 from prism_harness.thread_rows import (
+    ANSWERS_STEP,
+    INTERRUPTED_RESULT,
+    STARTED,
     SUPERSEDED,
     SUPERSEDED_RESULT,
+    answers_step,
+    call_results,
+    owned_rows,
     pending_approval_ids,
+    step_calls,
     superseded_approval_ids,
 )
 
@@ -104,10 +114,29 @@ def outcomes(session: Session, n: int) -> list[str]:
     ]
 
 
+def stored_outcomes(session: Session) -> dict[int, list[str]]:
+    """The FIRST step's calls' outcomes as every reader attributes them: by
+    call index, from the rows the step OWNS (its segment and every row marked
+    for it), each distinct outcome once (a resolution row restates)."""
+    readable = session.thread().rows()
+    step = next(i for i, row in enumerate(readable) if step_calls(row))
+    found: dict[int, list[str]] = {}
+    for row in owned_rows(readable, step):
+        for index, entry in call_results(step_calls(readable[step]), [row]).items():
+            if entry["result"] not in found.get(index, []):
+                found.setdefault(index, []).append(entry["result"])
+    return found
+
+
 def approved_and_parked(world: Hooked) -> str:
     _, approvals = park(world, ("c1", "echo", {"n": 1}))
     record_approval(world.fresh().root(), approvals[0], True)
     return approvals[0]
+
+
+def step_position(world: Hooked) -> int:
+    entries = world.fresh().root().thread().messages()
+    return next(e for e in entries if e.message["type"] == "assistant").position
 
 
 def in_thread(
@@ -118,10 +147,10 @@ def in_thread(
     def run() -> None:
         try:
             found["value"] = work()
+            found["done"] = True
         except BaseException as error:  # noqa: BLE001 - reported to the test
             found["error"] = error
         finally:
-            found["done"] = True
             if progress is not None:
                 progress.set()
 
@@ -132,47 +161,60 @@ def in_thread(
 # -- PR2: a new message while the approved call runs ------------------------------
 
 
-def test_pr2_a_new_message_while_the_approved_call_runs_waits_for_its_result(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("where", ["another_worker", "inside_the_tool"])
+def test_pr2_a_new_message_while_the_approved_call_runs_never_waits_and_denies_nothing(
+    where: str,
 ) -> None:
     world = Hooked()
     approval = approved_and_parked(world)
-    other = other_worker(world)
-    other.text("B answer.")
-    reached = threading.Event()
-    sender, found = in_thread(lambda: other.runtime.send(other.root(), "A new message."), reached)
-    original_lock = Session.lock
-
-    def lock(self: Session, *args: Any, **kwargs: Any) -> Any:
-        # B reaching the session lock A holds: it waits there.
-        if threading.current_thread() is sender:
-            reached.set()
-        return original_lock(self, *args, **kwargs)
-
-    monkeypatch.setattr(Session, "lock", lock)
+    # lock_wait 0: a new message that touched the session lock the resolver
+    # holds would be refused at once. It must never touch it.
+    other: Recording = world
+    if where == "another_worker":
+        other = Recording()
+        other.directory = world.directory
+    other.config = {"lock_wait": 0}
+    other.fresh()
+    attempt: dict[str, Any] = {}
 
     def during() -> None:
-        sender.start()
-        # A keeps the call running until B is waiting on the lock, or (the
-        # defect) B has finished its whole turn without waiting.
-        assert reached.wait(BOUND)
+        other.text("B answer.")
+        sender, found = in_thread(lambda: other.runtime.send(other.root(), "A new message."))
+        if where == "another_worker":
+            sender.start()
+            sender.join(BOUND)
+            attempt.update(found)
+        else:
+            try:
+                attempt["value"] = other.runtime.send(other.root(), "A new message.")
+                attempt["done"] = True
+            except HarnessError as error:
+                attempt["error"] = error
+        attempt["request"] = other.requests[-1] if other.requests else None
 
     world.during = during
     world.text("A answer.")
     world.fresh().runtime.send(world.root(), "")
-    sender.join(BOUND)
-    assert found.get("done"), "B never finished"
-    assert "error" not in found, found.get("error")
+    assert attempt.get("done"), attempt
+    assert "error" not in attempt, attempt.get("error")
 
     stored = rows(world.fresh().root())
-    # Exactly one outcome: the real result.
+    # Exactly one outcome: the real result; no denial, no lock error.
     assert world.ran_with == [("echo", {"n": 1})]
     assert outcomes(world.root(), 1) == ["echo:1"]
     assert superseded_approval_ids(stored) == set()
     assert approval_decisions(stored) == {approval: True}
-    # B's turn was shown the call's real result, never a "not run".
-    replay = str(other.requests[-1].messages)
-    assert "echo:1" in replay and SUPERSEDED_RESULT not in replay
+    assert "Could not acquire the lock" not in str(stored)
+    # B's turn, taken while the call ran, was shown it as in progress (it
+    # may have run), never as "not run".
+    replay = str(attempt["request"].messages)
+    assert "A new message." in replay
+    assert INTERRUPTED_RESULT in replay and SUPERSEDED_RESULT not in replay
+    # The next provider request shows the real result, once.
+    world.text("Again.")
+    world.fresh().runtime.send(world.root(), "Next.")
+    replay = str(world.requests[-1].messages)
+    assert replay.count("echo:1") == 1 and INTERRUPTED_RESULT not in replay
 
 
 # -- PR1: a host row while the approved call runs ---------------------------------
@@ -193,12 +235,24 @@ HOST_ROWS: dict[str, dict[str, Any]] = {
         "additional_content": {},
         "tool_approval_requests": [],
     },
+    # A later step reusing the running call's id, tool AND arguments: the
+    # result must still pair to the call that ran, never to this one.
+    "assistant_step_same_call": {
+        "type": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c1", "name": "echo", "arguments": {"n": 1}}],
+        "additional_content": {},
+        "tool_approval_requests": [],
+    },
+    "system": {"type": "system", "content": "A note."},
 }
 
 
 @pytest.mark.parametrize("where", ["another_worker", "inside_the_tool"])
 @pytest.mark.parametrize("kind", sorted(HOST_ROWS))
-def test_pr1_a_host_row_while_the_approved_call_runs_is_refused(kind: str, where: str) -> None:
+def test_pr1_a_host_row_while_the_approved_call_runs_is_recorded_and_denies_nothing(
+    kind: str, where: str
+) -> None:
     world = Hooked()
     approval = approved_and_parked(world)
     attempt: dict[str, Any] = {}
@@ -213,35 +267,69 @@ def test_pr1_a_host_row_while_the_approved_call_runs_is_refused(kind: str, where
             worker.start()
             worker.join(BOUND)
             attempt.update(found)
-        else:
-            try:
-                record()
-                attempt["done"] = True
-            except HarnessError as error:
-                attempt["error"] = error
+            return
+        try:
+            record()
+            attempt["done"] = True
+        except HarnessError as error:
+            attempt["error"] = error
 
     world.during = during
     world.text("Done.")
     world.fresh().runtime.send(world.root(), "")
 
-    error = attempt.get("error")
-    assert isinstance(error, HarnessError) and error.code == "session_locked", attempt
+    # Recorded at once: never refused, never waiting on the resolver.
+    assert attempt.get("done") and "error" not in attempt, attempt
     stored = rows(world.fresh().root())
-    # Nothing of the refused row was written, and the call has ONE outcome.
-    assert not any(row.get("content") in ("A later message.", "An aside.") for row in stored)
+    if "content" in HOST_ROWS[kind] and HOST_ROWS[kind]["content"]:
+        assert HOST_ROWS[kind]["content"] in [row.get("content") for row in stored]
+    # The call has ONE outcome, its real result, and nothing reads replaced.
     assert world.ran_with == [("echo", {"n": 1})]
-    assert outcomes(world.root(), 1) == ["echo:1"]
+    assert stored_outcomes(world.root()) == {0: ["echo:1"]}
     assert superseded_approval_ids(stored) == set()
     assert approval_decisions(stored) == {approval: True}
-    # Once the resolution is over the same row records, and supersedes nothing.
-    world.fresh().root().thread().record([dict(HOST_ROWS[kind])])
-    assert [row for row in rows(world.root()) if SUPERSEDED in row] == []
-    assert outcomes(world.root(), 1) == ["echo:1"]
+    # Nothing runs again, through any number of resumes.
+    for _ in range(2):
+        world.text("Again.")
+        world.fresh().runtime.send(world.root(), "")
+    assert world.ran_with == [("echo", {"n": 1})]
+    assert stored_outcomes(world.root()) == {0: ["echo:1"]}
 
 
-def test_a_host_row_before_the_resolution_claims_the_call_still_supersedes_it() -> None:
-    """The claim covers only a resolution in progress: a host row recorded
-    before a resume still replaces the step (one denial, nothing runs)."""
+def test_a_result_landing_after_a_later_step_still_pairs_to_its_call() -> None:
+    """A host step reusing the call's id, tool and arguments, recorded while
+    the call runs: the result lands after it, carries the step's mark, and
+    answers the call that ran; the later call is never credited with it."""
+    world = Hooked()
+    approved_and_parked(world)
+
+    def during() -> None:
+        world.root().thread().record([dict(HOST_ROWS["assistant_step_same_call"])])
+
+    world.during = during
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+
+    entries = world.fresh().root().thread().messages()
+    stored = [entry.message for entry in entries]
+    steps = [i for i, row in enumerate(stored) if step_calls(row)]
+    assert len(steps) == 2
+    answer = next(row for row in stored if row["type"] == "tool_result" and row["tool_results"])
+    assert stored.index(answer) > steps[1]
+    assert answer[ANSWERS_STEP] == {"position": entries[steps[0]].position}
+    assert list(answer)[-1] == ANSWERS_STEP
+    readable = world.root().thread().rows()
+    earlier = call_results(step_calls(readable[steps[0]]), owned_rows(readable, steps[0]))
+    later = call_results(step_calls(readable[steps[1]]), owned_rows(readable, steps[1]))
+    assert [entry["result"] for entry in earlier.values()] == ["echo:1"]
+    # The host's later call never ran and never took the result: the run's
+    # own answer, recorded outside the run that wrote it, replaced it.
+    assert [entry["result"] for entry in later.values()] == [SUPERSEDED_RESULT]
+
+
+def test_a_host_row_before_the_call_starts_still_supersedes_it() -> None:
+    """Only a STARTED call is answered-in-progress: a host row recorded before
+    a resume still replaces the step (one denial, nothing runs)."""
     world = Hooked()
     approval = approved_and_parked(world)
     world.fresh().root().thread().record([dict(HOST_ROWS["user"])])
@@ -253,11 +341,69 @@ def test_a_host_row_before_the_resolution_claims_the_call_still_supersedes_it() 
     assert superseded_approval_ids(rows(world.root())) == {approval}
 
 
-def test_a_resolution_that_dies_inside_the_call_releases_its_claim() -> None:
-    """A resolver that dies inside the call (even on a BaseException) never
-    leaves the session refusing every later row."""
+def test_a_supersede_between_the_read_and_the_started_row_wins() -> None:
+    """The started row is written in one step with the check that the call
+    is still open: a superseding row that landed after the resolver read the
+    step but before the started row denies it, and the call never runs."""
     world = Hooked()
-    approved_and_parked(world)
+    approval = approved_and_parked(world)
+    original = AgentRuntime._start_call
+
+    def start_call(*args: Any, **kwargs: Any) -> bool:
+        world.root().thread().record([dict(HOST_ROWS["user"])])
+        return original(*args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(AgentRuntime, "_start_call", staticmethod(start_call))
+        world.text("Done.")
+        world.fresh().runtime.send(world.root(), "")
+
+    assert world.ran_with == []
+    assert outcomes(world.root(), 1) == [SUPERSEDED_RESULT]
+    assert superseded_approval_ids(rows(world.root())) == {approval}
+    assert not any(STARTED in row for row in rows(world.root()))
+
+
+def test_the_started_row_is_the_reference_shape() -> None:
+    world = Hooked()
+    approval = approved_and_parked(world)
+    position = step_position(world)
+    seen: list[str] = []
+
+    def during() -> None:
+        started = world.root().thread().messages()[-1].message
+        seen.append(json.dumps(started, separators=(",", ":")))
+
+    world.during = during
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+    assert seen == [
+        json.dumps(
+            {
+                "type": "tool_result",
+                "tool_results": [],
+                "tool_approval_responses": [],
+                "harness_started": {
+                    "tool_call_id": "c1",
+                    "tool_name": "echo",
+                    "approval_id": approval,
+                },
+                "harness_answers_step": {"position": position},
+            },
+            separators=(",", ":"),
+        )
+    ]
+    # Neither mark is ever replayed, and the started row is not replayed.
+    replay = str(world.requests[-1].messages)
+    assert STARTED not in replay and ANSWERS_STEP not in replay
+
+
+# -- a crash or timeout: the started call reads interrupted ------------------------
+
+
+def test_a_started_call_that_never_got_a_result_reads_interrupted_and_never_runs_again() -> None:
+    world = Hooked()
+    approval = approved_and_parked(world)
 
     class Crash(BaseException):
         pass
@@ -268,9 +414,57 @@ def test_a_resolution_that_dies_inside_the_call_releases_its_claim() -> None:
     world.during = crash
     with pytest.raises(Crash):
         world.fresh().runtime.send(world.root(), "")
-    # The claim is released on the way out, even on a BaseException.
-    world.fresh().root().thread().record([dict(HOST_ROWS["user"])])
-    assert outcomes(world.root(), 1) == [SUPERSEDED_RESULT]
+
+    stored = rows(world.fresh().root())
+    assert [row for row in stored if STARTED in row]
+    assert pending_approval_ids(stored) == []
+    with pytest.raises(HarnessError) as caught:
+        record_approval(world.fresh().root(), approval, True)
+    assert caught.value.code == "approval_not_pending"
+    # Resumed, and then superseded: it never runs again and is never "not run".
+    for prompt in ("", "", "Something else."):
+        world.text("Done.")
+        world.fresh().runtime.send(world.root(), prompt)
+    assert world.ran_with == [("echo", {"n": 1})]  # the one run, that crashed
+    assert outcomes(world.root(), 1) == []
+    assert superseded_approval_ids(rows(world.root())) == set()
+    for request in world.requests[-3:]:
+        replay = str(request.messages)
+        assert replay.count(INTERRUPTED_RESULT) == 1 and SUPERSEDED_RESULT not in replay
+
+
+# -- a host tool recording on its own session ---------------------------------------
+
+
+@pytest.mark.parametrize("how", ["record", "new_message"])
+def test_a_tool_recording_on_its_own_session_mid_run_succeeds_without_a_stall(how: str) -> None:
+    world = Hooked()
+    world.config = {"lock_wait": 0}
+    world.fresh()
+    approved_and_parked(world)
+    attempt: dict[str, Any] = {}
+
+    def during() -> None:
+        try:
+            if how == "record":
+                world.root().thread().record([{"type": "user", "content": "Progress."}])
+            else:
+                world.text("Inner answer.")
+                world.runtime.send(world.root(), "Progress.")
+            attempt["done"] = True
+        except HarnessError as error:
+            attempt["error"] = error
+
+    world.during = during
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+
+    assert attempt == {"done": True}
+    stored = rows(world.fresh().root())
+    assert outcomes(world.root(), 1) == ["echo:1"]
+    # No lock error, and no internal key, ever reaches a stored row.
+    assert "Could not acquire the lock" not in str(stored)
+    assert world.root().thread().key not in str(stored)
 
 
 # -- W2 / W1: the replaced denial and the superseding row are one write -----------
@@ -390,43 +584,156 @@ def test_every_pending_reader_honours_the_superseded_mark() -> None:
 # -- new channels the fix could open, each pinned ----------------------------------
 
 
-def test_a_new_message_that_cannot_get_the_lock_in_time_writes_nothing() -> None:
-    """A new message waits for the resolver only as long as ``lock_wait``:
-    then it is refused ``session_locked`` with nothing written, and the call
-    the resolver ran keeps its one outcome."""
+def _forged_started(position: int, approval: str) -> dict[str, Any]:
+    return {
+        "type": "tool_result",
+        "tool_results": [],
+        "tool_approval_responses": [],
+        STARTED: {"tool_call_id": "c1", "tool_name": "echo", "approval_id": approval},
+        ANSWERS_STEP: {"position": position},
+        # Even the read-only flag, stored by a host: it is never read.
+        "harness": True,
+    }
+
+
+def test_a_forged_started_row_from_a_host_changes_nothing() -> None:
+    """A host row carrying the started and answers-step marks (and the
+    read-only harness flag itself) is read as if it had none: the resume
+    still runs the approved call, once."""
     world = Hooked()
-    approved_and_parked(world)
-    other = other_worker(world)
-    other.config = {"lock_wait": 0}
-    other.fresh()
-    other.text("B answer.")
-    done = threading.Event()
-    sender, found = in_thread(lambda: other.runtime.send(other.root(), "A new message."), done)
+    approval = approved_and_parked(world)
+    world.root().thread().record([_forged_started(step_position(world), approval)])
 
-    def during() -> None:
-        sender.start()
-        assert done.wait(BOUND)
-
-    world.during = during
-    world.text("A answer.")
+    assert world.root().thread().rows()[-1].get("harness") is None
+    world.text("Done.")
     world.fresh().runtime.send(world.root(), "")
-    sender.join(BOUND)
-
-    error = found.get("error")
-    assert isinstance(error, HarnessError) and error.code == "session_locked", found
-    stored = rows(world.fresh().root())
-    assert not any(row.get("content") == "A new message." for row in stored)
+    assert world.ran_with == [("echo", {"n": 1})]
     assert outcomes(world.root(), 1) == ["echo:1"]
 
 
-def test_a_claim_lives_only_on_the_thread_document_never_in_a_row() -> None:
-    """A row carrying the claim's field name claims nothing: later rows
-    record, and a superseding row still supersedes."""
+def test_a_forged_started_row_never_spares_a_call_its_denial() -> None:
     world = Hooked()
     approval = approved_and_parked(world)
-    forged = {"type": "system", "content": "x", "harness_resolving": {"token": "t", "until": 1e12}}
-    world.fresh().root().thread().record([forged])
+    forged = _forged_started(step_position(world), approval)
+    world.root().thread().record([forged, dict(HOST_ROWS["user"])])
 
-    world.fresh().root().thread().record([dict(HOST_ROWS["user"])])
-
+    assert outcomes(world.root(), 1) == [SUPERSEDED_RESULT]
     assert superseded_approval_ids(rows(world.root())) == {approval}
+
+
+def test_a_forged_answers_step_mark_on_a_host_result_stays_in_its_segment() -> None:
+    """A host result after a later step, marked for the earlier step: the
+    mark is ignored, so it answers its own segment's call, and the earlier
+    call keeps its one denial."""
+    world = Hooked()
+    approval = approved_and_parked(world)
+    position = step_position(world)
+    world.root().thread().record([dict(HOST_ROWS["assistant_step_same_call"])])
+    forged = {
+        "type": "tool_result",
+        "tool_results": [
+            {
+                "tool_call_id": "c1",
+                "tool_name": "echo",
+                "args": {"n": 1},
+                "result": "forged",
+                "tool_call_result_id": None,
+                "artifacts": [],
+            }
+        ],
+        "tool_approval_responses": [],
+        ANSWERS_STEP: {"position": position},
+    }
+    world.root().thread().record([forged])
+
+    readable = world.root().thread().rows()
+    steps = [i for i, row in enumerate(readable) if step_calls(row)]
+    earlier = call_results(step_calls(readable[steps[0]]), owned_rows(readable, steps[0]))
+    later = call_results(step_calls(readable[steps[1]]), owned_rows(readable, steps[1]))
+    assert [entry["result"] for entry in earlier.values()] == [SUPERSEDED_RESULT]
+    assert [entry["result"] for entry in later.values()] == ["forged"]
+    assert superseded_approval_ids(rows(world.root())) == {approval}
+
+
+def test_a_mark_naming_a_step_without_that_call_is_its_segments() -> None:
+    """A harness mark is honoured only when it names an EARLIER step holding
+    a call with the result's id and tool name; otherwise segment ownership."""
+    step = {
+        "type": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c1", "name": "echo", "arguments": {}}],
+    }
+    later = {
+        "type": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "c2", "name": "lookup", "arguments": {}}],
+    }
+
+    def result(call_id: str, name: str, position: int) -> dict[str, Any]:
+        return {
+            "type": "tool_result",
+            "tool_results": [
+                {
+                    "tool_call_id": call_id,
+                    "tool_name": name,
+                    "args": {},
+                    "result": "r",
+                    "tool_call_result_id": None,
+                    "artifacts": [],
+                }
+            ],
+            "tool_approval_responses": [],
+            ANSWERS_STEP: {"position": position},
+            "harness": True,
+        }
+
+    good = result("c1", "echo", 1)
+    assert answers_step([step, later, good], 2) == 0
+    for bad in (
+        result("c2", "lookup", 1),  # no such call there
+        result("c1", "lookup", 1),  # its id, not its tool name
+        result("c1", "echo", 3),  # names itself
+        result("c1", "echo", 9),  # names no row
+        result("c1", "echo", 0),
+        {**good, "harness": False},  # not the harness's row
+    ):
+        assert answers_step([step, later, bad], 2) is None, bad
+    junk = {"type": "assistant", "content": "", "tool_calls": ["c1"]}
+    assert answers_step([junk, later, good], 2) is None
+
+
+@pytest.mark.parametrize("when", ["while_running", "after_a_crash"])
+def test_clearing_the_thread_around_a_started_call_never_reads_it_not_run_or_reruns_it(
+    when: str,
+) -> None:
+    """``Thread.clear()`` with a started call that has no result (py-run19
+    I2): the cleared thread never reads the call as "not run", and nothing
+    runs it again, through any number of resumes and new messages."""
+    world = Hooked()
+    approved_and_parked(world)
+
+    class Crash(BaseException):
+        pass
+
+    def during() -> None:
+        world.root().thread().clear()
+        if when == "after_a_crash":
+            raise Crash
+
+    world.during = during
+    world.text("Done.")
+    if when == "after_a_crash":
+        with pytest.raises(Crash):
+            world.fresh().runtime.send(world.root(), "")
+    else:
+        world.fresh().runtime.send(world.root(), "")
+    for prompt in ("", "Next.", ""):
+        world.text("Again.")
+        world.fresh().runtime.send(world.root(), prompt)
+
+    stored = rows(world.fresh().root())
+    assert world.ran_with == [("echo", {"n": 1})]
+    assert SUPERSEDED_RESULT not in str(stored)
+    assert "No approval response provided" not in str(stored)
+    for request in world.requests:
+        assert SUPERSEDED_RESULT not in str(request.messages)

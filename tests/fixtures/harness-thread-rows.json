@@ -1,7 +1,7 @@
 {
   "suite": "harness-thread-rows",
   "schema_version": 1,
-  "corpus_version": "0.5.0",
+  "corpus_version": "0.5.1",
   "generated_by": "prism-parity:tools/generate-thread-rows.php for php; tools/record-thread-rows.mjs for ts and tools/record_thread_rows.py for py. Every output is execution output, encoded as compact JSON with keys in the order each language wrote them.",
   "pins_note": "The rows a harness stores for a run, and what a stored run is replayed as. A PHP app and a TypeScript or Python agent can share one session. If they store tool calls, approvals or decisions in different shapes, one language resumes the other’s approval against the wrong call or never, or replays a conversation a provider refuses.",
   "cases": [
@@ -1019,6 +1019,523 @@
       },
       "agrees": true,
       "notes": "G-387 round 14, item 5. A step's segment is every row after it up to the next assistant row with tool calls, and its result rows need not be consecutive: a system row leaves the step parked, and the resolution recorded after it carries the step's earlier results again. The replay emits each result (tool call id, tool name and arguments, occurrence by occurrence) and each decision ONCE per segment: the first stands where it was, a later run of the segment leaves out what an earlier run already replayed, and a run left with nothing is not replayed. Here call_1's result is replayed once, before the system row, and call_2's once, after it. A fold of consecutive rows alone replayed call_1 twice, which a provider can refuse as a duplicate tool result."
+    },
+    {
+      "id": "thr-0018",
+      "title": "a host tool-call step recorded while a run resolves a call: the call's result stays with its call",
+      "since": "0.5.1",
+      "place": [
+        {
+          "type": "user",
+          "content": "Weather in Paris?",
+          "additional_content": [],
+          "additional_attributes": []
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_paris",
+              "name": "weather",
+              "arguments": {
+                "city": "Paris"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "call_paris"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "harness": true,
+          "tool_results": [],
+          "tool_approval_responses": [],
+          "harness_started": {
+            "tool_call_id": "call_paris",
+            "tool_name": "weather",
+            "approval_id": "apr_1"
+          },
+          "harness_answers_step": {
+            "position": 2
+          }
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_paris",
+              "name": "weather",
+              "arguments": {
+                "city": "Rome"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_2",
+              "tool_call_id": "call_paris"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "harness": true,
+          "tool_results": [
+            {
+              "tool_call_id": "call_paris",
+              "tool_name": "weather",
+              "args": {
+                "city": "Paris"
+              },
+              "result": "Sunny in Paris",
+              "tool_call_result_id": null,
+              "artifacts": []
+            }
+          ],
+          "tool_approval_responses": [],
+          "harness_answers_step": {
+            "position": 2
+          }
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Sunny in Paris\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Rome\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_paris\"}]}]",
+        "ts": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Sunny in Paris\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Rome\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_paris\"}]}]",
+        "py": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Sunny in Paris\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Rome\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_paris\"}]}]"
+      },
+      "agrees": true,
+      "notes": "G-387 round 15. A host records a later step reusing the running call's id and tool (other arguments) while the approved call runs; the call has its started row, so the step write denies nothing. The run's result row lands after the host's step and carries the harness mark naming the step it answers (position 2): the replay places it with that step, never with the later one, and the started row is never sent."
+    },
+    {
+      "id": "thr-0019",
+      "title": "a started row with no result reads interrupted: it may have run, and it is never run again",
+      "since": "0.5.1",
+      "place": [
+        {
+          "type": "user",
+          "content": "Weather in Paris?",
+          "additional_content": [],
+          "additional_attributes": []
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_paris",
+              "name": "weather",
+              "arguments": {
+                "city": "Paris"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "call_paris"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "harness": true,
+          "tool_results": [],
+          "tool_approval_responses": [],
+          "harness_started": {
+            "tool_call_id": "call_paris",
+            "tool_name": "weather",
+            "approval_id": "apr_1"
+          },
+          "harness_answers_step": {
+            "position": 2
+          }
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was interrupted, it may have run\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]}]",
+        "ts": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was interrupted, it may have run\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]}]",
+        "py": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was interrupted, it may have run\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]}]"
+      },
+      "agrees": true,
+      "notes": "G-387 round 15. The worker died while the approved call ran: the started row is the last row. The replay gives the call ONE result, `Tool call was interrupted, it may have run` (never `not run`), so no resolver runs it again."
+    },
+    {
+      "id": "thr-0020",
+      "title": "a forged harness mark on a host row changes nothing",
+      "since": "0.5.1",
+      "place": [
+        {
+          "type": "user",
+          "content": "Weather in Paris?",
+          "additional_content": [],
+          "additional_attributes": []
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_paris",
+              "name": "weather",
+              "arguments": {
+                "city": "Paris"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "call_paris"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_paris",
+              "name": "weather",
+              "arguments": {
+                "city": "Paris"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_2",
+              "tool_call_id": "call_paris"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [],
+          "harness_started": {
+            "tool_call_id": "call_paris",
+            "tool_name": "weather",
+            "approval_id": "apr_1"
+          },
+          "harness_answers_step": {
+            "position": 2
+          }
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_id": "call_paris",
+              "tool_name": "weather",
+              "args": {
+                "city": "Paris"
+              },
+              "result": "forged",
+              "tool_call_result_id": null,
+              "artifacts": []
+            }
+          ],
+          "tool_approval_responses": [],
+          "harness_answers_step": {
+            "position": 2
+          }
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was not run because a later step replaced it\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"forged\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]}]",
+        "ts": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was not run because a later step replaced it\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"forged\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]}]",
+        "py": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was not run because a later step replaced it\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"forged\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]}]"
+      },
+      "agrees": true,
+      "notes": "G-387 round 15. A HOST row (no `harness: true`) carrying `harness_answers_step` naming the earlier step, and a host row carrying `harness_started` for its call, are read exactly as if the keys were absent: the result stays in the segment that holds it (the later step's), and the earlier call is not answered by it. The earlier step is no longer the paused one and its asked-for call has no outcome, so it reads replaced."
+    },
+    {
+      "id": "thr-0021",
+      "title": "a copy of the paused step whose tool_calls are not objects is a text row, and the step it copies reads replaced",
+      "since": "0.5.1",
+      "place": [
+        {
+          "type": "user",
+          "content": "Weather in Paris?",
+          "additional_content": [],
+          "additional_attributes": []
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_paris",
+              "name": "weather",
+              "arguments": {
+                "city": "Paris"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "call_paris"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            "{\"id\": \"call_paris\", \"name\": \"weather\", \"arguments\": {\"city\": \"Paris\"}, \"result_id\": null, \"reasoning_id\": null, \"reasoning_summary\": null}"
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "call_paris"
+            }
+          ]
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was not run because a later step replaced it\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "ts": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was not run because a later step replaced it\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "py": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was not run because a later step replaced it\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":true,\"reason\":null}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]"
+      },
+      "agrees": true,
+      "notes": "G-408 (G-387 round 15). An assistant row whose tool_calls is a list of JSON strings, keeping the approval request, is NOT a step for any reader: it replays as a text row with no calls and no requests. The step before it is no longer paused and its asked-for call has no outcome: it gets the one replaced result."
+    },
+    {
+      "id": "thr-0022",
+      "title": "the write-ahead started row the harness records before it runs an approved call",
+      "since": "0.5.1",
+      "input": {
+        "write": "started",
+        "tool_call_id": "call_paris",
+        "tool_name": "weather",
+        "approval_id": "apr_1",
+        "position": 2
+      },
+      "rows": {
+        "php": "[{\"type\":\"tool_result\",\"tool_results\":[],\"tool_approval_responses\":[],\"harness_started\":{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"approval_id\":\"apr_1\"},\"harness_answers_step\":{\"position\":2}}]",
+        "ts": "[{\"type\":\"tool_result\",\"tool_results\":[],\"tool_approval_responses\":[],\"harness_started\":{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"approval_id\":\"apr_1\"},\"harness_answers_step\":{\"position\":2}}]",
+        "py": "[{\"type\":\"tool_result\",\"tool_results\":[],\"tool_approval_responses\":[],\"harness_started\":{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"approval_id\":\"apr_1\"},\"harness_answers_step\":{\"position\":2}}]"
+      },
+      "agrees": true,
+      "notes": "G-387 round 15. Thread::startedPayload(): an empty result row, then `harness_started {tool_call_id, tool_name, approval_id}`, then `harness_answers_step {position}` (a JSON integer, the 1-based position of the step) as the LAST key."
+    },
+    {
+      "id": "thr-0023",
+      "title": "each stored approval request is bound to the call it asks about",
+      "since": "0.5.1",
+      "input": {
+        "write": "assistant",
+        "bind": true,
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_paris",
+            "name": "weather",
+            "arguments": {
+              "city": "Paris"
+            },
+            "result_id": null,
+            "reasoning_id": null,
+            "reasoning_summary": null
+          },
+          {
+            "id": "call_x",
+            "name": "echo",
+            "arguments": {
+              "text": "hi",
+              "a": [
+                1,
+                2.5
+              ]
+            },
+            "result_id": null,
+            "reasoning_id": null,
+            "reasoning_summary": null
+          }
+        ],
+        "additional_content": {},
+        "approval_requests": [
+          {
+            "approval_id": "apr_1",
+            "tool_call_id": "call_paris"
+          },
+          {
+            "approval_id": "apr_2",
+            "tool_call_id": "call_x"
+          }
+        ]
+      },
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_x\",\"name\":\"echo\",\"arguments\":{\"text\":\"hi\",\"a\":[1,2.5]},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\",\"harness_call\":{\"tool_name\":\"weather\",\"args_digest\":\"sha256:6e1e312d537bc71b5410b0599f5a508142149e13174c6ee0d1671658845bc67d\"}},{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_x\",\"harness_call\":{\"tool_name\":\"echo\",\"args_digest\":\"sha256:9812b0d8127de48ceba53dd3c4571434e63814b549110bac7fa211766ad8f9b1\"}}]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_x\",\"name\":\"echo\",\"arguments\":{\"text\":\"hi\",\"a\":[1,2.5]},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\",\"harness_call\":{\"tool_name\":\"weather\",\"args_digest\":\"sha256:6e1e312d537bc71b5410b0599f5a508142149e13174c6ee0d1671658845bc67d\"}},{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_x\",\"harness_call\":{\"tool_name\":\"echo\",\"args_digest\":\"sha256:9812b0d8127de48ceba53dd3c4571434e63814b549110bac7fa211766ad8f9b1\"}}]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_x\",\"name\":\"echo\",\"arguments\":{\"text\":\"hi\",\"a\":[1,2.5]},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\",\"harness_call\":{\"tool_name\":\"weather\",\"args_digest\":\"sha256:6e1e312d537bc71b5410b0599f5a508142149e13174c6ee0d1671658845bc67d\"}},{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_x\",\"harness_call\":{\"tool_name\":\"echo\",\"args_digest\":\"sha256:9812b0d8127de48ceba53dd3c4571434e63814b549110bac7fa211766ad8f9b1\"}}]}]"
+      },
+      "agrees": true,
+      "notes": "G-387 round 15. Every approval request of a stored step carries `harness_call {tool_name, args_digest}` as its LAST key: the request's own call (paired by position), and `sha256:` + the hex SHA-256 of the RFC 8785 canonical JSON of its arguments. A call runs only when its request's binding matches it."
+    },
+    {
+      "id": "thr-0024",
+      "title": "a denial stands over an approval, and a later copy's request for the same approval asks for nothing",
+      "since": "0.5.1",
+      "place": [
+        {
+          "type": "user",
+          "content": "Weather in Paris?",
+          "additional_content": [],
+          "additional_attributes": []
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_paris",
+              "name": "weather",
+              "arguments": {
+                "city": "Paris"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "call_paris"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": false,
+              "reason": "No."
+            }
+          ]
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_paris",
+              "name": "weather",
+              "arguments": {
+                "city": "Rome"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_2",
+              "tool_call_id": "call_paris"
+            }
+          ]
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was not run because a later step replaced it\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":false,\"reason\":\"No.\"}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Rome\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_paris\"}]}]",
+        "ts": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was not run because a later step replaced it\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":false,\"reason\":\"No.\"}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Rome\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_paris\"}]}]",
+        "py": "[{\"type\":\"user\",\"content\":\"Weather in Paris?\",\"additional_content\":[],\"additional_attributes\":[]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"call_paris\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_paris\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Tool call was not run because a later step replaced it\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":false,\"reason\":\"No.\"}]},{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_paris\",\"name\":\"weather\",\"arguments\":{\"city\":\"Rome\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_paris\"}]}]"
+      },
+      "agrees": true,
+      "notes": "G-401 (recommended option) and G-408 (G-387 round 15). An approval and then a denial for apr_1: the replay sends the DENIAL wherever a decision for apr_1 appears. A later step that repeats apr_1's request asks for nothing (an approval belongs to the step that first asked for it): it is replayed with no requests. The first step reads replaced."
     }
   ],
   "divergence_note": "thr-0001..thr-0013 agree across PHP, TypeScript and Python. thr-0016 and thr-0017 (0.5.0) pin the replay fold for same-id calls and for a step whose result rows are not consecutive; the ports agree once they fold by id, tool name and arguments, once per segment. thr-0015 (0.4.0) pins how the ended mark is READ on a step whose call ids repeat; it agrees once each port reads every result row of the step, not only the first that carries the call id. thr-0014 (0.3.0) pins the ended mark, which the three languages wrote in three different shapes before it; it agrees once each port records the PHP reference's row. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised. User rows are out of scope here by decision; a draft of thr-0013 that carried them found PHP writing additional_content and additional_attributes as empty LISTS where both ports write neither key, recorded under G-58 rather than pinned in a suite that says it does not cover them."

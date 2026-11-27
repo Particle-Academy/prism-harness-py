@@ -21,7 +21,13 @@ from prism_harness import (
     thread_view,
     tool_result_row,
 )
-from prism_harness.thread_rows import ended_approval_ids, paired_requests
+from prism_harness.thread_rows import (
+    bound_step,
+    ended_approval_ids,
+    paired_requests,
+    placed_view,
+    started_row,
+)
 
 CORPUS: dict[str, Any] = json.loads(
     (Path(__file__).parent / "fixtures" / "harness-thread-rows.json").read_text(encoding="utf-8")
@@ -43,7 +49,23 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
     if "fold" in case:
         return thread_view(case["fold"])
 
+    if "place" in case:
+        # 0.5.1 (G-387 round 15): the rows AS STORED, ``harness: true`` on a
+        # row the harness wrote, positions 1-based by index; what a provider
+        # is sent (the harness's own placement, then the fold).
+        return placed_view(case["place"])
+
     spec = case["input"]
+
+    if spec["write"] == "started":
+        # The write-ahead row the resolver records before it runs a call.
+        return [
+            started_row(
+                {"id": spec["tool_call_id"], "name": spec["tool_name"]},
+                spec["approval_id"],
+                spec["position"],
+            )
+        ]
 
     if spec["write"] == "ended_by_start":
         # The row a runner start's task row closes a child's pending calls
@@ -74,22 +96,27 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
         ]
 
     if spec["write"] == "assistant":
+        # ``bind`` (0.5.1): the step as the thread stores it, each request
+        # bound to its call (``harness_call``).
+        bind = bound_step if spec.get("bind") else (lambda row: row)
         return [
-            assistant_row(
-                spec["content"],
-                [
-                    ToolCallInput(
-                        id=call["id"],
-                        name=call["name"],
-                        arguments=call["arguments"],
-                        result_id=call.get("result_id"),
-                        reasoning_id=call.get("reasoning_id"),
-                        reasoning_summary=call.get("reasoning_summary"),
-                    )
-                    for call in spec["tool_calls"]
-                ],
-                spec["additional_content"],
-                spec["approval_requests"],
+            bind(
+                assistant_row(
+                    spec["content"],
+                    [
+                        ToolCallInput(
+                            id=call["id"],
+                            name=call["name"],
+                            arguments=call["arguments"],
+                            result_id=call.get("result_id"),
+                            reasoning_id=call.get("reasoning_id"),
+                            reasoning_summary=call.get("reasoning_summary"),
+                        )
+                        for call in spec["tool_calls"]
+                    ],
+                    spec["additional_content"],
+                    spec["approval_requests"],
+                )
             )
         ]
 
@@ -112,7 +139,7 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def test_is_the_whole_suite_not_a_subset_someone_trimmed_to_green() -> None:
-    assert len(CORPUS["cases"]) == 17
+    assert len(CORPUS["cases"]) == 24
 
 
 @pytest.mark.parametrize("case", CORPUS["cases"], ids=lambda case: case["id"])

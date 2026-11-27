@@ -84,7 +84,10 @@ def approval_decisions(rows: Rows) -> dict[str, bool]:
         for response in _dicts(row.get("tool_approval_responses")):
             approval_id = response.get("approval_id")
             if isinstance(approval_id, str) and approval_id not in ended:
-                decided.setdefault(approval_id, response.get("approved") is True)
+                # The first decision stands, but ANY DENY IS FINAL (G-401).
+                decided[approval_id] = decided.get(approval_id, True) and (
+                    response.get("approved") is True
+                )
     return decided
 
 
@@ -103,11 +106,13 @@ def approved_calls_awaiting_result(rows: Rows, name: str, digest: str) -> int:
             for result in _dicts(row.get("tool_results")):
                 if isinstance(result.get("tool_call_id"), str):
                     finished.add(result["tool_call_id"])
-            # Newest first, so the last write is the FIRST decision recorded:
-            # the one that counts, as in approval_decisions().
+            # Approved only while EVERY decision recorded for it approves: ANY
+            # DENY IS FINAL (G-401), as in approval_decisions().
             for response in reversed(_dicts(row.get("tool_approval_responses"))):
                 if isinstance(response.get("approval_id"), str):
-                    decided[response["approval_id"]] = response.get("approved") is True
+                    decided[response["approval_id"]] = decided.get(
+                        response["approval_id"], True
+                    ) and (response.get("approved") is True)
     for row in [] if at is None else [rows[at]]:
         if repeats_call_ids(row):
             # No call of a step with a repeated id is approved (G-392).

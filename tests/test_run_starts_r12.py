@@ -107,7 +107,15 @@ def test_a_start_writes_the_reference_ended_mark_last_on_its_row() -> None:
     rows = rows_of(world)
     (marked,) = [row for row in rows if ENDED_BY_START in row]
     assert marked[ENDED_BY_START] == {"approval_ids": [approval]}
-    assert list(marked) == ["type", "tool_results", "tool_approval_responses", ENDED_BY_START]
+    # The step's answers-step mark (G-387 round 15) comes after every other
+    # harness mark, so the ended mark is last but one.
+    assert list(marked) == [
+        "type",
+        "tool_results",
+        "tool_approval_responses",
+        ENDED_BY_START,
+        "harness_answers_step",
+    ]
     assert approval in ended_approval_ids(rows)
     assert approval not in approval_decisions(rows)
 

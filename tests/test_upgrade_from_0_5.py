@@ -154,3 +154,28 @@ def test_main_resumes_a_0_5_x_thread_with_one_outcome_per_gated_call(name: str) 
 
 def load_again(world: Upgrade) -> Session:
     return world.harness.for_(Participant("User", "ada")).session("upgrade")
+
+
+@pytest.mark.parametrize("name", sorted(FIXTURE["threads"]))
+def test_a_0_5_x_replaced_step_is_never_approvable_and_denied_exactly_once(name: str) -> None:
+    """The PHP 0.26.10 audit's upgrade rule, in the 0.5.x line's own bytes: a
+    step that line replaced (by a user row, or by a later step) is never
+    approvable on main, before or after a resume, and each of its gated calls
+    is denied exactly once (counted, never as a set), and nothing runs."""
+    world = Upgrade()
+    session = load(world, name)
+    stored = [entry.message for entry in session.thread().messages()]
+    approvals = [request["approval_id"] for request in stored[1]["tool_approval_requests"]]
+
+    for _ in range(3):
+        for approval in approvals:
+            with pytest.raises(HarnessError) as caught:
+                record_approval(load_again(world), approval, True)
+            assert caught.value.code == "approval_not_pending"
+        world.text("Done.")
+        world.fresh()
+        world.runtime.send(load_again(world), "")
+
+    found = outcomes(load_again(world))
+    assert found == {"t0": [SUPERSEDED_RESULT], "t1": [SUPERSEDED_RESULT]}
+    assert world.ran == []

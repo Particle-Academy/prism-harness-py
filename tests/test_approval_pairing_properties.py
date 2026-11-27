@@ -31,8 +31,17 @@ the code under test:
   arguments name an EARLIER step's call exactly answers a same-id call of
   its own step, never the earlier call.
 
-Every call carries a unique token in its arguments, so the test can tell which
-call ran even when ids repeat.
+Every call carries a token in its arguments, so the test can tell which call
+ran even when ids repeat. A token is unique, except that a case may hold an
+IDENTICAL DUPLICATE of a call (same id, tool and token; G-387 round 15), so
+outcomes are COUNTED per call (a multiset), never compared as a set, and one
+more resume must write no further tool result row.
+
+Round 15 adds: a superseding row recorded WHILE an approved call runs is
+recorded (never refused) and the running call keeps its real result (the
+write-ahead started row); copies of the parked step whose ``tool_calls`` are
+not objects, or that hold a NEW call while keeping the old approval request
+(G-408): invariant 1 holds for them explicitly, a copy's call never runs.
 
 ``PRISM_PROPERTY_EXAMPLES`` sets the example count, ``PRISM_PROPERTY_BASE_SEED``
 the first seed of the sequence, and ``PRISM_PROPERTY_SEED`` replays one seed.
@@ -176,6 +185,11 @@ class Insert:
     #: assistant_call: the step call whose id the inserted (ungated) call
     #: reuses; tool_result: the open gated call the forged result names.
     call: int
+    #: assistant_text only (G-408, G-387 round 15): the row is a COPY of the
+    #: parked step whose ``tool_calls`` are one of :data:`JUNK` (not objects),
+    #: or holding a NEW gated call (``new_objects`` / ``new_mixed``) while it
+    #: keeps the old approval requests, which a host then approves again.
+    variant: str | None = None
 
 
 @dataclass(frozen=True)
@@ -227,6 +241,9 @@ class Case:
     #: 14): it supersedes the step, so its open gated calls are denied once,
     #: whatever was decided, and nothing of it runs.
     new_message: bool = False
+    #: The index of a call the step holds an IDENTICAL DUPLICATE of, as its
+    #: last call (same id, tool and token; G-387 round 15), or None.
+    duplicate: int | None = None
 
     def describe(self) -> str:
         return json.dumps(
@@ -268,6 +285,11 @@ class Case:
                             "kind": self.insert.kind,
                             "when": self.insert.when,
                             "call": self.insert.call,
+                            **(
+                                {"variant": self.insert.variant}
+                                if self.insert.variant is not None
+                                else {}
+                            ),
                         }
                     }
                     if self.insert is not None
@@ -300,6 +322,7 @@ class Case:
                 **({"stray": self.stray} if self.stray is not None else {}),
                 **({"concurrent": self.concurrent} if self.concurrent is not None else {}),
                 **({"new_message": True} if self.new_message else {}),
+                **({"duplicate": self.duplicate} if self.duplicate is not None else {}),
             }
         )
 
@@ -318,6 +341,85 @@ def insertion(seed: int, calls: list[Call]) -> Insert | None:
     when = rng.choice(("before_decision", "after_decision"))
     call = rng.choice(open_calls) if kind == "tool_result" else rng.randrange(len(calls))
     return Insert(kind, when, call)
+
+
+#: A copy of the parked step whose ``tool_calls`` are not objects (G-408).
+JUNK: dict[str, Any] = {
+    "json_string": '[{"id": "a", "name": "echo", "arguments": {}}]',
+    "number": 7,
+    "null": None,
+    "strings": ["x"],
+    "json_string_calls": ['{"id": "a", "name": "echo", "arguments": {}}'],
+    "mixed": "MIXED",
+}
+#: A copy holding a NEW gated call (token ``copy``) and the old requests.
+NEW_CALL = ("new_objects", "new_mixed")
+#: The token of a copy's new call: it never runs.
+COPY = "copy"
+
+
+def copy_variant(seed: int, insert: Insert | None) -> Insert | None:
+    """The copy an ``assistant_text`` insert becomes, from a stream of its own
+    (every other draw of a seed unchanged)."""
+    if insert is None or insert.kind != "assistant_text":
+        return insert
+    rng = random.Random(seed ^ 0x408408)
+    if rng.random() >= 0.6:
+        return insert
+    return replace(insert, variant=rng.choice([*sorted(JUNK), *NEW_CALL]))
+
+
+def copied_step(session: Session, insert: Insert) -> list[dict[str, Any]]:
+    """The copy of the stored parked step a host records, and (for a new
+    call) its approvals recorded again straight to the thread after it."""
+    parked = next(
+        entry.message
+        for entry in reversed(session.thread().messages())
+        if entry.message.get("type") == "assistant"
+        and isinstance(entry.message.get("tool_calls"), list)
+        and entry.message["tool_calls"]
+        and all(isinstance(c, dict) for c in entry.message["tool_calls"])
+    )
+    calls = [dict(c) for c in parked["tool_calls"]]
+    assert insert.variant is not None
+    new = {"id": calls[0]["id"], "name": GATED, "arguments": {"token": COPY}}
+    if insert.variant == "new_objects":
+        tool_calls: Any = [new]
+    elif insert.variant == "new_mixed":
+        tool_calls = ["x", new, None]
+    elif insert.variant == "mixed":
+        tool_calls = [*calls, "x"]
+    else:
+        tool_calls = JUNK[insert.variant]
+    copy = {**parked, "tool_calls": tool_calls}
+    rows: list[dict[str, Any]] = [copy]
+    if insert.variant in NEW_CALL:
+        rows.append(
+            {
+                "type": "tool_result",
+                "tool_results": [],
+                "tool_approval_responses": [
+                    {"approval_id": request["approval_id"], "approved": True, "reason": None}
+                    for request in parked.get("tool_approval_requests", [])
+                    if isinstance(request, dict)
+                ],
+            }
+        )
+    return rows
+
+
+def duplicated(seed: int, case: Case) -> Case:
+    """An IDENTICAL DUPLICATE of one call appended to the step (G-387 round
+    15), from a stream of its own."""
+    rng = random.Random(seed ^ 0xD0B1E)
+    if rng.random() >= 0.3:
+        return case
+    source = rng.randrange(len(case.calls))
+    calls = (*case.calls, case.calls[source])
+    order = case.decision_order
+    if case.path == "live" and case.calls[source].gated:
+        order = (*order, sum(1 for c in case.calls if c.gated))
+    return replace(case, calls=calls, decision_order=order, duplicate=source)
 
 
 def inserted_row(case: Case) -> dict[str, Any]:
@@ -399,7 +501,10 @@ def a_decision(rng: random.Random) -> tuple[str, str | None]:
     return decision, reason
 
 
-def generate(seed: int) -> Case:
+def generate(seed: int, extras: bool = True) -> Case:
+    """One case. ``extras`` (round 15): the copy variants and identical
+    duplicates, each from a stream of its own; the pinned seeds below were
+    found without them."""
     rng = random.Random(seed)
     path = rng.choice(("live", "stored"))
     calls: list[Call] = []
@@ -472,12 +577,15 @@ def generate(seed: int) -> Case:
         spent=path == "live" and rng.random() < 0.8,
     )
     concurrent = concurrent_supersede(seed)
-    return replace(
+    base = replace(
         forgeries(case),
         stray=stray_result(seed, calls),
         concurrent=concurrent,
         new_message=concurrent is None and random.Random(seed ^ 0x5E5E5E).random() < 0.25,
     )
+    if not extras:
+        return base
+    return duplicated(seed, replace(base, insert=copy_variant(seed, base.insert)))
 
 
 def forgeries(case: Case) -> Case:
@@ -542,9 +650,14 @@ def cross_target(case: Case) -> int | None:
 class Expected:
     #: Tokens of the gated calls that run on the first resume.
     runs: list[str] = field(default_factory=list)
-    #: Each gated call's one outcome text, by token.
+    #: Each gated call's one outcome text, by token (the last such call's).
     outcomes: dict[str, str] = field(default_factory=dict)
     repeated: bool = False
+    #: Each call's one outcome text, by its INDEX in the case step (None for
+    #: an ungated call): counted, so identical duplicates each have theirs.
+    by_index: list[str | None] = field(default_factory=list)
+    #: The earlier step's gated calls' outcomes, by index.
+    earlier: list[str | None] = field(default_factory=list)
 
 
 def oracle(case: Case) -> Expected:
@@ -578,46 +691,66 @@ def oracle(case: Case) -> Expected:
     # A later step replaced the earlier one: its gated calls never run, and
     # each one with no result gets one denial.
     for index, call in enumerate(case.earlier):
+        text = None
         if call.gated:
-            expected.outcomes[call.token] = (
+            text = (
                 f"prior:{call.token}"
                 if call.prior
                 else f"forged:{call.token}"
                 if index == case.earlier_forged
                 else REPLACED_BY_LATER_STEP
             )
+            expected.outcomes[call.token] = text
+        expected.earlier.append(text)
 
+    decided: list[str | None] = []
     for index, call in enumerate(case.calls):
+        decided.append(None)
         if not call.gated:
+            expected.by_index.append(None)
             continue
         if call.prior:
-            expected.outcomes[call.token] = f"prior:{call.token}"
-            continue
-        if index == lossy:
+            text = f"prior:{call.token}"
+        elif index == lossy:
             assert case.cross_forged is not None
-            expected.outcomes[call.token] = lossy_text(case.earlier[case.cross_forged])
-            continue
-        if index == forged:
-            expected.outcomes[call.token] = f"forged:{call.token}"
-            continue
-        if superseded:
-            expected.outcomes[call.token] = REPLACED_BY_LATER_STEP
-            continue
-        if repeated:
-            expected.outcomes[call.token] = REPEATED
-            continue
-        if case.path == "live":
-            decision, reason = call.decision, call.reason
+            text = lossy_text(case.earlier[case.cross_forged])
+        elif index == forged:
+            text = f"forged:{call.token}"
+        elif superseded:
+            text = REPLACED_BY_LATER_STEP
+        elif repeated:
+            text = REPEATED
         else:
-            own = [r for r in case.requests if r.tool_call_id == call.id]
-            decision, reason = (own[0].decision, own[0].reason) if own else ("none", None)
-        if decision == "approve":
-            expected.runs.append(call.token)
-            expected.outcomes[call.token] = f"{GATED}:{call.token}"
-        elif decision == "deny":
-            expected.outcomes[call.token] = reason or DEFAULT_DENIAL
-        else:
-            expected.outcomes[call.token] = NO_DECISION
+            if case.path == "live":
+                decision, reason = call.decision, call.reason
+            else:
+                own = [r for r in case.requests if r.tool_call_id == call.id]
+                decision, reason = (own[0].decision, own[0].reason) if own else ("none", None)
+            decided[index] = decision
+            if decision == "approve":
+                text = f"{GATED}:{call.token}"
+            elif decision == "deny":
+                text = reason or DEFAULT_DENIAL
+            else:
+                text = NO_DECISION
+        expected.by_index.append(text)
+
+    approved = [i for i, d in enumerate(decided) if d == "approve"]
+    if case.concurrent is not None and approved:
+        # A superseding row recorded WHILE the first approved call runs
+        # (G-387 round 15): that call is answered-in-progress and keeps its
+        # real result; every other call of the step still without an
+        # outcome (decided or not, before or after it) is replaced, and
+        # nothing else runs.
+        for index in range(len(case.calls)):
+            if decided[index] is not None and index != approved[0]:
+                expected.by_index[index] = REPLACED_BY_LATER_STEP
+        approved = approved[:1]
+    expected.runs = [case.calls[i].token for i in approved]
+    for index, call in enumerate(case.calls):
+        text = expected.by_index[index]
+        if text is not None:
+            expected.outcomes[call.token] = text
     return expected
 
 
@@ -781,6 +914,10 @@ def forged_row(call: Call) -> dict[str, Any]:
 
 def insert_between(session: Session, case: Case, when: str) -> None:
     if case.insert is not None and case.insert.when == when:
+        if case.insert.variant is not None:
+            for row in copied_step(session, case.insert):
+                session.thread().record([row])
+            return
         session.thread().record([inserted_row(case)])
         if case.later_forged is not None:
             # In the LATER segment: after the later step. It names a call of
@@ -789,33 +926,61 @@ def insert_between(session: Session, case: Case, when: str) -> None:
             session.thread().record([forged_row(case.calls[case.later_forged])])
 
 
-def outcomes_by_token(session: Session) -> dict[str, list[str]]:
-    """Every stored result, by the token of the call it answers, as STORED (never
-    the provider view, which folds results by call id), from EVERY row after
-    the first step through the end of the thread, each attributed by ABSOLUTE
-    SEGMENT OWNERSHIP (G-387 round 13b) to the step it was recorded in (the
-    last step with tool calls before it): a result counts for a call of THAT
-    step only, the one its arguments name, else, within its row, the first
-    not yet matched with its id and tool name, else with its id. A resume row
-    restates the results it found, so one outcome may be stored more than
-    once; what may not happen is two DIFFERENT outcomes, or none."""
-    found: dict[str, list[str]] = {}
-    step: list[tuple[str, str, str]] = []  # (id, tool, token) per call
-    for entry in session.thread().messages():
-        row = entry.message
-        if row.get("type") == "assistant" and row.get("tool_calls"):
-            step = [
+def outcomes_by_call(session: Session) -> dict[tuple[str, int], list[str]]:
+    """Every stored outcome, COUNTED, by (step, call index): ``case`` for the
+    case's step (tokens ``t*``), ``earlier`` for the earlier one (``e*``).
+
+    Each result row is attributed to the step that OWNS it: the step a mark
+    the harness itself wrote names (``harness_answers_step``, honoured only on
+    a row read with ``"harness": true``; or a 0.5.x ``harness_replaced_step``),
+    else the step whose segment holds it (ABSOLUTE SEGMENT OWNERSHIP, G-387
+    round 13b). Within its row a result takes the call its arguments name,
+    else the first not yet matched with its id and tool name, else with its
+    id; among those, the call already holding that very result (a row
+    restating it), else the first still without one. A resolution row RESTATES the results its step already had, so one
+    (call, text) counts once per step; two different texts, or none, are two
+    or zero outcomes. Started rows hold no result and count nothing."""
+    rows = session.thread().rows()
+    steps: dict[int, list[tuple[str, str, str]]] = {}
+    segment = -1
+    owners: list[int] = []
+    for index, row in enumerate(rows):
+        calls = row.get("tool_calls") if row.get("type") == "assistant" else None
+        if isinstance(calls, list) and calls and all(isinstance(c, dict) for c in calls):
+            steps[index] = [
                 (
                     str(call.get("id", "")),
                     str(call.get("name", "")),
                     str((call.get("arguments") or {}).get("token", "")),
                 )
-                for call in row["tool_calls"]
-                if isinstance(call, dict)
+                for call in calls
             ]
+            segment = index
+            owners.append(-1)
             continue
-        if row.get("type") != "tool_result":
+        owner = segment
+        answers = row.get("harness_answers_step")
+        replaced = row.get("harness_replaced_step")
+        if row.get("harness") is True and isinstance(answers, dict):
+            owner = int(answers.get("position", 0)) - 1
+        elif isinstance(replaced, dict):
+            owner = int(replaced.get("position", 0)) - 1
+        owners.append(owner)
+
+    def tag(step: int) -> str:
+        tokens = {token for _, _, token in steps.get(step, [])}
+        if tokens and all(t.startswith("t") for t in tokens):
+            return "case"
+        if tokens and all(t.startswith("e") for t in tokens):
+            return "earlier"
+        return "other"
+
+    found: dict[tuple[str, int], list[str]] = {}
+    for index, row in enumerate(rows):
+        step = owners[index]
+        if row.get("type") != "tool_result" or step not in steps:
             continue
+        calls = steps[step]
         taken: set[int] = set()
         for result in row.get("tool_results", []):
             token = str((result.get("args") or {}).get("token", ""))
@@ -823,17 +988,29 @@ def outcomes_by_token(session: Session) -> dict[str, list[str]]:
                 continue  # no call carries it: it answers nothing
             same_id = [
                 i
-                for i, (call_id, _, _) in enumerate(step)
+                for i, (call_id, _, _) in enumerate(calls)
                 if i not in taken and call_id == str(result.get("tool_call_id", ""))
             ]
-            exact = [i for i in same_id if step[i][2] == token]
-            named = [i for i in same_id if step[i][1] == result.get("tool_name")]
-            match = next(iter(exact or named or same_id), None)
-            if match is None:
+            exact = [i for i in same_id if calls[i][2] == token]
+            named = [i for i in same_id if calls[i][1] == result.get("tool_name")]
+            candidates = exact or named or same_id
+            if not candidates:
                 continue
+            # A row restating a result answers the call that already holds
+            # it; a new result answers the first call still without one.
+            text = str(result.get("result"))
+            again = [i for i in candidates if text in found.get((tag(step), i), [])]
+            still = [i for i in candidates if (tag(step), i) not in found]
+            match = (again or still or candidates)[0]
             taken.add(match)
-            found.setdefault(step[match][2], []).append(str(result.get("result")))
+            texts = found.setdefault((tag(step), match), [])
+            if str(result.get("result")) not in texts:
+                texts.append(str(result.get("result")))
     return found
+
+
+def tool_result_rows(session: Session) -> int:
+    return sum(1 for e in session.thread().messages() if e.message.get("type") == "tool_result")
 
 
 def late_decision(session: Session, approval: str, approved: bool, reason: str | None) -> None:
@@ -919,9 +1096,24 @@ def replayed_twice(requests: list[LlmRequest]) -> list[str]:
     for number, request in enumerate(requests):
         whole: dict[tuple[str, str], int] = {}
         segment: dict[str, int] = {}
+        # IDENTICAL calls (round 15) each have their own result: a key may
+        # appear as often as the step holds such calls, never more.
+        calls: dict[str, int] = {}
+        most: dict[str, int] = {}
         for message in request.messages:
             if message.get("type") == "assistant" and message.get("tool_calls"):
                 segment = {}
+                calls = {}
+                for call in message["tool_calls"]:
+                    key = replay_key(
+                        {
+                            "tool_call_id": call.get("id"),
+                            "tool_name": call.get("name"),
+                            "args": call.get("arguments"),
+                        }
+                    )
+                    calls[key] = calls.get(key, 0) + 1
+                    most[key] = max(most.get(key, 0), calls[key])
                 continue
             if message.get("type") != "tool_result":
                 continue
@@ -930,7 +1122,9 @@ def replayed_twice(requests: list[LlmRequest]) -> list[str]:
                 segment[key] = segment.get(key, 0) + 1
                 pair = (key, str(entry.get("result")))
                 whole[pair] = whole.get(pair, 0) + 1
-                if segment[key] == 2 or whole[pair] == 2:
+                if segment[key] == max(1, calls.get(key, 0)) + 1 or whole[pair] == (
+                    max(1, most.get(key, 0)) + 1
+                ):
                     broken.append(f"item 5: request {number} replays {key} more than once")
     return broken
 
@@ -947,8 +1141,9 @@ def _check(
     ungated = [c for c in case.calls if not c.gated]
     broken: list[str] = []
 
-    # Which approval belongs to which call, in this case's own terms.
-    approval_of: dict[str, str | None] = {}
+    # Which approval belongs to which call (by index among the gated
+    # calls), in this case's own terms.
+    approval_of: dict[int, str | None] = {}
     decided: dict[str, tuple[str, str | None]] = {}
 
     if case.path == "live":
@@ -970,14 +1165,14 @@ def _check(
             broken.append("2: two pending approvals share an approval id")
         if first.tool_calls != [UNGATED] * len(ungated):
             broken.append(f"6: the first step reported tool_calls {first.tool_calls}")
-        for call, p in zip(gated, pending, strict=True):
-            approval_of[call.token] = p.id
+        for at, p in enumerate(pending):
+            approval_of[at] = p.id
         insert_between(session, case, "before_decision")
         for index in case.decision_order:
             call = gated[index]
             if call.decision == "none":
                 continue
-            approval = approval_of[call.token]
+            approval = approval_of[index]
             assert approval is not None
             if decide(session, case, approval, call.decision == "approve", call.reason, broken):
                 decided[approval] = (call.decision, call.reason)
@@ -1002,9 +1197,9 @@ def _check(
                 broken,
             ):
                 decided[request.approval_id] = (request.decision, request.reason)
-        for call in gated:
+        for at, call in enumerate(gated):
             own = [r.approval_id for r in case.requests if r.tool_call_id == call.id]
-            approval_of[call.token] = own[0] if len(own) == 1 else None
+            approval_of[at] = own[0] if len(own) == 1 else None
 
     insert_between(session, case, "after_decision")
     refused: list[str] = []
@@ -1025,7 +1220,8 @@ def _check(
     )
     if during:
         during.clear()  # no approved call ran: nothing was in flight
-    elif case.concurrent is not None and refused != ["session_locked"]:
+    elif case.concurrent is not None and refused != ["recorded"]:
+        # Round 15: never refused, never waiting on the resolver.
         broken.append(f"G-404: a {case.concurrent} row during the approved call was {refused}")
     ran_now = [token for name, token in ran[before:] if name == GATED]
 
@@ -1034,16 +1230,26 @@ def _check(
         broken.append(f"equality: ran {sorted(ran_now)}, the rule runs {sorted(expected.runs)}")
     if any(name == UNGATED for name, _ in ran[before:]):
         broken.append("3: a resume ran an ungated call the step had already run")
-    # 1. A denied call never runs.
-    for call in gated:
-        approval = approval_of.get(call.token)
-        if call.token in ran_now and (
-            approval is None or decided.get(approval, ("none",))[0] != "approve"
-        ):
-            broken.append(f"1: {call.token} ran without its own approve")
+    # 1. Nothing runs without its OWN approval, no exemption: a call may run
+    # only as often as calls of the case step carry its token under an
+    # approval of their own that was approved; a copy's call never.
+    approved_of: dict[str, list[str]] = {}
+    for at, call in enumerate(gated):
+        approval = approval_of.get(at)
+        if approval is not None and decided.get(approval, ("none",))[0] == "approve":
+            approved_of.setdefault(call.token, []).append(approval)
+    for token in sorted(set(ran_now)):
+        if ran_now.count(token) > len(approved_of.get(token, [])):
+            broken.append(f"1: {token} ran without its own approve")
+    if any(token == COPY for _, token in ran):
+        broken.append("1: a copy's new call ran under an approval it never asked first")
     # 2. One decision decides at most one call.
-    used = [approval_of.get(t) for t in ran_now]
-    if None in used or len(set(used)) != len(used):
+    used = [
+        a
+        for token in sorted(set(ran_now))
+        for a in approved_of.get(token, [])[: ran_now.count(token)]
+    ]
+    if len(used) != len(ran_now) or len(set(used)) != len(used):
         broken.append(f"2: the calls that ran {ran_now} are not matched to distinct approves")
     # 4. A step with repeated ids runs none of its gated calls.
     if expected.repeated and ran_now:
@@ -1069,36 +1275,55 @@ def _check(
     a_send(runtime, session, case.resumes[0], "")
     if ran[after:]:
         broken.append(f"3: a later resume or a later decision ran {ran[after:]}")
+    # And one more resume writes NO further tool result row (counted).
+    written = tool_result_rows(session)
+    a_send(runtime, session, "text", "")
+    if tool_result_rows(session) != written:
+        broken.append("3: a further resume wrote another tool result row")
+    if ran[after:]:
+        broken.append(f"3: a further resume ran {ran[after:]}")
     counts: dict[str, int] = {}
     for _, token in ran:
         counts[token] = counts.get(token, 0) + 1
-    twice = sorted(t for t, n in counts.items() if n > 1)
+    calls_of = {c.token: sum(1 for d in case.calls if d.token == c.token) for c in case.calls}
+    twice = sorted(t for t, n in counts.items() if n > calls_of.get(t, 0))
     if twice:
         broken.append(f"3: {twice} ran more than once")
 
-    # 5 and 6. Every gated call has exactly one outcome, and the thread says what ran.
-    stored = outcomes_by_token(session)
-    for call in [c for c in case.earlier if c.gated]:
-        recorded = stored.get(call.token, [])
-        if recorded != [expected.outcomes[call.token]] or counts.get(call.token):
+    # 5 and 6. Every gated call has exactly ONE outcome, counted per call,
+    # and the thread says what ran.
+    stored = outcomes_by_call(session)
+    for index, call in enumerate(case.earlier):
+        if not call.gated:
+            continue
+        recorded = stored.get(("earlier", index), [])
+        if recorded != [expected.earlier[index]] or counts.get(call.token):
             broken.append(
                 f"1/5: earlier-step call {call.token} ran {counts.get(call.token, 0)}x and is "
-                f"recorded as {recorded}, the rule says once {expected.outcomes[call.token]!r}"
+                f"recorded as {recorded}, the rule says once {expected.earlier[index]!r}"
             )
-    for call in gated:
-        texts = set(stored.get(call.token, []))
+    said_ran: dict[str, int] = {}
+    for index, call in enumerate(case.calls):
+        if not call.gated:
+            continue
+        texts = stored.get(("case", index), [])
         if len(texts) != 1:
-            broken.append(f"5: {call.token} has {len(texts)} recorded outcomes {sorted(texts)}")
+            broken.append(f"5: {call.token}#{index} has {len(texts)} recorded outcomes {texts}")
             continue
         [text] = texts
-        if text != expected.outcomes[call.token]:
+        if text != expected.by_index[index]:
             broken.append(
-                f"6: {call.token} is recorded as {text!r}, the rule says "
-                f"{expected.outcomes[call.token]!r}"
+                f"6: {call.token}#{index} is recorded as {text!r}, the rule says "
+                f"{expected.by_index[index]!r}"
             )
-        says_ran = text == f"{GATED}:{call.token}"
-        if says_ran != (counts.get(call.token, 0) == 1):
-            broken.append(f"6: the thread says {call.token} ran={says_ran}, it ran={not says_ran}")
+        if text == f"{GATED}:{call.token}":
+            said_ran[call.token] = said_ran.get(call.token, 0) + 1
+    for call in gated:
+        if said_ran.get(call.token, 0) != counts.get(call.token, 0):
+            broken.append(
+                f"6: the thread says {call.token} ran {said_ran.get(call.token, 0)}x, "
+                f"it ran {counts.get(call.token, 0)}x"
+            )
     return broken
 
 
@@ -1316,12 +1541,91 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     for kind in SUPERSEDES:
         assert any(k.concurrent == kind and oracle(k).runs for k in examined), kind
     assert sorted(
-        generate(seed).concurrent or "" for seed in CONCURRENT_SEEDS if oracle(generate(seed)).runs
+        generate(seed, False).concurrent or ""
+        for seed in CONCURRENT_SEEDS
+        if oracle(generate(seed, False)).runs
     ) == sorted(SUPERSEDES)
     # A new message as the first resume, on a step a person approved.
     assert any(
         k.new_message and any(c.gated and c.decision == "approve" for c in k.calls) for k in fast
     )
+    # Round 15: identical duplicates meeting forged, lossy and superseding
+    # inserts; every copy variant (G-408) before and after the decision; a
+    # superseding row while an approved call runs, beside other calls it
+    # replaces.
+    dups = [(k, k.duplicate) for k in examined if k.duplicate is not None]
+    assert any(k.insert is not None and k.insert.kind == "tool_result" for k, _ in dups)
+    assert any(k.cross_forged is not None for k, _ in dups)
+    assert any(k.insert is not None and k.insert.kind in SUPERSEDES for k, _ in dups)
+    assert any(k.calls[d].gated and k.calls[d].prior for k, d in dups)
+    assert any(k.calls[d].gated and not k.calls[d].prior for k, d in dups)
+    wide = [generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + 3000)]
+    for variant in [*JUNK, *NEW_CALL]:
+        for when in ("before_decision", "after_decision"):
+            assert any(
+                k.insert is not None and k.insert.variant == variant and k.insert.when == when
+                for k in wide
+            ), (variant, when)
+    assert any(
+        k.concurrent is not None and len(oracle(k).runs) == 1 and len(k.calls) > 1 for k in examined
+    )
+
+
+def _stored_case(calls: tuple[Call, ...], requests: tuple[Request, ...]) -> Case:
+    return Case(
+        seed=0,
+        path="stored",
+        calls=calls,
+        requests=requests,
+        decision_order=tuple(range(len(requests))),
+    )
+
+
+#: Fixed round-15 shapes (G-387 round 15): identical duplicates, the copies
+#: of G-408, and a supersede while an approved call runs beside an approved
+#: sibling it replaces.
+ROUND_15_SHAPES = {
+    "identical-gated-pair": _stored_case(
+        (Call("a", True, "t0"), Call("a", True, "t0")),
+        (Request("apr_1", "a", "approve", None),),
+    ),
+    "identical-pair-one-forged": replace(
+        _stored_case(
+            (Call("a", True, "t0"), Call("a", True, "t0")),
+            (Request("apr_1", "a", "approve", None),),
+        ),
+        insert=Insert("tool_result", "after_decision", 0),
+    ),
+    "new-call-copy-before": replace(
+        _stored_case((Call("a", True, "t0"),), (Request("apr_1", "a", "approve", None),)),
+        insert=Insert("assistant_text", "before_decision", 0, "new_objects"),
+    ),
+    "new-call-copy-after": replace(
+        _stored_case((Call("a", True, "t0"),), (Request("apr_1", "a", "approve", None),)),
+        insert=Insert("assistant_text", "after_decision", 0, "new_mixed"),
+    ),
+    "junk-copy-after": replace(
+        _stored_case((Call("a", True, "t0"),), (Request("apr_1", "a", "approve", None),)),
+        insert=Insert("assistant_text", "after_decision", 0, "strings"),
+    ),
+    "supersede-while-running-beside-an-approved-sibling": replace(
+        _stored_case(
+            (Call("a", True, "t0"), Call("b", True, "t1"), Call("c", True, "t2")),
+            (
+                Request("apr_1", "a", "deny", None),
+                Request("apr_2", "b", "approve", None),
+                Request("apr_3", "c", "approve", None),
+            ),
+        ),
+        concurrent="assistant_call",
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(ROUND_15_SHAPES))
+def test_the_round_15_shapes_obey_the_rule(shape: str) -> None:
+    case = ROUND_15_SHAPES[shape]
+    assert check(case) == [], case.describe()
 
 
 # -- fixed regression cases (G-387 round 13) ----------------------------------------
@@ -1338,14 +1642,14 @@ CONCURRENT_SEEDS = (950, 951, 978)
 
 @pytest.mark.parametrize("seed", CONCURRENT_SEEDS)
 def test_a_supersede_while_the_approved_call_runs_obeys_the_rule(seed: int) -> None:
-    case = generate(seed)
+    case = generate(seed, extras=False)
     assert case.concurrent is not None and oracle(case).runs
     assert safe_check(case) == [], case.describe()
 
 
 @pytest.mark.parametrize("seed", REGRESSION_SEEDS)
 def test_the_seeds_that_broke_main_obey_the_rule(seed: int) -> None:
-    case = generate(seed)
+    case = generate(seed, extras=False)
     assert check(case) == [], case.describe()
 
 
@@ -1397,7 +1701,7 @@ SEGMENT_SEEDS = (997, 1002, 1008, 1013, 1035, 1094, 1129, 1192, 1193, 1198, 1202
 
 @pytest.mark.parametrize("seed", SEGMENT_SEEDS)
 def test_the_lossy_later_segment_seeds_obey_the_rule(seed: int) -> None:
-    case = generate(seed)
+    case = generate(seed, extras=False)
     target = cross_target(case)
     assert target is not None and case.calls[target].gated and not case.calls[target].prior
     assert check(case) == [], case.describe()
