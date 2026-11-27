@@ -139,13 +139,23 @@ def test_a_later_row_still_replaces_the_same_calls_earlier_result() -> None:
             {
                 "type": "tool_result",
                 "tool_results": [
-                    {"tool_call_id": "a", "tool_name": "shout", "args": {"value": "S"}, "result": "one"}
+                    {
+                        "tool_call_id": "a",
+                        "tool_name": "shout",
+                        "args": {"value": "S"},
+                        "result": "one",
+                    }
                 ],
             },
             {
                 "type": "tool_result",
                 "tool_results": [
-                    {"tool_call_id": "a", "tool_name": "shout", "args": {"value": "S"}, "result": "two"}
+                    {
+                        "tool_call_id": "a",
+                        "tool_name": "shout",
+                        "args": {"value": "S"},
+                        "result": "two",
+                    }
                 ],
             },
         ]
@@ -197,3 +207,30 @@ def test_a_new_message_on_a_parked_step_replays_each_result_once() -> None:
     seen = occurrences(requests[-1])
     assert set(seen.values()) == {1}, seen
     assert len(seen) == 2
+
+
+def test_a_later_different_result_for_a_call_after_a_host_row_is_not_replayed() -> None:
+    """Not next to the earlier row, a second result for a call that already
+    has one in its segment answers nothing (the first result stands, as for
+    every outcome reader), so the replay shows only the first."""
+    session = a_session("guarded")
+    requests: list[LlmRequest] = []
+    runtime = guarded_runtime(once([], requests), {})
+    result = {"tool_call_id": "a", "tool_name": "shout", "args": {"value": "S"}}
+    session.thread().record(
+        [
+            {"type": "user", "content": "go"},
+            {
+                "type": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "a", "name": "shout", "arguments": {"value": "S"}}],
+            },
+            {"type": "tool_result", "tool_results": [{**result, "result": "one"}]},
+            dict(NOTE),
+            {"type": "tool_result", "tool_results": [{**result, "result": "two"}]},
+        ]
+    )
+
+    runtime.send(session, "Next")
+
+    assert replayed_results(requests[-1]) == [("shout", "one", "S")]

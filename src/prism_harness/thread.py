@@ -2,38 +2,42 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from contextvars import ContextVar
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypeVar
 
 from prism_harness.errors import HarnessError
 from prism_harness.stores.base import SessionStore
-from prism_harness.thread_rows import superseding_denials
+from prism_harness.thread_rows import REPLACED_STEP, superseding_denials
 
 __all__ = ["Thread", "ThreadMessage"]
 
-#: The (thread key, run id) the RUNTIME is recording rows for, set only around
-#: its own record calls (:func:`record_in_run`). A row recorded under it is
-#: the runtime's own, inside that run; any other row, whatever run id a caller
-#: passes, is outside (DECISION B, G-387 round 13).
-_RECORDING: ContextVar[tuple[str, str] | None] = ContextVar(
-    "prism_harness_recording_in_run", default=None
-)
+T = TypeVar("T")
+
+#: The field on the stored thread document (beside ``messages``, never a
+#: row) that holds a resolution's CLAIM on the paused step while the resolver
+#: runs its approved calls (G-404, G-387 round 14): ``{token, until}``, the
+#: claim's private token and when it lapses (epoch seconds). While it stands
+#: the thread takes no row but the resolver's own answer, so a superseding
+#: row can never deny a call that is running, whoever records it.
+CLAIM = "harness_resolving"
 
 
-def record_in_run(
-    thread: Thread, messages: Sequence[dict[str, Any]], run_id: str
+def _record_in_run(
+    thread: Thread,
+    messages: Sequence[dict[str, Any]],
+    run_id: str,
+    release: str | None = None,
 ) -> list[ThreadMessage]:
     """Record ``messages`` as the runtime's own rows of run ``run_id``.
 
-    Internal: the runtime's record calls for its own turn rows."""
-    token = _RECORDING.set((thread.key, run_id))
-    try:
-        return thread.record(messages, run_id)
-    finally:
-        _RECORDING.reset(token)
+    Internal, and scoped to exactly this one record call (G-406): inside-ness
+    travels as an argument of this write, never as ambient state that a host
+    write made during it (from a store, a listener) could share. With
+    ``release``, the same write ends the resolution claim that token holds."""
+    return thread._append(messages, run_id, run_id, release)
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,16 @@ class Thread:
 
         return [self._to_message(entry) for entry in entries if isinstance(entry, dict)]
 
+    def rows(self) -> list[dict[str, Any]]:
+        """The stored messages as every reader takes them, one per message.
+
+        A 0.5.x ``harness_replaced_step`` mark names a thread POSITION
+        (``entry.position``); the readers take it as the row's place in this
+        list, so it is mapped here (G-387 round 14): a mark naming a position
+        no row has names nothing. Every other row is the stored one."""
+        entries = self.messages()
+        return _indexed([entry.message for entry in entries], [e.position for e in entries])
+
     def count(self) -> int:
         return len(self.messages())
 
@@ -97,86 +111,121 @@ class Thread:
 
         A row that SUPERSEDES the paused step (DECISION B, G-387 round 13) is
         recorded after one denial for each of that step's calls that has no
-        result: any assistant row with tool calls, and an assistant text row
-        or a user row recorded outside the runs that own the step (see
-        :func:`~prism_harness.thread_rows.superseding_denials`). Nothing of the
-        step runs after it, and no decision is accepted for it.
+        result, IN THE SAME WRITE: any assistant row with tool calls, and an
+        assistant text row or a user row recorded outside the runs that own
+        the step (see :func:`~prism_harness.thread_rows.superseding_denials`).
+        A run id passed here is always outside. Nothing of the step runs after
+        it, and no decision is accepted for it.
+
+        While a resume is running the step's approved calls (G-404) the
+        thread takes no row at all: :class:`~prism_harness.errors.HarnessError`
+        ``session_locked``, with nothing written. Record it once the resume
+        has answered the step.
         """
+        return self._append(messages, run_id, None)
+
+    def _append(
+        self,
+        messages: Sequence[dict[str, Any]],
+        run_id: str | None,
+        inside: str | None,
+        release: str | None = None,
+    ) -> list[ThreadMessage]:
         if not messages:
             return []
-        recording = _RECORDING.get()
-        inside = run_id if run_id is not None and recording == (self._key, run_id) else None
+        batch_in = list(messages)
 
         def append() -> list[ThreadMessage]:
             stored = self._store.get(self._key) or {}
+            claim = stored.get(CLAIM)
+            held = claim.get("token") if isinstance(claim, dict) else None
+            if _standing(claim) and (release is None or held != release):
+                raise HarnessError.session_locked(self._key, 0)
             existing = [
                 entry for entry in (stored.get("messages") or []) if isinstance(entry, dict)
             ]
+            listed = [entry for entry in existing if isinstance(entry.get("message"), dict)]
+            positions = [_position(entry) for entry in listed]
+            # Read in index terms (see rows()); written as given.
+            readable = _indexed([entry["message"] for entry in listed], positions)
+            as_read = _indexed(batch_in, positions)
+            original = {id(read): given for read, given in zip(as_read, batch_in, strict=True)}
+            batch = [
+                original.get(id(row), row)
+                for row in superseding_denials(
+                    [
+                        (
+                            row,
+                            entry.get("run_id") if isinstance(entry.get("run_id"), str) else None,
+                        )
+                        for row, entry in zip(readable, listed, strict=True)
+                    ],
+                    as_read,
+                    run_id,
+                    inside,
+                )
+            ]
             recorded_at = datetime.now(timezone.utc).isoformat()
-            batch = superseding_denials(
-                [
-                    (
-                        entry["message"],
-                        entry.get("run_id") if isinstance(entry.get("run_id"), str) else None,
-                    )
-                    for entry in existing
-                    if isinstance(entry.get("message"), dict)
-                ],
-                list(messages),
-                run_id,
-                inside,
+            last = max(
+                [len(existing), *(_position(entry) for entry in existing)],
+                default=0,
             )
-
             appended = [
                 {
-                    "position": len(existing) + index + 1,
+                    "position": last + index + 1,
                     "message": message,
                     "run_id": run_id,
                     "recorded_at": recorded_at,
                 }
                 for index, message in enumerate(batch)
             ]
-
-            self._store.put(self._key, {**stored, "messages": [*existing, *appended]})
+            document = {**stored, "messages": [*existing, *appended]}
+            if release is not None and held == release:
+                document.pop(CLAIM, None)
+            self._store.put(self._key, document)
 
             return [self._to_message(entry) for entry in appended]
 
         return self._store.with_lock(self._key, append)
 
-    def supersede_paused_step(self) -> None:
-        """Supersede the paused step now (DECISION B): one denial for each of
-        its gated calls that has no result, recorded with no run id. What a
-        new message does before its turn reads the thread: nothing of the
-        step runs, whatever was decided on it, and no decision is accepted
-        for it afterwards.
+    def _claim(
+        self,
+        token: str,
+        seconds: float,
+        work: Callable[[list[dict[str, Any]]], T | None],
+    ) -> T | None:
+        """Internal (G-404): read ``work`` from the rows inside the thread lock,
+        and when it finds something to resolve, claim the thread for ``token``
+        in the same lock, for ``seconds``. A superseding row recorded after
+        the read is refused until the claim is released; one recorded before
+        it is in the rows ``work`` read."""
 
-        Internal: called by the runtime when a new message starts a turn."""
-
-        def append() -> None:
+        def claim() -> T | None:
             stored = self._store.get(self._key) or {}
-            existing = [
-                entry for entry in (stored.get("messages") or []) if isinstance(entry, dict)
-            ]
-            rows = [
-                (
-                    entry["message"],
-                    entry.get("run_id") if isinstance(entry.get("run_id"), str) else None,
+            if _standing(stored.get(CLAIM)):
+                raise HarnessError.session_locked(self._key, 0)
+            found = work(self.rows())
+            if found is not None:
+                self._store.put(
+                    self._key,
+                    {**stored, CLAIM: {"token": token, "until": time.time() + max(seconds, 1)}},
                 )
-                for entry in existing
-                if isinstance(entry.get("message"), dict)
-            ]
-            batch = superseding_denials(rows, [{"type": "user"}], None)
-            if len(batch) == 1:
-                return
-            denial = {
-                "position": len(existing) + 1,
-                "message": batch[0],
-                "run_id": None,
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
-            }
-            self._store.put(self._key, {**stored, "messages": [*existing, denial]})
+            return found
 
-        self._store.with_lock(self._key, append)
+        return self._store.with_lock(self._key, claim)
+
+    def _release(self, token: str) -> None:
+        """Internal (G-404): end ``token``'s claim, if it still stands."""
+
+        def release() -> None:
+            stored = self._store.get(self._key) or {}
+            claim = stored.get(CLAIM)
+            if isinstance(claim, dict) and claim.get("token") == token:
+                rest = dict(stored)
+                rest.pop(CLAIM, None)
+                self._store.put(self._key, rest)
+
+        self._store.with_lock(self._key, release)
 
     def clear(self) -> None:
         """Forget the conversation.
@@ -211,3 +260,38 @@ class Thread:
             run_id=run_id if isinstance(run_id, str) else None,
             recorded_at=recorded_at if isinstance(recorded_at, str) else "",
         )
+
+
+def _standing(claim: object) -> bool:
+    """Whether a stored claim still holds: the shape the runtime writes, not
+    yet lapsed. A claim a crashed resolver left lapses with its lock's ttl."""
+    if not isinstance(claim, Mapping):
+        return False
+    until = claim.get("until")
+    return (
+        isinstance(claim.get("token"), str)
+        and isinstance(until, (int, float))
+        and not isinstance(until, bool)
+        and until > time.time()
+    )
+
+
+def _position(entry: Mapping[str, Any]) -> int:
+    position = entry.get("position")
+    return position if type(position) is int else 0
+
+
+def _indexed(rows: Sequence[dict[str, Any]], positions: Sequence[int]) -> list[dict[str, Any]]:
+    """``rows`` with each 0.5.x replaced-step mark's thread position mapped
+    to its row's place among ``rows`` (from 1), or to 0 when no row of those
+    holds that position. Unchanged rows are the same objects."""
+    place: dict[int, int] = {}
+    for index, position in enumerate(positions):
+        place.setdefault(position, index + 1)
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        mark = row.get(REPLACED_STEP)
+        if isinstance(mark, dict) and type(mark.get("position")) is int:
+            row = {**row, REPLACED_STEP: {**mark, "position": place.get(mark["position"], 0)}}
+        out.append(row)
+    return out

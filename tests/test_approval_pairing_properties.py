@@ -880,11 +880,7 @@ def check(case: Case) -> list[str]:
     ran: list[tuple[str, str]] = []
     during: list[Callable[[], None]] = []
     requests: list[LlmRequest] = []
-    tools = (
-        ToolRegistry()
-        .register(TokenTool(GATED, ran, during))
-        .register(TokenTool(UNGATED, ran))
-    )
+    tools = ToolRegistry().register(TokenTool(GATED, ran, during)).register(TokenTool(UNGATED, ran))
     runtime = AgentRuntime(
         client=a_model(case, requests), modes=SPENT if case.spent else MODES, tools=tools
     )

@@ -427,14 +427,15 @@ def test_a_failed_task_row_write_emits_no_tool_denied(monkeypatch: pytest.Monkey
     seen: list[HarnessEvent] = []
     events.listen(seen.append)
     world.runtime._events = events
-    original = Thread.record
+    # Every write, the runtime's own in-run record included (G-387 round 14).
+    original = Thread._append
 
-    def failing(self: Thread, messages: Any, run_id: str | None = None) -> Any:
+    def failing(self: Thread, messages: Any, *args: Any) -> Any:
         if "::sub::worker" in self._key and any(row.get("type") == "user" for row in messages):
             raise OSError("store down")
-        return original(self, messages, run_id)
+        return original(self, messages, *args)
 
-    monkeypatch.setattr(Thread, "record", failing)
+    monkeypatch.setattr(Thread, "_append", failing)
 
     result = direct(world, world.root(), RunContext.root("host", RunBudget(8)), "New task.")
 

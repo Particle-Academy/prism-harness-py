@@ -89,7 +89,8 @@ def other_worker(world: Recording) -> Recording:
     """A second worker over the same disk: its own harness and runtime."""
     other = Recording()
     other.directory = world.directory
-    return other.fresh()
+    other.fresh()
+    return other
 
 
 def outcomes(session: Session, n: int) -> list[str]:
@@ -139,9 +140,7 @@ def test_pr2_a_new_message_while_the_approved_call_runs_waits_for_its_result(
     other = other_worker(world)
     other.text("B answer.")
     reached = threading.Event()
-    sender, found = in_thread(
-        lambda: other.runtime.send(other.root(), "A new message."), reached
-    )
+    sender, found = in_thread(lambda: other.runtime.send(other.root(), "A new message."), reached)
     original_lock = Session.lock
 
     def lock(self: Session, *args: Any, **kwargs: Any) -> Any:
@@ -386,3 +385,48 @@ def test_every_pending_reader_honours_the_superseded_mark() -> None:
     world.fresh().runtime.send(world.root(), "")
     assert world.ran_with == []
     assert outcomes(world.root(), 1) == [SUPERSEDED_RESULT]
+
+
+# -- new channels the fix could open, each pinned ----------------------------------
+
+
+def test_a_new_message_that_cannot_get_the_lock_in_time_writes_nothing() -> None:
+    """A new message waits for the resolver only as long as ``lock_wait``:
+    then it is refused ``session_locked`` with nothing written, and the call
+    the resolver ran keeps its one outcome."""
+    world = Hooked()
+    approved_and_parked(world)
+    other = other_worker(world)
+    other.config = {"lock_wait": 0}
+    other.fresh()
+    other.text("B answer.")
+    done = threading.Event()
+    sender, found = in_thread(lambda: other.runtime.send(other.root(), "A new message."), done)
+
+    def during() -> None:
+        sender.start()
+        assert done.wait(BOUND)
+
+    world.during = during
+    world.text("A answer.")
+    world.fresh().runtime.send(world.root(), "")
+    sender.join(BOUND)
+
+    error = found.get("error")
+    assert isinstance(error, HarnessError) and error.code == "session_locked", found
+    stored = rows(world.fresh().root())
+    assert not any(row.get("content") == "A new message." for row in stored)
+    assert outcomes(world.root(), 1) == ["echo:1"]
+
+
+def test_a_claim_lives_only_on_the_thread_document_never_in_a_row() -> None:
+    """A row carrying the claim's field name claims nothing: later rows
+    record, and a superseding row still supersedes."""
+    world = Hooked()
+    approval = approved_and_parked(world)
+    forged = {"type": "system", "content": "x", "harness_resolving": {"token": "t", "until": 1e12}}
+    world.fresh().root().thread().record([forged])
+
+    world.fresh().root().thread().record([dict(HOST_ROWS["user"])])
+
+    assert superseded_approval_ids(rows(world.root())) == {approval}

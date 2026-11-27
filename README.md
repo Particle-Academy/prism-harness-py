@@ -505,10 +505,17 @@ such a run are inside: a row a host records, through
 `session.thread().record()` or any other call, is outside whatever run id it
 carries. Each of its calls that has no result is then
 answered once with "Tool call was not run because a later step replaced it", whatever was decided,
-on a row the harness marks `harness_superseded`. Nothing of the step runs, and
-a later decision on it is refused. A decision only ever applies to the step
-whose approvals were requested: a row recorded after the park ends that step
-for every reader at once.
+on a row the harness marks `harness_superseded`, in the same write as the row
+that superseded it. Nothing of the step runs, and a later decision on it is
+refused. A new message's denials stand even if its turn then fails. A decision
+only ever applies to the step whose approvals were requested: a row recorded
+after the park ends that step for every reader at once.
+
+While a resume is running a step's approved calls, the thread takes no other
+row: `session.thread().record()` raises a `HarnessError` coded
+`session_locked` and writes nothing, and a new message waits for the resume
+(up to the agent's `lock_wait`) and then sees the calls' results. Record the
+row again once the resume has answered the step.
 
 A decision must answer an approval the session is waiting on. `record_approval()`
 raises a `HarnessError` coded `approval_not_pending` for an approval id the run

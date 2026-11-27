@@ -584,7 +584,7 @@ def saved_refs(session: Session) -> tuple[Tree | None, dict[str, str] | None]:
     refs = session.child_refs()
     if refs is not None:
         return refs["tree"], refs["plan_ledger"]
-    row = paused_approval_row([entry.message for entry in session.thread().messages()])
+    row = paused_approval_row(session.thread().rows())
     return saved_tree(row), _saved_plan_ledger(row)
 
 

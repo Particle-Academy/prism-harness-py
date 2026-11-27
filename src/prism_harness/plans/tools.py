@@ -411,5 +411,5 @@ class _PlanTools:
 
     def _approved(self, tool: str, digest: str) -> bool:
         """A person approved exactly this call, and it has not run yet. Read from the thread."""
-        rows = [entry.message for entry in self._session.thread().messages()]
+        rows = self._session.thread().rows()
         return approved_calls_awaiting_result(rows, tool, digest) > 0

@@ -107,7 +107,11 @@ def anthropic_step(*calls: LlmToolCall, structured: Any = BAD) -> LlmResponse:
 def test_a_structured_first_step_that_parks_has_no_document(parsed: str) -> None:
     session = a_session()
     client = scripted(
-        [anthropic_step(LlmToolCall("c1", "echo", {}), structured=BAD if parsed == "with_parse" else None)]
+        [
+            anthropic_step(
+                LlmToolCall("c1", "echo", {}), structured=BAD if parsed == "with_parse" else None
+            )
+        ]
     )
 
     response = runtime(client).send_structured(session, "Answer.", SCHEMA)
@@ -194,9 +198,7 @@ def test_a_host_row_recorded_inside_the_runtimes_write_window_is_outside(
 
     assert seen == ["recorded"]
     stored = rows(world.fresh().root())
-    assert [row[SUPERSEDED] for row in stored if SUPERSEDED in row] == [
-        {"approval_ids": approvals}
-    ]
+    assert [row[SUPERSEDED] for row in stored if SUPERSEDED in row] == [{"approval_ids": approvals}]
     assert pending_approval_ids(stored) == []
     with pytest.raises(HarnessError) as caught:
         record_approval(world.fresh().root(), approvals[0], True)

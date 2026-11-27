@@ -92,7 +92,9 @@ def denials_for_the_parked_step(session: Session) -> int:
         mark = row.get(REPLACED_STEP)
         owner = mark.get("position") if isinstance(mark, dict) else step
         if owner == 2 + SHIFT:
-            count += sum(1 for result in row["tool_results"] if result["result"] == SUPERSEDED_RESULT)
+            count += sum(
+                1 for result in row["tool_results"] if result["result"] == SUPERSEDED_RESULT
+            )
     return count
 
 
@@ -100,7 +102,8 @@ def denials_for_the_parked_step(session: Session) -> int:
 def test_a_replaced_step_mark_is_read_by_thread_position(name: str) -> None:
     world = Upgrade()
     load_shifted(world, name)
-    stored = [entry.message for entry in load_again(world).thread().messages()]
+    # Read as every reader takes the rows: Thread.rows().
+    stored = load_again(world).thread().rows()
     approvals = [request["approval_id"] for request in stored[1]["tool_approval_requests"]]
 
     # The mark is read: both approvals read as replaced, none as approved.
@@ -205,3 +208,30 @@ def test_a_0_5_x_denial_right_after_the_step_still_names_its_approvals() -> None
 def test_the_fixture_file_is_the_one_the_upgrade_tests_read() -> None:
     path = Path(__file__).parent / "fixtures" / "py-0.5.x-replaced-step-threads.json"
     assert json.loads(path.read_text(encoding="utf-8")) == FIXTURE
+
+
+def test_a_mark_naming_no_rows_position_names_nothing_and_the_step_is_denied_once() -> None:
+    world = Upgrade()
+    session = load_shifted(world, "later_step-resumed")
+    key = f"{session.key()}:thread"
+    document = session._durable.get(key)
+    assert document is not None
+    for entry in document["messages"]:
+        mark = entry["message"].get(REPLACED_STEP)
+        if isinstance(mark, dict):
+            mark["position"] = 999
+    session._durable.put(key, document)
+
+    world.text("Done.")
+    world.fresh()
+    world.runtime.send(load_again(world), "")
+
+    # Main gives the step its own one denial per call, and runs nothing.
+    entries = load_again(world).thread().messages()
+    own = [e for e in entries if e.message.get(REPLACED_STEP) == {"position": 2 + SHIFT}]
+    assert len(own) == 1
+    assert [r["result"] for r in own[0].message["tool_results"]] == [SUPERSEDED_RESULT] * 2
+    assert world.ran == []
+    # New rows go after the highest position, never onto an earlier one.
+    positions = [entry.position for entry in entries]
+    assert positions == sorted(positions) and len(set(positions)) == len(positions)
