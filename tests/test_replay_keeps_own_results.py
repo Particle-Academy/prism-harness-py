@@ -124,7 +124,10 @@ def test_two_ungated_calls_sharing_an_id_each_keep_their_result() -> None:
     ]
 
 
-def test_a_later_row_still_replaces_the_same_calls_earlier_result() -> None:
+def test_a_later_row_for_the_same_call_leaves_the_first_result_standing() -> None:
+    """Decision 7 (G-387 round 17): of two results for one call (one key)
+    the FIRST stands in what is sent, the one every outcome reader counts,
+    even in the next row (the fold was last-wins)."""
     session = a_session("guarded")
     requests: list[LlmRequest] = []
     runtime = guarded_runtime(once([], requests), {})
@@ -163,7 +166,7 @@ def test_a_later_row_still_replaces_the_same_calls_earlier_result() -> None:
 
     runtime.send(session, "Next")
 
-    assert replayed_results(requests[-1]) == [("shout", "two", "S")]
+    assert replayed_results(requests[-1]) == [("shout", "one", "S")]
 
 
 # -- item 5: each result emitted once across the whole replay ---------------------
