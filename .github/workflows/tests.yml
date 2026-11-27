@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - "*.x"
+      - "release/*.x"
   pull_request:
 
 permissions:
