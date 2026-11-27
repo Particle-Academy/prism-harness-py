@@ -498,8 +498,8 @@ def step_rows(rows: Sequence[Mapping[str, Any]], step: int) -> list[Mapping[str,
     tool calls, so these are its segment; an earlier step reads only the rows
     before the next step with tool calls (:func:`replaced_earlier_steps`). A
     result is never moved to another step's call because its arguments match
-    that call exactly: that would leave an approved newest call unanswered,
-    to run again on every resume. The one exception is the 0.5.x line's
+    that call exactly: every call keeps exactly one outcome, and nothing runs
+    twice. The one exception is the 0.5.x line's
     :data:`REPLACED_STEP` row, which names its step's position: it answers
     only that step (denials, never a run), and never this one."""
     return [row for row in rows[step + 1 :] if belongs_to(row, step)]

@@ -10,10 +10,7 @@ has exactly one outcome, and nothing runs twice.
 The case this pins: a result recorded in a LATER step's segment, under an id
 that an EARLIER step's call also carries, whose stored arguments are LOSSY:
 they differ from the later call's own and match the earlier call's exactly.
-Another writer on a shared store can leave exactly that. A rule that let the
-exact arguments carry the result back to the earlier call would leave the
-approved later call with no result, so it would run again on every resume.
-Here the result answers the later call (it fails closed: the call is done),
+Another writer on a shared store can leave exactly that. Here the result answers the later call (it fails closed: the call is done),
 the earlier call keeps its one replaced denial, and the approved later call
 runs at most once over three resumes.
 
