@@ -970,6 +970,9 @@ def _cell(acted: str, outcomes: list[str], replaced: bool, decided: bool | None)
         "replaced": replaced,
         "decided": decided,
         "ran": [("echo", 1)] if outcomes == _RAN else [],
+        # G-387 round 17: every request a provider was SENT answers every
+        # call of every step it holds, once, in that step's own result run.
+        "sent": [],
     }
 
 
@@ -1216,7 +1219,25 @@ def _resolution(phase: str, side: str, action: str) -> dict[str, Any]:
         "replaced": approval in superseded_approval_ids(world.fresh().root().thread().rows()),
         "decided": approval_decisions(world.fresh().root().thread().rows()).get(approval),
         "ran": world.ran_with,
+        "sent": _sent_problems(world),
     }
+
+
+def _sent_problems(world: World) -> list[str]:
+    """Every provider request the world was sent, plus the next turn's, each
+    checked by the round-17 rule (:func:`test_review_r16_items.misplaced`)."""
+    from test_review_r16_items import misplaced
+
+    world.text("Later answer.")
+    try:
+        world.fresh().runtime.send(world.root(), "Later.")
+    except HarnessError:
+        pass
+    return [
+        f"request {number}: {problem}"
+        for number, request in enumerate(world.requests)
+        for problem in misplaced(list(request.messages))
+    ]
 
 
 RESOLUTION_CELLS = [
@@ -1240,3 +1261,162 @@ def test_the_resolution_table_covers_every_cell() -> None:
         for side in RESOLUTION_SIDES:
             for action in RESOLUTION_ACTIONS:
                 assert (phase, side, action) in RESOLUTION_EXPECTED
+
+
+# -- the placement matrix (G-387 round 17) -------------------------------------------
+#
+# For every action a host or a tool can take WHILE a call runs (or, for the
+# ``asked`` phase, when the step's gated approval is asked, before its ungated
+# calls start), approved and ungated: whether the run stopped, every call's
+# outcomes (exactly one each), what ran, and every request a provider was SENT
+# checked by the one rule real providers hold it to (each call answered once,
+# in its own step's result run). Expected values written before the fix.
+
+PLACEMENT_GATING = ("approved", "ungated")
+PLACEMENT_ACTIONS = (
+    "user",
+    "text",
+    "user_text",
+    "system",
+    "nested_plain",
+    "nested_park",
+    "host_step_none",
+    "host_step_outer",
+    "host_step_other",
+)
+PLACEMENT_PHASES = ("running", "asked")
+
+
+def _placement_expected(phase: str, gating: str, action: str) -> dict[str, Any] | None:
+    if phase == "asked":
+        # The approval is asked of the gated sibling; the row lands before
+        # the ungated call starts. Only rows a listener writes apply.
+        if gating != "ungated" or action not in ("user", "text", "user_text", "system"):
+            return None
+        replaced = action != "system"
+        return {
+            "stopped": None,
+            "outcomes": {
+                "u1": [_REPLACED[0]] if replaced else ["lookup:1"],
+                "c2": [_REPLACED[0]] if replaced else [],
+            },
+            "ran": [] if replaced else [("lookup", 1)],
+            "reported_dead": [],
+            "sent": [],
+        }
+    ran_tool = "echo" if gating == "approved" else "lookup"
+    parks = action == "nested_park" or action.startswith("host_step")
+    return {
+        "stopped": "parked_elsewhere" if parks else None,
+        "outcomes": {"c1": [f"{ran_tool}:1"]},
+        "ran": [(ran_tool, 1)],
+        "reported_dead": [],
+        "sent": [],
+    }
+
+
+def _placement(phase: str, gating: str, action: str) -> dict[str, Any]:
+    from test_repeated_call_ids import say
+    from test_review_r16_items import Both, _concurrent
+
+    from prism_harness import HarnessEvents
+    from prism_harness.events import ToolApprovalAsked
+    from prism_harness.runtime import current_turn_run_id
+
+    world = Both()
+    world.config = {"lock_wait": 0}
+    world.fresh()
+
+    def act() -> None:
+        if action.startswith("host_step"):
+            which = action.removeprefix("host_step_")
+            outer = current_turn_run_id(world.root().key())
+            run = {"none": None, "outer": outer, "other": "run_other"}[which]
+            world.root().thread().record(
+                [
+                    {
+                        "type": "assistant",
+                        "content": "",
+                        "tool_calls": [{"id": "h9", "name": "echo", "arguments": {"n": 9}}],
+                        "tool_approval_requests": [{"approval_id": "apr_h9", "tool_call_id": "h9"}],
+                    }
+                ],
+                run,
+            )
+        else:
+            _concurrent(world, action)
+
+    calls: tuple[tuple[str, str, dict[str, Any]], ...]
+    if phase == "asked":
+        bus = HarnessEvents()
+        fired: list[int] = []
+
+        def listener(event: object) -> None:
+            if isinstance(event, ToolApprovalAsked) and not fired:
+                fired.append(1)
+                act()
+
+        bus.listen(listener)
+        world.runtime._events = bus
+        calls = (("u1", "lookup", {"n": 1}), ("c2", "echo", {"n": 2}))
+    elif gating == "approved":
+        _, [approval] = _parked_world(world)
+        record_approval(world.fresh().root(), approval, True)
+        world.during = act
+        calls = ()
+    else:
+        world.during = act
+        calls = (("c1", "lookup", {"n": 1}),)
+    stopped: str | None = None
+    reported: list[str] = []
+    world.text("Done.")
+    try:
+        if calls:
+            say(world, *calls)
+            world.queue.insert(0, world.queue.pop())
+            response = world.runtime.send(world.root(), "Go")
+        else:
+            response = world.fresh().runtime.send(world.root(), "")
+        reported = [p.id for p in response.pending_approvals]
+    except HarnessError as error:
+        stopped = "parked_elsewhere" if "parked_elsewhere" in str(error) else str(error.code)
+    rows = world.fresh().root().thread().rows()
+    pending = set(pending_approval_ids(rows))
+    names = ("u1", "c2") if phase == "asked" else ("c1",)
+    found = {
+        name: [
+            entry["result"]
+            for row in rows
+            if row.get("type") == "tool_result"
+            for entry in row["tool_results"]
+            if entry["tool_call_id"] == name
+        ]
+        for name in names
+    }
+    return {
+        "stopped": stopped,
+        "outcomes": found,
+        "ran": [(name, args.get("n")) for name, args in world.ran_with if args.get("n") != 9],
+        "reported_dead": [approval for approval in reported if approval not in pending],
+        "sent": _sent_problems(world),
+    }
+
+
+def _parked_world(world: World) -> tuple[Session, list[str]]:
+    from test_repeated_call_ids import park
+
+    return park(world, ("c1", "echo", {"n": 1}))
+
+
+PLACEMENT_CELLS = [
+    (phase, gating, action)
+    for phase in PLACEMENT_PHASES
+    for gating in PLACEMENT_GATING
+    for action in PLACEMENT_ACTIONS
+    if _placement_expected(phase, gating, action) is not None
+]
+
+
+@pytest.mark.parametrize(("phase", "gating", "action"), PLACEMENT_CELLS)
+def test_the_placement_matrix(phase: str, gating: str, action: str) -> None:
+    assert _placement(phase, gating, action) == _placement_expected(phase, gating, action)
