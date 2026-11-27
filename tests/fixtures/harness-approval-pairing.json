@@ -1934,10 +1934,40 @@
             "approval_not_pending"
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     }
   ]
 }
