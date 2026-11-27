@@ -660,12 +660,16 @@ def test_a_host_steps_unanswered_ungated_call_is_answered_interrupted_by_the_res
         assert misplaced(list(request.messages)) == []
 
 
+@pytest.mark.parametrize("shape", ["text", "structured"])
 @pytest.mark.parametrize("row", ["user", "assistant_text"])
-def test_a_run_whose_step_was_replaced_meanwhile_never_reports_an_empty_park(row: str) -> None:
+def test_a_run_whose_step_was_replaced_meanwhile_never_reports_an_empty_park(
+    row: str, shape: str
+) -> None:
     """Decision 8: a row recorded when the gated call's approval is asked
     replaces the step, and no newer step waits. The run does not return
-    awaiting_approval with an empty pending list: it says the step was
-    replaced."""
+    awaiting_approval with an empty pending list: finish_reason and
+    stopped_because are "replaced" (the reference's value), nothing is
+    pending, and nothing ran."""
     world = Hooked()
     bus = HarnessEvents()
     fired: list[int] = []
@@ -687,6 +691,13 @@ def test_a_run_whose_step_was_replaced_meanwhile_never_reports_an_empty_park(row
     bus.listen(listener)
     world.runtime._events = bus
     say(world, ("u1", "lookup", {"n": 5}), ("c1", "echo", {"n": 1}))
-    response = world.runtime.send(world.root(), "Go")
-    assert response.finish_reason != "awaiting_approval"
+    if shape == "structured":
+        schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
+        response: Any = world.runtime.send_structured(world.root(), "Go", schema)
+        assert response.structured is None
+    else:
+        response = world.runtime.send(world.root(), "Go")
+    assert response.finish_reason == "replaced"
+    assert response.stopped_because == "replaced"
     assert response.pending_approvals == []
+    assert world.ran_with == []
