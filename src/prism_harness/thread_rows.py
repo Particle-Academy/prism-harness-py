@@ -405,19 +405,15 @@ def _paired(
     """Each stored result paired with the ONE call it answers, by step and
     call index (G-392, G-397).
 
-    Paired by position, never through a map keyed by call id, so every gated
-    call ends with exactly one outcome:
+    A result counts ONLY for the calls of the step whose segment it sits in,
+    never for another step's. Inside the segment it ends the first unanswered
+    call, in call order, with its id, tool name and parsed arguments; else the
+    first with its id and tool name; else the first with its id alone (written
+    without a name, by another writer, or with lossy arguments). So a finished
+    call never reads as unanswered and never runs again, and an earlier step's
+    unanswered gated calls get the replaced-step denial.
 
-    1. a result ends the first call of its own step, in call order, with its
-       id, tool name and arguments and no result yet;
-    2. else the first such call of ANOTHER step: a call that already has its
-       own result anywhere is done, and never gets a replaced-step denial;
-    3. else, within its own step, the first unanswered call with its id and
-       tool name, and then with its id alone (written without a name, or by
-       another writer), so a finished call never reads as unanswered and can
-       never run again. It never ends another step's call.
-
-    An entry identical to one already paired in its OWN step is the same
+    An entry identical to one already paired in its own step is the same
     result restated by a later row, and pairs with nothing.
     """
 
@@ -430,12 +426,6 @@ def _paired(
 
     calls = [_dicts(assistant.get("tool_calls")) for _, assistant, _ in steps]
     paired: list[dict[int, dict[str, Any]]] = [{} for _ in steps]
-    left: list[list[dict[str, Any]]] = [[] for _ in steps]
-
-    def restated(step: int, entry: Mapping[str, Any]) -> bool:
-        # A resume row restates ITS OWN step's results; an identical result in
-        # another step is that step's own, never a restatement.
-        return any(dict(entry) == done for done in paired[step].values())
 
     def first(step: int, entry: Mapping[str, Any], exact: int) -> int | None:
         return next(
@@ -448,37 +438,17 @@ def _paired(
         )
 
     for step, (_, _, entries) in enumerate(steps):
+        left: list[dict[str, Any]] = []
         for entry in entries:
-            if restated(step, entry):
+            if any(dict(entry) == done for done in paired[step].values()):
                 continue
             index = first(step, entry, 2)
             if index is None:
-                left[step].append(dict(entry))
+                left.append(dict(entry))
             else:
                 paired[step][index] = dict(entry)
-
-    for step in range(len(steps)):
-        remaining: list[dict[str, Any]] = []
-        for entry in left[step]:
-            other = next(
-                (
-                    (other, index)
-                    for other in range(len(steps))
-                    if other != step
-                    for index in [first(other, entry, 2)]
-                    if index is not None
-                ),
-                None,
-            )
-            if other is None:
-                remaining.append(entry)
-            else:
-                paired[other[0]][other[1]] = entry
-        left[step] = remaining
-
-    for step in range(len(steps)):
-        for entry in left[step]:
-            if restated(step, entry):
+        for entry in left:
+            if any(entry == done for done in paired[step].values()):
                 continue
             index = first(step, entry, 1)
             if index is None:
@@ -510,7 +480,8 @@ def replaced_steps(
     that is not is resolved, so a decision for a superseded one never runs
     anything, whenever it was made. Each such call gets one result saying a
     later step replaced it, so no gated call is left without an outcome. A
-    call that has its own result anywhere gets none.
+    call with a result in its own step's segment gets none; a result in
+    another step's segment never counts for it.
     """
     steps, superseded = _thread_steps(messages)
     paired = _paired(steps)
