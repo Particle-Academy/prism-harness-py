@@ -601,3 +601,83 @@ def test_a_4000_row_resume_reads_the_store_a_fixed_number_of_times() -> None:
     assert world.ran_with == [("echo", {"n": 1})]
     assert approval_decisions(world.fresh().root().thread().rows())[approval] is True
     assert len(gets) <= 12, len(gets)
+
+
+# -- 3. a nested park ------------------------------------------------------------
+
+
+def test_a_nested_park_stops_the_outer_run_before_another_model_step() -> None:
+    """T3b: while the approved call runs, the tool's own nested send parks a
+    NEW gated step on the same session. The outer run keeps its one outcome
+    and takes no further model step (``parked_elsewhere``), so it never
+    replaces the step its caller was just told is waiting, and no provider
+    request carries a tool call without a result."""
+    world = Hooked()
+    world.config = {"lock_wait": 0}
+    world.fresh()
+    approved_and_parked(world)
+    inner: dict[str, Any] = {}
+
+    def during() -> None:
+        say(world, ("c9", "echo", {"n": 9}))
+        world.queue.insert(0, world.queue.pop())  # the inner send's model step
+        parked = world.runtime.send(world.root(), "Inner.")
+        inner["parked"] = (parked.finish_reason, [p.id for p in parked.pending_approvals])
+
+    world.during = during
+    world.text("Done.")
+    before = len(world.requests)
+    with pytest.raises(HarnessError) as stopped:
+        world.fresh().runtime.send(world.root(), "")
+    assert stopped.value.code == "run_not_permitted"
+    assert "parked_elsewhere" in str(stopped.value)
+    # One request: the inner send's own. The outer run asked nothing more.
+    assert len(world.requests) == before + 1
+    finish, [approval] = inner["parked"]
+    assert finish == "awaiting_approval"
+    stored = world.fresh().root().thread().rows()
+    assert pending_approval_ids(stored) == [approval]
+    assert outcomes(world.root(), 1) == ["echo:1"]
+    assert outcomes(world.root(), 9) == []
+    for request in world.requests:
+        assert every_call_answered(list(request.messages)) == []
+    # The inner step stays answerable and runs once when approved.
+    record_approval(world.fresh().root(), approval, True)
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+    assert world.ran_with == [("echo", {"n": 1}), ("echo", {"n": 9})]
+
+
+# -- 10. the replay shows the decision that stood ---------------------------------
+
+
+def test_the_replay_shows_the_decision_that_stood_when_the_call_was_resolved() -> None:
+    """A decision recorded after its call already has an outcome (a host's
+    raw approval after the call was denied) is never shown to a provider:
+    the replay carries the denial that stood."""
+    world = Hooked()
+    _, approvals = park(world, ("c1", "echo", {"n": 1}))
+    record_approval(world.fresh().root(), approvals[0], False, "no")
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+    world.root().thread().record(
+        [
+            empty_result(
+                tool_approval_responses=[
+                    {"approval_id": approvals[0], "approved": True, "reason": None}
+                ]
+            )
+        ]
+    )
+    assert replayed_decisions(world) == {approvals[0]: False}
+    assert approval_decisions(world.fresh().root().thread().rows()) == {approvals[0]: False}
+    world.text("Again.")
+    world.fresh().runtime.send(world.root(), "Next")
+    shown = [
+        decision
+        for row in world.requests[-1].messages
+        if row["type"] == "tool_result"
+        for decision in row["tool_approval_responses"]
+    ]
+    assert shown and all(decision["approved"] is False for decision in shown)
+    assert world.ran_with == []
