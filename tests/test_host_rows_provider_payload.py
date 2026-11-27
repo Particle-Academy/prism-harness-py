@@ -177,3 +177,68 @@ def test_a_row_the_harness_recorded_keeps_its_reasoning_in_both_payloads() -> No
     anthropic, openai = payloads(requests[1])
     assert "own-plan" in anthropic and "sig_own" in anthropic
     assert "rs_own" in openai and "own-thinking" in openai
+
+
+SUMMARY_1 = [{"type": "summary_text", "text": "first"}]
+SUMMARY_2 = [{"type": "summary_text", "text": "second"}]
+OUTPUT_ITEMS: list[dict[str, Any]] = [
+    {"type": "reasoning", "id": "rs_1", "summary": SUMMARY_1, "encrypted_content": "enc_1"},
+    {"type": "function_call", "id": "c1", "call_id": "call_c1", "name": "shout", "arguments": "{}"},
+    {"type": "reasoning", "id": "rs_2", "summary": SUMMARY_2, "encrypted_content": "enc_2"},
+    {"type": "function_call", "id": "c2", "call_id": "call_c2", "name": "echo", "arguments": "{}"},
+]
+
+#: The step as the OpenAI map sends it from its tool calls alone (a streamed
+#: step, stored with no ``output_items``): each reasoning item right before
+#: the calls it led to.
+FROM_CALLS: list[dict[str, Any]] = [
+    {"type": "reasoning", "id": "rs_1", "summary": SUMMARY_1},
+    {"id": "c1", "call_id": "call_c1", "type": "function_call", "name": "shout", "arguments": "{}"},
+    {"type": "reasoning", "id": "rs_2", "summary": SUMMARY_2},
+    {"id": "c2", "call_id": "call_c2", "type": "function_call", "name": "echo", "arguments": "{}"},
+]
+
+
+@pytest.mark.parametrize("stored", ["streamed, no output_items", "with output_items"])
+@pytest.mark.parametrize("gated", [False, True])
+def test_a_harness_openai_reasoning_step_is_sent_byte_identical_and_in_order(
+    stored: str, gated: bool
+) -> None:
+    from prism_harness import record_approval
+
+    session = a_session("guarded")
+    requests: list[LlmRequest] = []
+    second = "echo" if gated else "shout"
+    items = [{**i, "name": second} if i.get("id") == "c2" else i for i in OUTPUT_ITEMS]
+    from_calls = [{**i, "name": second} if i.get("id") == "c2" else i for i in FROM_CALLS]
+    extra = {} if stored.startswith("streamed") else {"output_items": items}
+    calls = [
+        LlmToolCall("c1", "shout", {}, "call_c1", "rs_1", SUMMARY_1),
+        LlmToolCall("c2", second, {}, "call_c2", "rs_2", SUMMARY_2),
+    ]
+
+    def client(request: LlmRequest) -> LlmResponse:
+        requests.append(request)
+        if len(requests) == 1:
+            return LlmResponse(
+                text="", finish_reason="tool_calls", tool_calls=calls, additional_content=extra
+            )
+        return LlmResponse(text="Done.", finish_reason="stop")
+
+    runtime = guarded_runtime(client, {})
+    response = runtime.send(session, "go")
+    if gated:
+        record_approval(session, response.pending_approvals[0].id, True)
+        runtime.send(session, "")
+    session.thread().record([{"type": "user", "content": "And then?"}])
+    runtime.send(session, "")
+
+    expected = items if extra else from_calls
+    assert len(requests) >= 2
+    for request in requests[1:]:
+        sent = openai_map([message_from_dict(m) for m in request.messages])
+        start = next(i for i, item in enumerate(sent) if item.get("id") == "rs_1")
+        assert json.dumps(sent[start : start + 4]) == json.dumps(expected)
+        # Each call's output comes after the whole step.
+        outputs = [i for i, item in enumerate(sent) if item.get("type") == "function_call_output"]
+        assert outputs and min(outputs) > start + 3
