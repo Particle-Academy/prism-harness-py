@@ -1167,6 +1167,7 @@ def _check(
             own = [r.approval_id for r in case.requests if r.tool_call_id == call.id]
             approval_of[call.token] = own[0] if len(own) == 1 else None
 
+    denied: set[str] = set()
     if case.second and decided:
         # The opposite of the first decision recorded, for the same approval.
         # The first stands; the second records nothing (G-401).
@@ -1179,6 +1180,8 @@ def _check(
                     raise
             else:
                 broken.append("G-401: a turn asking for an unknown tool did not fail")
+        if verdict == "approve":
+            denied.add(approval)
         if case.second_direct:
             session.thread().record(
                 [
@@ -1207,13 +1210,17 @@ def _check(
         broken.append(f"equality: ran {sorted(ran_now)}, the rule runs {sorted(expected.runs)}")
     if any(name == UNGATED for name, _ in ran[before:]):
         broken.append("3: a resume ran an ungated call the step had already run")
-    # 1. A denied call never runs.
+    # 1. A denied call never runs: with no exemption, a call ran under an
+    # approval for which ANY deny was recorded is broken (G-401).
+    denied.update(a for a, (verdict, _) in decided.items() if verdict == "deny")
     for call in gated:
         approval = approval_of.get(call.token)
         if call.token in ran_now and (
             approval is None or decided.get(approval, ("none",))[0] != "approve"
         ):
             broken.append(f"1: {call.token} ran without its own approve")
+        if call.token in ran_now and approval in denied:
+            broken.append(f"1: {call.token} ran though a deny was recorded for its approval")
     # 2. One decision decides at most one call.
     used = [approval_of.get(t) for t in ran_now]
     if None in used or len(set(used)) != len(used):
@@ -1528,6 +1535,22 @@ def _second_decision(k: Case, e: Expected, *, path: str, failure: bool) -> bool:
     )
 
 
+def _deny_after_approve(k: Case, e: Expected, *, path: str) -> bool:
+    """A second decision, a deny, after an approve that would otherwise run."""
+    if not (k.path == path and k.second and not e.repeated and k.insert is None):
+        return False
+    if k.later is not None:
+        return False
+    if path == "live":
+        gated = [c for c in k.calls if c.gated]
+        first = next((gated[i] for i in k.decision_order if gated[i].decision != "none"), None)
+        return first is not None and first.decision == "approve"
+    request = next(
+        (k.requests[i] for i in k.decision_order if k.requests[i].decision != "none"), None
+    )
+    return request is not None and request.decision == "approve"
+
+
 def _second_direct(k: Case, e: Expected, *, direct: bool) -> bool:
     return k.second and k.second_direct == direct
 
@@ -1635,6 +1658,10 @@ def _shapes() -> dict[str, Shape]:
             shapes[f"second decision (G-401), {path}, after a failed turn={failure}"] = (
                 functools.partial(_second_decision, path=path, failure=failure)
             )
+    for path in ("live", "stored"):
+        shapes[f"second decision (G-401), a deny after an approve, {path}"] = functools.partial(
+            _deny_after_approve, path=path
+        )
     for direct in (True, False):
         shapes[f"second decision (G-401), written directly={direct}"] = functools.partial(
             _second_direct, direct=direct
