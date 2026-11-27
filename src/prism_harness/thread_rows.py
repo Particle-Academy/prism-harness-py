@@ -10,13 +10,15 @@ prism-parity's ``harness-thread-rows`` corpus pins it.
 
 from __future__ import annotations
 
+import functools
 import json
 import math
+import operator
 import threading
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 from prism_harness.tool_arguments import usable_arguments
 from prism_harness.tool_policy import args_digest
@@ -42,6 +44,28 @@ __all__ = [
     "tool_result_entry",
     "tool_result_row",
 ]
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _reading(reader: Callable[_P, _R]) -> Callable[_P, _R]:
+    """A public reader: the scope of one top-level call, inside which the
+    index of a list is checked once (see :func:`_index`)."""
+
+    @functools.wraps(reader)
+    def read(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        depth = getattr(_INDEXES, "depth", 0)
+        _INDEXES.depth = depth + 1
+        try:
+            return reader(*args, **kwargs)
+        finally:
+            _INDEXES.depth = depth
+            if not depth:
+                _INDEXES.verified = None
+
+    return read
 
 
 @dataclass(frozen=True)
@@ -143,6 +167,7 @@ def ended_by_start_row(
     return row
 
 
+@_reading
 def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """The thread as the model is shown it.
 
@@ -163,6 +188,7 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return _as_decided(_folded(rows), rows)
 
 
+@_reading
 def placed_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """The thread as a PROVIDER is sent it (G-387 round 15), the PHP
     reference's ``placedRows()`` then the fold of :func:`thread_view`, over
@@ -260,6 +286,7 @@ def _folded(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return _once(view)
 
 
+@_reading
 def standing_decisions(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
     """The decision that STANDS for every approval id the thread holds one
     for (G-401, the recommended rule): the first DENIAL when any decision
@@ -316,6 +343,7 @@ def _step_approvals(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     return ix.asked_by
 
 
+@_reading
 def acted_at(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     """Where each approval's call was first ACTED on (G-387 round 16), by
     approval id: the index of the first row its step owns that holds the
@@ -593,6 +621,7 @@ def _once(view: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+@_reading
 def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
     """Model steps the run paused at the transcript tail has already taken.
 
@@ -617,6 +646,7 @@ def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
     return steps
 
 
+@_reading
 def requested_step(rows: Sequence[Mapping[str, Any]]) -> int | None:
     """THE step a decision may apply to (G-397): the index of the stored
     assistant row whose approval requests the transcript tail is waiting on,
@@ -683,11 +713,13 @@ def step_calls(row: Mapping[str, Any]) -> list[dict[str, Any]]:
     return _dicts(row.get("tool_calls"))
 
 
+@_reading
 def last_tool_step(rows: Sequence[Mapping[str, Any]]) -> int | None:
     """The index of the last :func:`is_tool_step` row, or None."""
     return next((i for i in range(len(rows) - 1, -1, -1) if is_tool_step(rows[i])), None)
 
 
+@_reading
 def pending_approval_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     """The approval ids the run paused at the transcript tail is still waiting
     on: issued by the last assistant step and not yet answered (G-354).
@@ -727,6 +759,7 @@ def pending_approval_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     return list(dict.fromkeys(pending))
 
 
+@_reading
 def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     """The approval ids the run paused at the transcript tail asked for that
     a person has DECIDED and whose call has no result yet: decisions a
@@ -767,6 +800,7 @@ def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+@_reading
 def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     """The approval ids whose call a runner start ended, recorded as not run
     (G-387 rounds 10 and 11): never approved, whatever decision was recorded.
@@ -789,6 +823,7 @@ def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     return _marked(rows, ENDED_BY_START)
 
 
+@_reading
 def superseded_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     """The approval ids whose call was denied because a later step replaced
     the step it was asked on (DECISION B, G-387 round 13): never approved,
@@ -898,6 +933,7 @@ SUPERSEDED = "harness_superseded"
 SUPERSEDED_RESULT = "Tool call was not run because a later step replaced it"
 
 
+@_reading
 def superseding_denials(
     stored: Sequence[tuple[Mapping[str, Any], str | None]],
     batch: Sequence[dict[str, Any]],
@@ -1000,6 +1036,7 @@ def _denial_before(
 REPLACED_STEP = "harness_replaced_step"
 
 
+@_reading
 def belongs_to(rows: Sequence[Mapping[str, Any]], index: int, step: int) -> bool:
     """Whether the row at ``index``, recorded after the step at index
     ``step``, may answer it: every row does, except one MARKED for another
@@ -1054,6 +1091,10 @@ STARTED = "harness_started"
 #: approval. The PHP reference's text, the same in every language.
 INTERRUPTED_RESULT = "Tool call was interrupted, it may have run"
 
+#: The one outcome of a call the harness never started: its started row
+#: could not be written, so it did not run (G-387 round 17).
+NOT_STARTED_RESULT = "Not run: the call could not be started."
+
 #: The read-only flag :meth:`~prism_harness.thread.Thread.rows` puts on a
 #: tool result row the harness itself wrote (under its private in-run
 #: write); the only rows whose marks are honoured. Never taken from a
@@ -1104,6 +1145,7 @@ def _started_of(row: Mapping[str, Any]) -> tuple[str, str, str | None] | None:
     return None
 
 
+@_reading
 def answers_step(rows: Sequence[Mapping[str, Any]], index: int) -> int | None:
     """The index of the step the row at ``index`` answers by an HONOURED
     :data:`ANSWERS_STEP` mark, or None. Honoured only on a tool result row
@@ -1140,6 +1182,7 @@ def _answers_step_raw(rows: Sequence[Mapping[str, Any]], index: int) -> int | No
     return step if all(pair in named for pair in wanted) else None
 
 
+@_reading
 def owned_rows(rows: Sequence[Mapping[str, Any]], step: int) -> list[Mapping[str, Any]]:
     """Every row that answers the step at index ``step`` (G-387 rounds 13b
     and 15): the rows of its SEGMENT (after it, before the next step) not
@@ -1159,6 +1202,7 @@ def owned_rows(rows: Sequence[Mapping[str, Any]], step: int) -> list[Mapping[str
     return found
 
 
+@_reading
 def started_calls(rows: Sequence[Mapping[str, Any]], step: int) -> dict[int, str | None]:
     """The calls of the step at index ``step`` an HONOURED started row names
     (G-387 round 15), by call index, each with the approval it runs under.
@@ -1196,6 +1240,7 @@ def started_calls(rows: Sequence[Mapping[str, Any]], step: int) -> dict[int, str
     return dict(found)
 
 
+@_reading
 def in_progress_calls(rows: Sequence[Mapping[str, Any]], step: int) -> set[int]:
     """The calls of the step at index ``step`` that are ANSWERED-IN-PROGRESS
     (or, once nothing is running, INTERRUPTED): a started row and no result
@@ -1204,6 +1249,7 @@ def in_progress_calls(rows: Sequence[Mapping[str, Any]], step: int) -> set[int]:
     return {call for call in started_calls(rows, step) if call not in done}
 
 
+@_reading
 def step_rows(rows: Sequence[Mapping[str, Any]], step: int) -> list[Mapping[str, Any]]:
     """The rows after the step at index ``step`` that may answer it.
 
@@ -1218,6 +1264,7 @@ def step_rows(rows: Sequence[Mapping[str, Any]], step: int) -> list[Mapping[str,
     return [rows[i] for i in range(step + 1, len(rows)) if belongs_to(rows, i, step)]
 
 
+@_reading
 def replaced_earlier_steps(
     rows: Sequence[Mapping[str, Any]],
 ) -> list[tuple[int, list[dict[str, Any]]]]:
@@ -1245,6 +1292,7 @@ def replaced_earlier_steps(
     return found
 
 
+@_reading
 def step_superseded(
     stored: Sequence[tuple[Mapping[str, Any], str | None]],
 ) -> bool:
@@ -1301,6 +1349,7 @@ def replaced_step_row(position: int, calls: Sequence[Mapping[str, Any]]) -> dict
 DELEGATION_ENDED = "Not run: the delegation this call was proposed under ended."
 
 
+@_reading
 def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], bool] | None:
     """Stored approval authority, separate from the provider replay view."""
     # Which decision counts is read from the stored rows, first one standing;
@@ -1355,6 +1404,7 @@ def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], b
     return None
 
 
+@_reading
 def unusable_stored_calls(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     """The ids of stored calls whose arguments cannot be used.
 
@@ -1377,6 +1427,7 @@ def unusable_stored_calls(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     return set()
 
 
+@_reading
 def first_decisions(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
     """The decisions recorded for the turn being resumed, by approval id.
 
@@ -1422,6 +1473,7 @@ def first_decisions(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, An
     return decisions
 
 
+@_reading
 def paused_approval_row(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
     """The stored assistant row whose approvals the transcript tail is waiting
     on, or None.
@@ -1513,6 +1565,7 @@ def paired_requests(
     return pairs
 
 
+@_reading
 def step_requests(
     rows: Sequence[Mapping[str, Any]], index: int
 ) -> list[tuple[dict[str, Any], int | None]]:
@@ -1584,6 +1637,7 @@ def step_requests(
     return list(pairs)
 
 
+@_reading
 def asked_before(rows: Sequence[Mapping[str, Any]], index: int) -> set[str]:
     """Every approval id an assistant row (or a 0.1.0 request row) before
     ``rows[index]`` asked for."""
@@ -1654,16 +1708,30 @@ _INDEXES = threading.local()
 
 
 def _index(rows: Sequence[Mapping[str, Any]]) -> _Index:
-    """The :class:`_Index` of ``rows``, built once per list: kept for the
-    last list read on this thread while it is the same object of the same
-    length (each reader is handed the rows as read, never edits them in
-    place)."""
+    """The :class:`_Index` of ``rows``, built once per list and kept for the
+    last list read on this thread. It is reused only while that list still
+    holds the SAME row objects, in order (G-387 round 17): checked once per
+    top-level reader call (:func:`_reading`), by identity, so a list a host
+    edits in place (an item replaced, at the same length) is indexed again,
+    never read through a stale index. Within one reader call only the
+    length is checked again (a reader that builds a list appends to it). A
+    reader takes each row's
+    CONTENT as it is when called: edit a row in place between two reader
+    calls and pass the edited row as a new object, or a new list."""
     cached = getattr(_INDEXES, "entry", None)
-    if cached is not None and cached[0] is rows and cached[1] == len(rows):
+    if cached is not None and cached[0] is rows:
         found: _Index = cached[2]
-        return found
+        held: tuple[Mapping[str, Any], ...] = cached[1]
+        if len(held) == len(rows) and (
+            getattr(_INDEXES, "verified", None) is rows or all(map(operator.is_, held, rows))
+        ):
+            if getattr(_INDEXES, "depth", 0):
+                _INDEXES.verified = rows
+            return found
     built = _Index(rows)
-    _INDEXES.entry = (rows, len(rows), built)
+    _INDEXES.entry = (rows, tuple(rows), built)
+    if getattr(_INDEXES, "depth", 0):
+        _INDEXES.verified = rows
     return built
 
 
@@ -1748,6 +1816,7 @@ def binds(request: Mapping[str, Any], call: Mapping[str, Any], held: object = No
     return held is None or digest == binding_digest(held)
 
 
+@_reading
 def held_results(rows: Sequence[Mapping[str, Any]], step: int) -> dict[tuple[str, str, str], int]:
     """How many results of each key (call id, tool name, canonical args) the
     step at index ``step`` already holds: the most any ONE row it owns holds
@@ -1768,6 +1837,7 @@ def held_results(rows: Sequence[Mapping[str, Any]], step: int) -> dict[tuple[str
     return held
 
 
+@_reading
 def new_results(
     rows: Sequence[Mapping[str, Any]], step: int, entries: Sequence[Mapping[str, Any]]
 ) -> list[dict[str, Any]]:
