@@ -1245,7 +1245,10 @@ def without_call(case: Case, index: int) -> Case:
             later,
             reuses=None if later.reuses == index else later.reuses - (later.reuses > index),
         )
-    case = replace(case, insert=insert, later=later)
+    stray = case.stray
+    if stray is not None:
+        stray = None if stray == index else stray - (stray > index)
+    case = replace(case, insert=insert, later=later, stray=stray)
     if case.path == "live":
         gated_before = [i for i, c in enumerate(case.calls) if c.gated]
         order = case.decision_order
