@@ -521,7 +521,11 @@ cannot say which decision answers which call: none of its gated calls runs,
 each is answered "Tool call was not run because another call in this step has
 the same id", and every decision recorded on that step is stored as a denial
 with that text. Which call a result answers is matched by position, so a gated
-call stays pending when an ungated call sharing its id has already run.
+call stays pending when an ungated call sharing its id has already run. A
+result counts only for the step whose rows it sits among (after that step,
+before the next step with tool calls): matched by its arguments, then its id
+and tool name, then its id, and never moved to an earlier step's call, even
+one whose arguments it matches exactly.
 
 `runtime.decide(session, approval_id, approved, reason=None)` records the same
 decision and also lets an agent plan read it before the run resumes.

@@ -247,6 +247,14 @@
   last step a recorded row already superseded, with calls the 0.5.x line
   never answered, gets its one denial when main resumes it, and nothing of it
   runs.
+- A stored result counts only for a call of the step whose segment it sits in
+  (after that step's assistant row, before the next one with tool calls),
+  matched there by its arguments, then its id and tool name, then its id. A
+  result whose arguments match an earlier step's call exactly answers a
+  same-id call of its own step, never the earlier call, so an approved call
+  runs at most once whatever another writer stored. The earlier step's calls
+  keep their one "replaced" denial. Pinned by seam tests and the approval
+  pairing property test.
 
 ### Parity
 

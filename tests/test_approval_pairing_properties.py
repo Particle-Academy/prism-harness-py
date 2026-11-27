@@ -23,7 +23,13 @@ the code under test:
   was decided; each gets ``REPEATED``;
 - otherwise a gated call runs only if its OWN request was approved; a denial
   is its reason; no decision is a refusal;
-- a call that already has a result is done and never runs again.
+- a call that already has a result is done and never runs again;
+- ABSOLUTE SEGMENT OWNERSHIP (G-387 round 13b): a stored result counts only
+  for a call of the step whose segment it sits in (after that step's
+  assistant row, before the next one with tool calls), matched there by its
+  arguments, then its id and tool name, then its id. A result whose
+  arguments name an EARLIER step's call exactly answers a same-id call of
+  its own step, never the earlier call.
 
 Every call carries a unique token in its arguments, so the test can tell which
 call ran even when ids repeat.
@@ -202,6 +208,11 @@ class Case:
     #: With an ``assistant_call`` insert only: the case call (index) a forged
     #: result names, recorded in the LATER segment, after the later step.
     later_forged: int | None = None
+    #: Stored with an earlier step only (G-387 round 13b): the earlier call
+    #: (index into ``earlier``) whose id, tool and arguments EXACTLY a LOSSY
+    #: result carries, recorded in the case step's segment. It may answer
+    #: only a same-id call of the case step.
+    cross_forged: int | None = None
 
     def describe(self) -> str:
         return json.dumps(
@@ -271,6 +282,7 @@ class Case:
                     else {}
                 ),
                 **({"later_forged": self.later_forged} if self.later_forged is not None else {}),
+                **({"cross_forged": self.cross_forged} if self.cross_forged is not None else {}),
             }
         )
 
@@ -423,7 +435,42 @@ def forgeries(case: Case) -> Case:
         and rng.random() < 0.7
         else None
     )
-    return replace(case, earlier_forged=earlier_forged, later_forged=later_forged)
+    # A LOSSY result in the case step's segment naming an earlier call
+    # exactly (G-387 round 13b), from a stream of its own again. Never with a
+    # forged ``tool_result`` insert, whose target it could share.
+    lossy = random.Random(case.seed ^ 0x13B13B)
+    earlier_gated = [i for i, c in enumerate(case.earlier) if c.gated]
+    cross_forged = (
+        lossy.choice(earlier_gated)
+        if earlier_gated
+        and (case.insert is None or case.insert.kind != "tool_result")
+        and lossy.random() < 0.6
+        else None
+    )
+    return replace(
+        case,
+        earlier_forged=earlier_forged,
+        later_forged=later_forged,
+        cross_forged=cross_forged,
+    )
+
+
+def lossy_text(call: Call) -> str:
+    return f"lossy:{call.token}"
+
+
+def cross_target(case: Case) -> int | None:
+    """The case call a :attr:`Case.cross_forged` result answers: the first
+    call of the case step, in call order, with its id and the gated tool's
+    name (the result has no exact match in its own segment), else the first
+    with its id. None when no call of the step carries the id."""
+    if case.cross_forged is None:
+        return None
+    wanted = case.earlier[case.cross_forged].id
+    named = [i for i, c in enumerate(case.calls) if c.id == wanted and c.gated]
+    free = [i for i, c in enumerate(case.calls) if c.id == wanted]
+    found = named or free
+    return found[0] if found else None
 
 
 # -- the oracle: an independent model of the rule ----------------------------------
@@ -454,12 +501,17 @@ def oracle(case: Case) -> Expected:
     expected = Expected(repeated=repeated)
     # A user row or an assistant row after the park supersedes the step: each
     # open gated call gets one replaced-step denial, and nothing runs, whatever
-    # was decided before or after (G-397). A forged result is its call's only
-    # outcome. Any other row changes nothing (G-399).
+    # was decided before or after (G-397). A forged result IN THE CALL'S OWN
+    # SEGMENT is its only outcome; a result in another segment never is
+    # (G-387 round 13b). Any other row changes nothing (G-399).
     superseded = case.insert is not None and case.insert.kind in SUPERSEDES
     forged = (
         case.insert.call if case.insert is not None and case.insert.kind == "tool_result" else -1
     )
+    # The lossy result answers the call of ITS segment it falls to; a call
+    # that already has a result keeps it (the first result stands), and the
+    # earlier call it names exactly keeps its own outcome.
+    lossy = cross_target(case)
 
     # A later step replaced the earlier one: its gated calls never run, and
     # each one with no result gets one denial.
@@ -478,6 +530,10 @@ def oracle(case: Case) -> Expected:
             continue
         if call.prior:
             expected.outcomes[call.token] = f"prior:{call.token}"
+            continue
+        if index == lossy:
+            assert case.cross_forged is not None
+            expected.outcomes[call.token] = lossy_text(case.earlier[case.cross_forged])
             continue
         if index == forged:
             expected.outcomes[call.token] = f"forged:{call.token}"
@@ -617,6 +673,17 @@ def store_step(session: Session, case: Case) -> None:
             rows.append(forged_row(case.earlier[case.earlier_forged]))
     rows += stored_rows(case.calls, [(r.approval_id, r.tool_call_id) for r in case.requests])
     session.thread().record(rows)
+    if case.cross_forged is not None:
+        # In the CASE step's segment, after any result the step already has.
+        session.thread().record([lossy_row(case.earlier[case.cross_forged])])
+
+
+def lossy_row(call: Call) -> dict[str, Any]:
+    """A result another writer stored with LOSSY arguments: exactly those of
+    the earlier ``call``, with its id and the gated tool, in a later segment."""
+    row = forged_row(call)
+    row["tool_results"][0]["result"] = lossy_text(call)
+    return row
 
 
 def forged_row(call: Call) -> dict[str, Any]:
@@ -650,28 +717,45 @@ def insert_between(session: Session, case: Case, when: str) -> None:
 def outcomes_by_token(session: Session) -> dict[str, list[str]]:
     """Every stored result, by the token of the call it answers, as STORED (never
     the provider view, which folds results by call id), from EVERY row after
-    the first step through the end of the thread, each attributed to the step
-    it was recorded in (the last step with tool calls before it): a result
-    counts for a call of THAT step only. A resume row restates the results it
-    found, so one outcome may be stored more than once; what may not happen is
-    two DIFFERENT outcomes, or none."""
+    the first step through the end of the thread, each attributed by ABSOLUTE
+    SEGMENT OWNERSHIP (G-387 round 13b) to the step it was recorded in (the
+    last step with tool calls before it): a result counts for a call of THAT
+    step only, the one its arguments name, else, within its row, the first
+    not yet matched with its id and tool name, else with its id. A resume row
+    restates the results it found, so one outcome may be stored more than
+    once; what may not happen is two DIFFERENT outcomes, or none."""
     found: dict[str, list[str]] = {}
-    step_tokens: set[str] = set()
+    step: list[tuple[str, str, str]] = []  # (id, tool, token) per call
     for entry in session.thread().messages():
         row = entry.message
         if row.get("type") == "assistant" and row.get("tool_calls"):
-            step_tokens = {
-                str((call.get("arguments") or {}).get("token", ""))
+            step = [
+                (
+                    str(call.get("id", "")),
+                    str(call.get("name", "")),
+                    str((call.get("arguments") or {}).get("token", "")),
+                )
                 for call in row["tool_calls"]
                 if isinstance(call, dict)
-            }
+            ]
             continue
         if row.get("type") != "tool_result":
             continue
+        taken: set[int] = set()
         for result in row.get("tool_results", []):
             token = str((result.get("args") or {}).get("token", ""))
-            if token in step_tokens:
-                found.setdefault(token, []).append(str(result.get("result")))
+            same_id = [
+                i
+                for i, (call_id, _, _) in enumerate(step)
+                if i not in taken and call_id == str(result.get("tool_call_id", ""))
+            ]
+            exact = [i for i in same_id if step[i][2] == token]
+            named = [i for i in same_id if step[i][1] == result.get("tool_name")]
+            match = next(iter(exact or named or same_id), None)
+            if match is None:
+                continue
+            taken.add(match)
+            found.setdefault(step[match][2], []).append(str(result.get("result")))
     return found
 
 
@@ -1070,6 +1154,21 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     outcomes = {text for e in expectations for text in e.outcomes.values()}
     assert {REPEATED, NO_DECISION, DEFAULT_DENIAL, REPLACED_BY_LATER_STEP} <= outcomes
     assert any(text.startswith("forged:") for text in outcomes)
+    # SEGMENT OWNERSHIP (G-387 round 13b): a lossy result naming an earlier
+    # call exactly, in the later segment, that answers an open same-id gated
+    # call of its own step, that falls to a call already resulted, and that
+    # finds no call; naming an earlier call that is open and one already
+    # resulted; together with superseding rows and earlier-segment forgeries.
+    cross = [k for k in examined if k.cross_forged is not None]
+    hits = [(k, t) for k in cross for t in [cross_target(k)] if t is not None]
+    assert any(k.calls[t].gated and not k.calls[t].prior for k, t in hits)
+    assert any(k.calls[t].prior for k, t in hits)
+    assert any(cross_target(k) is None for k in cross)
+    assert any(not k.earlier[k.cross_forged].prior for k, _ in hits if k.cross_forged is not None)
+    assert any(k.earlier[k.cross_forged].prior for k, _ in hits if k.cross_forged is not None)
+    assert any(k.insert is not None and k.insert.kind in SUPERSEDES for k, _ in hits)
+    assert any(k.earlier_forged is not None for k, _ in hits)
+    assert any(text.startswith("lossy:") for text in outcomes)
 
 
 # -- fixed regression cases (G-387 round 13) ----------------------------------------
@@ -1123,6 +1222,58 @@ TYPESCRIPT_SHAPES = {
 @pytest.mark.parametrize("shape", sorted(TYPESCRIPT_SHAPES))
 def test_the_shapes_found_on_typescript_main_obey_the_rule(shape: str) -> None:
     case = TYPESCRIPT_SHAPES[shape]
+    assert check(case) == [], case.describe()
+
+
+#: Seeds whose lossy later-segment result (G-387 round 13b) falls to an OPEN
+#: gated call of its own step, from the coverage window: the fast set the
+#: normal run examines reaches none, so they run every time.
+SEGMENT_SEEDS = (997, 1002, 1008, 1013, 1035, 1094, 1129, 1192, 1193, 1198, 1202, 1212)
+
+
+@pytest.mark.parametrize("seed", SEGMENT_SEEDS)
+def test_the_lossy_later_segment_seeds_obey_the_rule(seed: int) -> None:
+    case = generate(seed)
+    target = cross_target(case)
+    assert target is not None and case.calls[target].gated and not case.calls[target].prior
+    assert check(case) == [], case.describe()
+
+
+def _lossy(
+    calls: tuple[Call, ...], requests: tuple[Request, ...], earlier: tuple[Call, ...]
+) -> Case:
+    return replace(_stored(calls, requests), seed=0x13B, earlier=earlier, cross_forged=0)
+
+
+#: ABSOLUTE SEGMENT OWNERSHIP (G-387 round 13b), as stored steps: an earlier
+#: step's call ``x`` and the case step's APPROVED call ``x``, with a lossy
+#: result in the case step's segment carrying the earlier call's arguments
+#: exactly. A rule that moved it to the earlier call would run the approved
+#: call (and give the earlier call two outcomes); here it answers the case
+#: call, which never runs, and the earlier call keeps its one denial.
+SEGMENT_SHAPES = {
+    "approved-newest-earlier-open": _lossy(
+        (Call("x", True, "t0"),),
+        (Request("apr_1", "x", "approve", None),),
+        (Call("x", True, "e0", decision="approve"),),
+    ),
+    "approved-newest-earlier-resulted": _lossy(
+        (Call("x", True, "t0"),),
+        (Request("apr_1", "x", "approve", None),),
+        (Call("x", True, "e0", decision="approve", prior=True),),
+    ),
+    "approved-newest-beside-an-approved-sibling": _lossy(
+        (Call("x", True, "t0"), Call("b", True, "t1")),
+        (Request("apr_1", "x", "approve", None), Request("apr_2", "b", "approve", None)),
+        (Call("x", True, "e0", decision="deny"),),
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(SEGMENT_SHAPES))
+def test_a_lossy_result_in_a_later_segment_answers_only_its_own_step(shape: str) -> None:
+    case = SEGMENT_SHAPES[shape]
+    assert oracle(case).outcomes["t0"] == "lossy:e0"
     assert check(case) == [], case.describe()
 
 
