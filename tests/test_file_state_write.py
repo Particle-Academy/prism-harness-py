@@ -121,7 +121,11 @@ def test_permanent_native_reader_preserves_original_error_old_state_and_no_temp(
             with pytest.raises(PermissionError) as caught:
                 store.put("k", {"revision": 1})
             elapsed = time.monotonic() - started
-            assert 0.70 <= elapsed < 2.0
+            # A lower bound only: the retry budget itself is pinned in-process,
+            # with an injected clock, by
+            # test_the_windows_replace_retry_budget_is_its_deadline_not_the_wall_clock.
+            # An upper wall-clock bound measured a loaded runner, not the code.
+            assert elapsed >= 0.70
             assert caught.value is errors[0]
             assert getattr(caught.value, "winerror", None) == 5
             assert target.read_bytes() == original_bytes
@@ -205,3 +209,66 @@ def test_state_reader_is_closed_before_json_decoding(
         patch.setattr(json, "loads", decoding_after_read)
         assert store.get("k") == {"revision": 1}
     assert store.get("k") == {"revision": 2}
+
+
+def test_the_windows_replace_retry_budget_is_its_deadline_not_the_wall_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deterministic: the retry loop's 0.75 s deadline, read from an injected
+    clock that only the loop's own sleeps advance, with a stubbed rename that
+    always fails. The original error propagates, the loop sleeps exactly its
+    budget in steps of at most 10 ms, and it never sleeps past the deadline."""
+    from prism_harness.stores import _file_state_io as io
+
+    now = [100.0]
+    slept: list[float] = []
+    attempts: list[int] = []
+    first = PermissionError(errno.EACCES, "held")
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        now[0] += seconds
+
+    def replace(source: Path, destination: Path) -> None:
+        attempts.append(1)
+        raise first if len(attempts) == 1 else PermissionError(errno.EACCES, "still held")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(time, "sleep", sleep)
+    monkeypatch.setattr(os, "replace", replace)
+
+    with pytest.raises(PermissionError) as caught:
+        io.replace_state_file(tmp_path / "a.tmp", tmp_path / "a")
+
+    assert caught.value is first
+    assert all(0 < seconds <= 0.01 for seconds in slept)
+    assert sum(slept) == pytest.approx(0.75)
+    assert now[0] - 100.0 <= 0.75 + 1e-9
+    # One first attempt, then one per sleep that left time on the clock.
+    assert len(attempts) in (len(slept), len(slept) + 1)
+    assert 75 <= len(slept) <= 76
+
+
+def test_the_windows_replace_retry_stops_at_the_first_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from prism_harness.stores import _file_state_io as io
+
+    now = [0.0]
+    attempts: list[int] = []
+
+    def replace(source: Path, destination: Path) -> None:
+        attempts.append(1)
+        if len(attempts) < 4:
+            raise PermissionError(errno.EACCES, "held")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    monkeypatch.setattr(os, "replace", replace)
+
+    io.replace_state_file(tmp_path / "a.tmp", tmp_path / "a")
+
+    assert len(attempts) == 4
+    assert now[0] == pytest.approx(0.03)

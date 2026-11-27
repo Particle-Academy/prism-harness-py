@@ -143,6 +143,36 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
         # denials and its row are one write before the request, so they stand.
         with contextlib.suppress(RuntimeError):
             runtime.send(session, "Something else.")
+    elif supersede in ("altered_copy", "altered_copy_after_approval"):
+        # 0.4.0 (G-387 round 15): a host records a COPY of the parked step
+        # that alters each call's arguments (n + 100) and keeps the SAME
+        # approval requests: an approval belongs only to the step that first
+        # asked for it, so the copy asks for nothing. After the approval
+        # (every pending one approved first, no resume) or before it.
+        if supersede == "altered_copy_after_approval":
+            for approval in pending:
+                record_approval(session, approval.id, True)
+        copy = assistant_row(
+            "",
+            [
+                ToolCallInput(
+                    call["id"], call["name"], {**call["args"], "n": call["args"]["n"] + 100}
+                )
+                for call in row["calls"]
+            ],
+            approval_requests=[
+                {
+                    "approval_id": approval.id,
+                    "tool_call_id": approval.tool_call_id,
+                    "arguments_format": ARGUMENTS_AS_SENT,
+                }
+                for approval in pending
+            ],
+        )
+        copy["harness_tool_names"] = ["echo", "free"]
+        session.thread().record([copy])
+        if supersede == "altered_copy_after_approval":
+            runtime.send(session, "")
     # SEGMENT OWNERSHIP (0.2.0, G-387 round 13b): a later step a host records
     # after the park, each echo call asking its own approval
     # (``apr_later_<k>``, k counting the step's echo calls), then ONE result

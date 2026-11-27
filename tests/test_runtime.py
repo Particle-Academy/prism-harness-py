@@ -467,6 +467,12 @@ def test_writes_the_request_onto_the_assistant_row() -> None:
             "approval_id": response.pending_approvals[0].id,
             "tool_call_id": "c1",
             "arguments_format": 1,
+            # The binding to the call the person is shown (G-387 round 15),
+            # LAST: the tool name and the digest of its arguments ({}).
+            "harness_call": {
+                "tool_name": "echo",
+                "args_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            },
         }
     ]
 
