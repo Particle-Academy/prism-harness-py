@@ -30,6 +30,7 @@ from prism_harness.thread_rows import (
     REPEATED_CALL_ID,
     REPLACED_BY_LATER_STEP,
     REPLACED_STEP,
+    SUPERSEDING,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
@@ -872,6 +873,11 @@ class AgentRuntime:
         )
 
         if index is None:
+            return None
+
+        # A user row or an assistant row after the step supersedes it: it is
+        # answered by the replaced-step denials, never resolved (G-397).
+        if any(row["type"] in SUPERSEDING for row in view[index + 1 :]):
             return None
 
         assistant = view[index]

@@ -371,6 +371,10 @@ REPLACED_BY_LATER_STEP = "Tool call was not run because a later step replaced it
 REPLACED_STEP = "harness_replaced_step"
 
 
+#: The rows that supersede a parked step recorded before them (G-397).
+SUPERSEDING = ("user", "assistant")
+
+
 def is_replaced_row(row: Mapping[str, Any]) -> bool:
     return row.get("type") == "tool_result" and isinstance(row.get(REPLACED_STEP), dict)
 
@@ -379,17 +383,21 @@ def replaced_steps(
     messages: Sequence[tuple[int, Mapping[str, Any]]],
     needs_approval: Callable[[str], bool],
 ) -> list[tuple[int, list[dict[str, Any]]]]:
-    """The gated calls of every EARLIER tool-calling step that have no result
-    of their own, by the thread position of the step's assistant row (G-392).
+    """The gated calls with no result of their own of every SUPERSEDED
+    tool-calling step, by the thread position of the step's assistant row
+    (G-392, G-397).
 
-    Only the last step with tool calls is resolved; a decision for an earlier
-    one never runs anything. Each such call gets one result saying a later
-    step replaced it, so no gated call is left without an outcome. A step's
-    results are the tool result rows after it up to the next step with tool
-    calls, and the rows written for it under ``harness_replaced_step``.
+    A step is superseded once a user row or any assistant row (an answer in
+    text, or a later step with tool calls) is recorded after it. Only a step
+    that is not is resolved, so a decision for a superseded one never runs
+    anything, whenever it was made. Each such call gets one result saying a
+    later step replaced it, so no gated call is left without an outcome. A
+    step's results are the tool result rows after it up to the next step with
+    tool calls, and the rows written for it under ``harness_replaced_step``.
     """
     view: list[dict[str, Any]] = []
     steps: list[tuple[int, dict[str, Any], list[dict[str, Any]]]] = []
+    superseded = 0
     written: dict[int, list[dict[str, Any]]] = {}
 
     for position, row in messages:
@@ -406,6 +414,8 @@ def replaced_steps(
         if normalised is None:
             continue
 
+        if normalised["type"] in SUPERSEDING:
+            superseded = len(steps)
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             steps.append((position, normalised, []))
         elif normalised["type"] == "tool_result" and steps:
@@ -417,7 +427,7 @@ def replaced_steps(
             view.append(normalised)
 
     replaced: list[tuple[int, list[dict[str, Any]]]] = []
-    for position, assistant, entries in steps[:-1]:
+    for position, assistant, entries in steps[:superseded]:
         results = paired_results(assistant, [*entries, *written.get(position, [])])
         requested = {index for _, index in paired_requests(assistant) if index is not None}
         calls = [
