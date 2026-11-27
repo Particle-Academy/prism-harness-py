@@ -25,22 +25,25 @@ from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
+from prism_harness.thread import HARNESS_RECORDING, ThreadMessage
 from prism_harness.thread_rows import (
+    ANSWERS_STEP,
     ARGUMENTS_AS_SENT,
     REPEATED_CALL_ID,
     REPLACED_BY_LATER_STEP,
     REPLACED_STEP,
-    SUPERSEDING,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
     last_step_results,
+    last_step_superseded,
     paired_requests,
     repeats_call_ids,
     replaced_steps,
     step_answers,
+    step_position,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -450,13 +453,14 @@ class AgentRuntime:
                 )
             else:
                 offered = self._offer(session, mode, tool_names)[0]
-            stored = [entry.message for entry in thread.messages()]
-            scope = approval_tool_scope(stored)
+            messages = thread.messages()
+            stored = [entry.message for entry in messages]
+            scope = approval_tool_scope(stored, messages)
             # A resume continues the paused run's step count; it never opens a
             # new allowance. Only for a root run: a child's steps are already on
             # the tree ledger its caller hands back in.
             if prompt == "" and context is None:
-                run.ledger.record_steps(approval_run_steps(stored) or 0)
+                run.ledger.record_steps(approval_run_steps(stored, messages) or 0)
             if scope is not None:
                 names, legacy = scope
                 if legacy:
@@ -492,7 +496,7 @@ class AgentRuntime:
                         "additional_attributes": {},
                     }
                 )
-                thread.record([turn], run_id)
+                thread.record([turn], run_id, HARNESS_RECORDING)
 
             return self._loop(session, mode, run, run_id, provider, model, offered, called, schema)
         except Exception as error:
@@ -548,7 +552,7 @@ class AgentRuntime:
 
             request = LlmRequest(
                 system_prompt=mode.system_prompt,
-                messages=thread_view([entry.message for entry in thread.messages()]),
+                messages=_replay(thread.messages()),
                 tools=offered,
                 provider=provider,
                 model=model,
@@ -604,7 +608,10 @@ class AgentRuntime:
             row = assistant_row(response.text, calls, metadata, requests)
             if requests:
                 row["harness_tool_names"] = [tool.name for tool in offered]
-            thread.record([row], run_id)
+            [recorded_step] = thread.record([row], run_id, HARNESS_RECORDING)
+            # Every result row the harness writes for this step names it: a
+            # step recorded while a call runs never takes its results (G-407).
+            answers = {ANSWERS_STEP: {"position": recorded_step.position}}
 
             if failed_finish:
                 # Refuse, rather than queue, every call so a later resume
@@ -612,16 +619,20 @@ class AgentRuntime:
                 if calls:
                     thread.record(
                         [
-                            tool_result_row(
-                                [
-                                    tool_result_entry(
-                                        call, f"Not run: model step failed ({finish_reason})."
-                                    )
-                                    for call in calls
-                                ]
-                            )
+                            {
+                                **tool_result_row(
+                                    [
+                                        tool_result_entry(
+                                            call, f"Not run: model step failed ({finish_reason})."
+                                        )
+                                        for call in calls
+                                    ]
+                                ),
+                                **answers,
+                            }
                         ],
                         run_id,
+                        HARNESS_RECORDING,
                     )
                 raise HarnessError.model_step_failed(
                     "error" if finish_reason == "error" else "unknown"
@@ -670,7 +681,7 @@ class AgentRuntime:
                 results.append(self._invoke(offered, call))
 
             if results:
-                thread.record([tool_result_row(results)], run_id)
+                thread.record([{**tool_result_row(results), **answers}], run_id, HARNESS_RECORDING)
 
             if requests:
                 # FAILS CLOSED. The gated calls have not run, and the requests are
@@ -756,6 +767,7 @@ class AgentRuntime:
                         for position, rows in replaced
                     ],
                     run_id,
+                    HARNESS_RECORDING,
                 )
 
             work = self._unresolved(live, mode)
@@ -763,7 +775,7 @@ class AgentRuntime:
             if work is None:
                 return list(offered)
 
-            calls, results, decisions, approval_ids, scope, ambiguous, repeated = work
+            calls, results, decisions, approval_ids, scope, ambiguous, repeated, step = work
             # Bind calls, decisions and scope from the same locked snapshot.
             # A concurrent narrower approval also bounds the continuation.
             if scope is not None and scope[1] and not legacy_diagnostic_emitted:
@@ -823,8 +835,17 @@ class AgentRuntime:
                     )
 
             live.thread().record(
-                [tool_result_row([*results, *resolved], list(decisions.values()))],
+                [
+                    {
+                        **tool_result_row([*results, *resolved], list(decisions.values())),
+                        # Marked with the step it answers: a step with tool
+                        # calls written while these calls ran must not take
+                        # their results (G-392).
+                        ANSWERS_STEP: {"position": step},
+                    }
+                ],
                 run_id,
+                HARNESS_RECORDING,
             )
             return bounded
 
@@ -839,7 +860,7 @@ class AgentRuntime:
     def _replaced(session: Session, mode: AgentMode) -> list[tuple[int, list[dict[str, Any]]]]:
         """The gated calls of earlier steps a later step replaced, with no result yet."""
         return replaced_steps(
-            [(entry.position, entry.message) for entry in session.thread().messages()],
+            session.thread().messages(),
             mode.needs_approval,
         )
 
@@ -855,6 +876,7 @@ class AgentRuntime:
             tuple[list[str], bool] | None,
             set[str],
             bool,
+            int,
         ]
         | None
     ):
@@ -863,7 +885,7 @@ class AgentRuntime:
         whether the turn repeats a call id (G-392)."""
         messages = session.thread().messages()
         rows = [entry.message for entry in messages]
-        view = thread_view(rows)
+        view = thread_view(rows, messages)
         index = next(
             (
                 i
@@ -876,9 +898,9 @@ class AgentRuntime:
         if index is None:
             return None
 
-        # A user row or an assistant row after the step supersedes it: it is
-        # answered by the replaced-step denials, never resolved (G-397).
-        if any(row["type"] in SUPERSEDING for row in view[index + 1 :]):
+        # A superseded step is answered by the replaced-step denials, never
+        # resolved (G-397).
+        if last_step_superseded(messages):
             return None
 
         assistant = view[index]
@@ -889,8 +911,8 @@ class AgentRuntime:
         # position, never through a map keyed by call id, where an ungated
         # call's result would stand for a gated call sharing its id and leave
         # that call with no outcome (G-392).
-        _, decisions = step_answers(rows)
-        results = last_step_results([(entry.position, entry.message) for entry in messages])
+        _, decisions = step_answers(rows, messages)
+        results = last_step_results(messages)
         # Each request paired with its own call by position, never through a
         # map keyed by call id, where the last request under a repeated id
         # would answer every call carrying it (G-392).
@@ -916,9 +938,10 @@ class AgentRuntime:
             [results[index] for index in sorted(results)],
             decisions,
             [approval_id for _, approval_id in pending],
-            approval_tool_scope(rows),
+            approval_tool_scope(rows, messages),
             ambiguous_calls(assistant),
             repeats_call_ids(assistant),
+            step_position(messages),
         )
 
     @classmethod
@@ -1114,6 +1137,11 @@ def _narrowed_tools(ceiling: Sequence[str], requested: Sequence[str] | None) -> 
         if name not in ceiling:
             raise HarnessError.tool_not_available(name, ceiling)
     return requested
+
+
+def _replay(messages: Sequence[ThreadMessage]) -> list[dict[str, Any]]:
+    """The thread as the model is shown it, with what was stored beside each row."""
+    return thread_view([entry.message for entry in messages], messages)
 
 
 def _now() -> str:

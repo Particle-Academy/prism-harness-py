@@ -10,7 +10,20 @@ from typing import Any
 from prism_harness.errors import HarnessError
 from prism_harness.stores.base import SessionStore
 
-__all__ = ["Thread", "ThreadMessage"]
+__all__ = ["HARNESS_RECORDING", "Thread", "ThreadMessage"]
+
+
+class _HarnessRecording:
+    def __repr__(self) -> str:
+        return "HARNESS_RECORDING"
+
+
+#: The harness's own recording path (G-392, G-407). Rows recorded with it, and
+#: only those, are stored as the harness's: their marks (the step a result
+#: row answers) are honoured, and a row they hold never counts as recorded
+#: from outside a run. A host recording through :meth:`Thread.record` has no
+#: reason to pass it; a row it records is always read as written from outside.
+HARNESS_RECORDING = _HarnessRecording()
 
 
 @dataclass(frozen=True)
@@ -24,6 +37,9 @@ class ThreadMessage:
     #: The run that produced it, when there was one.
     run_id: str | None
     recorded_at: str
+    #: True when the harness itself recorded it, inside its run, never for a
+    #: row recorded through the public :meth:`Thread.record` alone.
+    harness: bool = False
 
 
 class Thread:
@@ -62,12 +78,18 @@ class Thread:
         return len(self.messages())
 
     def record(
-        self, messages: Sequence[dict[str, Any]], run_id: str | None = None
+        self,
+        messages: Sequence[dict[str, Any]],
+        run_id: str | None = None,
+        origin: object = None,
     ) -> list[ThreadMessage]:
         """Append messages, in order, and return them with their positions.
 
         Read-and-write inside ONE lock. See the class docstring.
+
+        ``origin`` is for the harness itself (:data:`HARNESS_RECORDING`).
         """
+        harness = origin is HARNESS_RECORDING
         if not messages:
             return []
 
@@ -84,6 +106,7 @@ class Thread:
                     "message": message,
                     "run_id": run_id,
                     "recorded_at": recorded_at,
+                    **({"harness": True} if harness else {}),
                 }
                 for index, message in enumerate(messages)
             ]
@@ -126,4 +149,5 @@ class Thread:
             message=message,
             run_id=run_id if isinstance(run_id, str) else None,
             recorded_at=recorded_at if isinstance(recorded_at, str) else "",
+            harness=entry.get("harness") is True,
         )

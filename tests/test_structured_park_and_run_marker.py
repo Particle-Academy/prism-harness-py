@@ -68,8 +68,10 @@ def test_a_user_row_recorded_during_the_parked_step_write_under_the_run_id_super
     native = Thread.record
     fired: list[str | None] = []
 
-    def record(self: Thread, messages: Any, run_id: str | None = None) -> Any:
-        written = native(self, messages, run_id)
+    def record(
+        self: Thread, messages: Any, run_id: str | None = None, origin: object = None
+    ) -> Any:
+        written = native(self, messages, run_id, origin)
         if not fired and any(m.get("tool_approval_requests") for m in messages):
             fired.append(run_id)
             # The public API, naming the run that is writing the step.

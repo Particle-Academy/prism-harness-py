@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from prism_harness.tool_arguments import usable_arguments
 
@@ -26,6 +26,40 @@ __all__ = [
     "tool_result_entry",
     "tool_result_row",
 ]
+
+
+class StoredRow(Protocol):
+    """A stored row as the readers here need it (a :class:`ThreadMessage`)."""
+
+    @property
+    def position(self) -> int: ...
+
+    @property
+    def message(self) -> dict[str, Any]: ...
+
+    @property
+    def run_id(self) -> str | None: ...
+
+    @property
+    def harness(self) -> bool: ...
+
+
+@dataclass(frozen=True)
+class _Row:
+    position: int
+    message: dict[str, Any]
+    run_id: str | None = None
+    harness: bool = False
+
+
+def _stored(
+    rows: Sequence[Mapping[str, Any]], stored: Sequence[StoredRow] | None
+) -> Sequence[StoredRow]:
+    """The rows with what was stored beside them. Rows given alone are read as
+    a host's (no run, not the harness's), position by position from 1."""
+    if stored is not None:
+        return stored
+    return [_Row(index + 1, dict(row)) for index, row in enumerate(rows)]
 
 
 @dataclass(frozen=True)
@@ -99,7 +133,9 @@ def tool_result_row(
     }
 
 
-def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def thread_view(
+    rows: Sequence[Mapping[str, Any]], stored: Sequence[StoredRow] | None = None
+) -> list[dict[str, Any]]:
     """The thread as the model is shown it.
 
     Rows written by 0.1.0 read in today's shape, and a step's tool result
@@ -117,9 +153,16 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     # that are not consecutive (a note between them, say) fold into the FIRST,
     # so each result is replayed exactly once, in its own segment.
     segment_results: int | None = None
+    # A step's assistant row and its results row in the view, by the step's
+    # thread position, for result rows marked with the step they answer.
+    current: int | None = None
+    steps: dict[int, int] = {}
+    answers: dict[int, int] = {}
+    entries = _stored(rows, stored)
+    marks = _valid_marks(entries)
 
-    for row in rows:
-        if is_replaced_row(row):
+    for index, row in enumerate(rows):
+        if is_replaced_row(row) and index in marks:
             # Answers an EARLIER step, written after a later one: folded in
             # here it would stand for the later step's calls that share an id.
             continue
@@ -131,6 +174,31 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             segment_results = None
+            current = entries[index].position
+            view.append(normalised)
+            steps[current] = len(view) - 1
+            continue
+
+        anchor = marks.get(index)
+        if (
+            normalised["type"] == "tool_result"
+            and anchor is not None
+            and anchor != current
+            and anchor in steps
+        ):
+            # Resolution results for an EARLIER step that landed after a later
+            # one: shown in that step's place, as that step's (G-392).
+            if anchor in answers:
+                view[answers[anchor]] = _fold(view[answers[anchor]], normalised)
+            else:
+                at = steps[anchor] + 1
+                view.insert(at, normalised)
+                steps = {k: v + (v >= at) for k, v in steps.items()}
+                answers = {k: v + (v >= at) for k, v in answers.items()}
+                if segment_results is not None and segment_results >= at:
+                    segment_results += 1
+                answers[anchor] = at
+            continue
 
         if normalised["type"] == "tool_result" and segment_results is not None:
             view[segment_results] = _fold(view[segment_results], normalised)
@@ -141,11 +209,15 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
             view.append(normalised)
             if normalised["type"] == "tool_result":
                 segment_results = len(view) - 1
+        if normalised["type"] == "tool_result" and current is not None:
+            answers[current] = segment_results if segment_results is not None else len(view) - 1
 
     return view
 
 
-def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
+def approval_run_steps(
+    rows: Sequence[Mapping[str, Any]], stored: Sequence[StoredRow] | None = None
+) -> int | None:
     """Model steps the run paused at the transcript tail has already taken.
 
     None when nothing at the tail is waiting on an approval. A run that pauses
@@ -154,7 +226,7 @@ def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
     per model step since the turn's user row), so the count survives a reload,
     a different worker and a deploy, with no extra state.
     """
-    if approval_tool_scope(rows) is None:
+    if approval_tool_scope(rows, stored) is None:
         return None
     steps = 0
     for row in reversed(rows):
@@ -165,58 +237,46 @@ def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
     return steps
 
 
-def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], bool] | None:
-    """Stored approval authority, separate from the provider replay view."""
-    decisions: dict[str, bool] = {}
-    for row in reversed(thread_view(rows)):
-        if row.get("type") == "tool_result":
-            for response in row.get("tool_approval_responses", []):
-                if isinstance(response.get("approval_id"), str):
-                    decisions.setdefault(response["approval_id"], response.get("approved") is True)
-            continue
-        if row.get("type") == "user":
-            return None
-        if row.get("type") != "assistant":
-            continue
-        requests = row.get("tool_approval_requests", [])
-        if not requests:
-            return None
-        ids = {request["approval_id"] for request in requests}
-        stored = next(
-            (
-                candidate
-                for candidate in reversed(rows)
-                if candidate.get("type") == "assistant"
-                and isinstance(candidate.get("tool_approval_requests"), list)
-                and len(candidate["tool_approval_requests"]) == len(requests)
-                and all(
-                    isinstance(request, dict)
-                    and isinstance(request.get("approval_id"), str)
-                    and request["approval_id"] in ids
-                    for request in candidate["tool_approval_requests"]
-                )
-            ),
-            None,
-        )
-        scope = stored.get("harness_tool_names") if stored is not None else None
-        if isinstance(scope, list) and all(
-            isinstance(name, str) and name not in ("", "*") for name in scope
-        ):
-            return list(dict.fromkeys(scope)), False
-        approved_calls = {
-            request["tool_call_id"]
-            for request in requests
-            if decisions.get(request["approval_id"]) is True
-        }
-        names = [
-            call["name"]
-            for call in row.get("tool_calls", [])
-            if call.get("id") in approved_calls
-            and isinstance(call.get("name"), str)
-            and call["name"] not in ("", "*")
-        ]
-        return list(dict.fromkeys(names)), True
-    return None
+def approval_tool_scope(
+    rows: Sequence[Mapping[str, Any]], stored: Sequence[StoredRow] | None = None
+) -> tuple[list[str], bool] | None:
+    """Stored approval authority, separate from the provider replay view.
+
+    The tools the paused step was offered, for the step a resume resolves:
+    the last step with tool calls, when it is not superseded and still waits
+    on at least one of its approval requests. None otherwise.
+    """
+    entries = _stored(rows, stored)
+    steps, superseded = _thread_steps(entries)
+    if not steps or superseded[-1]:
+        return None
+    position, assistant, _ = steps[-1]
+    requests = assistant.get("tool_approval_requests", [])
+    if not requests:
+        return None
+    results = _paired(steps)[-1]
+    if all(index is not None and index in results for _, index in paired_requests(assistant)):
+        return None
+    raw = next(entry.message for entry in entries if entry.position == position)
+    scope = raw.get("harness_tool_names")
+    if isinstance(scope, list) and all(
+        isinstance(name, str) and name not in ("", "*") for name in scope
+    ):
+        return list(dict.fromkeys(scope)), False
+    _, decisions = step_answers(rows, stored)
+    approved_calls = {
+        request["tool_call_id"]
+        for request in requests
+        if decisions.get(request["approval_id"], {}).get("approved") is True
+    }
+    names = [
+        call["name"]
+        for call in assistant.get("tool_calls", [])
+        if call.get("id") in approved_calls
+        and isinstance(call.get("name"), str)
+        and call["name"] not in ("", "*")
+    ]
+    return list(dict.fromkeys(names)), True
 
 
 def unusable_stored_calls(rows: Sequence[Mapping[str, Any]]) -> set[str]:
@@ -288,7 +348,7 @@ def paired_requests(assistant: Mapping[str, Any]) -> list[tuple[dict[str, Any], 
 
 
 def step_answers(
-    rows: Sequence[Mapping[str, Any]],
+    rows: Sequence[Mapping[str, Any]], stored: Sequence[StoredRow] | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Every result and every decision stored for the last tool-calling turn
     (G-392, G-399).
@@ -307,9 +367,10 @@ def step_answers(
     view: list[dict[str, Any]] = []
     entries: list[dict[str, Any]] = []
     decisions: dict[str, dict[str, Any]] = {}
+    marks = _valid_marks(_stored(rows, stored))
 
-    for row in rows:
-        if is_replaced_row(row):
+    for index, row in enumerate(rows):
+        if is_replaced_row(row) and index in marks:
             continue
 
         normalised = _normalise(row, view)
@@ -346,30 +407,118 @@ REPLACED_STEP = "harness_replaced_step"
 SUPERSEDING = ("user", "assistant")
 
 
+#: The key on a resolution row naming the step it answers, by the thread
+#: position of the step's assistant row (G-392). A harness-only field: a tool
+#: controls its result text, never this key. Wherever such a row lands (a step
+#: with tool calls may be written while an approved call runs), its results
+#: count for that step.
+ANSWERS_STEP = "harness_answers_step"
+
+
 def is_replaced_row(row: Mapping[str, Any]) -> bool:
     return row.get("type") == "tool_result" and isinstance(row.get(REPLACED_STEP), dict)
 
 
+def _mark(row: Mapping[str, Any]) -> int | None:
+    """The step a tool result row's mark names, as written (unchecked)."""
+    if row.get("type") != "tool_result":
+        return None
+    mark = row.get(ANSWERS_STEP)
+    if not isinstance(mark, dict):
+        mark = row.get(REPLACED_STEP)
+    position = mark.get("position") if isinstance(mark, dict) else None
+    return position if type(position) is int else None
+
+
+def _valid_marks(entries: Sequence[StoredRow]) -> dict[int, int]:
+    """The rows (by index) whose mark is HONOURED, with the step it names.
+
+    Only a row the harness itself recorded, whose mark names an EARLIER row
+    that is a step with tool calls holding a call with each of the row's
+    result's id and tool. Any other mark is ignored, and its row counts for
+    the step whose segment holds it, failing closed.
+    """
+    by_position = {entry.position: entry for entry in entries}
+    valid: dict[int, int] = {}
+    for index, entry in enumerate(entries):
+        target = _mark(entry.message)
+        if not entry.harness or target is None or target >= entry.position:
+            continue
+        step = by_position.get(target)
+        if step is None or step.message.get("type") != "assistant":
+            continue
+        calls = {
+            (_text(call.get("id")), _text(call.get("name")))
+            for call in _dicts(step.message.get("tool_calls"))
+        }
+        results = _dicts(entry.message.get("tool_results"))
+        if not calls or not all(
+            (_text(r.get("tool_call_id")), _text(r.get("tool_name"))) in calls for r in results
+        ):
+            continue
+        valid[index] = target
+    return valid
+
+
+def superseded_at(entries: Sequence[StoredRow], index: int) -> int:
+    """The index of the row that SUPERSEDES the step with tool calls at
+    ``index``, or -1 while it is not superseded (G-397):
+
+    - any later assistant row WITH tool calls, always;
+    - a later assistant row without tool calls, or a user row, recorded
+      OUTSIDE the runs that own the step: the run the harness recorded it in
+      and the runs the harness recorded its results in. Rows the runtime
+      writes inside those runs (a resume's answer) never supersede; a row
+      recorded through the public ``Thread.record`` does, whatever run id it
+      was given.
+
+    Rows of any other kind (a system row, a tool result row) never supersede.
+    """
+
+    def inside(entry: StoredRow) -> str | None:
+        return entry.run_id if entry.harness and isinstance(entry.run_id, str) else None
+
+    owners: set[str] = set()
+    own = inside(entries[index])
+    if own is not None:
+        owners.add(own)
+    for at in range(index + 1, len(entries)):
+        entry = entries[at]
+        message = entry.message
+        run = inside(entry)
+        if message.get("type") == "assistant" and _dicts(message.get("tool_calls")):
+            return at
+        if (
+            message.get("type") == "tool_result"
+            and run is not None
+            and _dicts(message.get("tool_results"))
+        ):
+            owners.add(run)
+        if message.get("type") in SUPERSEDING and (run is None or run not in owners):
+            return at
+    return -1
+
+
 def _thread_steps(
-    messages: Sequence[tuple[int, Mapping[str, Any]]],
-) -> tuple[list[tuple[int, dict[str, Any], list[dict[str, Any]]]], int]:
+    messages: Sequence[StoredRow],
+) -> tuple[list[tuple[int, dict[str, Any], list[dict[str, Any]]]], list[bool]]:
     """Every tool-calling step, by the thread position of its assistant row,
     with the results stored in its SEGMENT (the tool result rows after it, up
     to the next step with tool calls, and the rows written for it under
-    ``harness_replaced_step``), and how many steps from the first are
-    superseded (G-392, G-397, G-399)."""
+    ``harness_replaced_step``), and whether each is superseded
+    (G-392, G-397, G-399)."""
     view: list[dict[str, Any]] = []
     steps: list[tuple[int, dict[str, Any], list[dict[str, Any]]]] = []
-    superseded = 0
+    indexes: list[int] = []
     written: dict[int, list[dict[str, Any]]] = {}
+    marks = _valid_marks(messages)
 
-    for position, row in messages:
-        if is_replaced_row(row):
-            target = row[REPLACED_STEP].get("position")
-            if type(target) is int:
-                normalised = _normalise(row, view)
-                if normalised is not None:
-                    written.setdefault(target, []).extend(_occurrences(normalised["tool_results"]))
+    for at, stored in enumerate(messages):
+        position, row = stored.position, stored.message
+        if is_replaced_row(row) and at in marks:
+            normalised = _normalise(row, view)
+            if normalised is not None:
+                written.setdefault(marks[at], []).extend(_occurrences(normalised["tool_results"]))
             continue
 
         normalised = _normalise(row, view)
@@ -377,11 +526,15 @@ def _thread_steps(
         if normalised is None:
             continue
 
-        if normalised["type"] in SUPERSEDING:
-            superseded = len(steps)
+        anchor = marks.get(at)
+        if anchor is not None and normalised["type"] == "tool_result":
+            written.setdefault(anchor, []).extend(
+                _occurrences(_parsed_arguments(row, normalised["tool_results"]))
+            )
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             steps.append((position, normalised, []))
-        elif normalised["type"] == "tool_result" and steps:
+            indexes.append(at)
+        elif normalised["type"] == "tool_result" and steps and anchor is None:
             steps[-1][2].extend(_occurrences(_parsed_arguments(row, normalised["tool_results"])))
 
         if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
@@ -392,7 +545,7 @@ def _thread_steps(
     return [
         (position, assistant, [*entries, *written.get(position, [])])
         for position, assistant, entries in steps
-    ], superseded
+    ], [superseded_at(messages, at) != -1 for at in indexes]
 
 
 #: The key an entry carries, inside this module only, for its occurrence among
@@ -501,8 +654,20 @@ def _paired(
     return paired
 
 
+def step_position(messages: Sequence[StoredRow]) -> int:
+    """The thread position of the last tool-calling step's assistant row."""
+    steps, _ = _thread_steps(messages)
+    return steps[-1][0] if steps else 0
+
+
+def last_step_superseded(messages: Sequence[StoredRow]) -> bool:
+    """Whether the last step with tool calls is superseded (G-397)."""
+    _, superseded = _thread_steps(messages)
+    return bool(superseded) and superseded[-1]
+
+
 def last_step_results(
-    messages: Sequence[tuple[int, Mapping[str, Any]]],
+    messages: Sequence[StoredRow],
 ) -> dict[int, dict[str, Any]]:
     """The results of the last tool-calling step, by call index (G-392)."""
     steps, _ = _thread_steps(messages)
@@ -510,15 +675,14 @@ def last_step_results(
 
 
 def replaced_steps(
-    messages: Sequence[tuple[int, Mapping[str, Any]]],
+    messages: Sequence[StoredRow],
     needs_approval: Callable[[str], bool],
 ) -> list[tuple[int, list[dict[str, Any]]]]:
     """The gated calls with no result of their own of every SUPERSEDED
     tool-calling step, by the thread position of the step's assistant row
     (G-392, G-397).
 
-    A step is superseded once a user row or any assistant row (an answer in
-    text, or a later step with tool calls) is recorded after it. Only a step
+    A step is superseded as :func:`superseded_at` says. Only a step
     that is not is resolved, so a decision for a superseded one never runs
     anything, whenever it was made. Each such call gets one result saying a
     later step replaced it, so no gated call is left without an outcome. A
@@ -528,7 +692,9 @@ def replaced_steps(
     steps, superseded = _thread_steps(messages)
     paired = _paired(steps)
     replaced: list[tuple[int, list[dict[str, Any]]]] = []
-    for step, (position, assistant, _) in enumerate(steps[:superseded]):
+    for step, (position, assistant, _) in enumerate(steps):
+        if not superseded[step]:
+            continue
         requested = {index for _, index in paired_requests(assistant) if index is not None}
         calls = [
             call
