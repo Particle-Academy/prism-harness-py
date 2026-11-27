@@ -454,15 +454,17 @@ def danger_modes(lead_steps: int = 8) -> ModeRegistry:
 
 
 class DangerWorld(World):
-    """A host whose tool provider offers ``danger`` only when the session's
-    mode is not ``work`` (Z7). On the legacy tool-list path a provider is
-    handed the run's own Session."""
+    """A host whose tool provider offers the real ``danger`` only when the
+    session's mode is not ``work``, and a stand-in that refuses in ``work``
+    (Z7). On the legacy tool-list path a provider is handed the run's own
+    Session."""
 
     legacy = True
 
     def __init__(self) -> None:
         self.seen: list[str | None] = []
         self.danger_ran: list[str | None] = []
+        self.withheld: list[str] = []
         super().__init__()
 
     def _runtime(self) -> AgentRuntime:
@@ -486,12 +488,21 @@ class DangerWorld(World):
                 world.danger_ran.append(self._session.mode())
                 return "destroyed"
 
+        class Withheld:
+            """What the host offers in its place in the ``work`` mode."""
+
+            name = "danger"
+
+            def handle(self, args: dict[str, Any]) -> Any:
+                world.withheld.append("danger")
+                return "Not available in this mode."
+
         tools = ToolRegistry().register(Tool("echo")).register(Tool("lookup"))
 
         def provider(session: Session) -> list[Any]:
             if is_child(session):
                 world.seen.append(session.mode())
-            return [] if session.mode() == "work" else [Danger(session)]
+            return [Withheld()] if session.mode() == "work" else [Danger(session)]
 
         tools.register_provider(provider, name="host")
 
@@ -533,9 +544,7 @@ def test_z7_a_mode_gated_provider_never_offers_danger_in_the_starts_own_run(
 
     assert world.seen and set(world.seen) == {"work"}
     assert world.danger_ran == []
-    child_requests = [request for request in world.requests if request.system_prompt == "Work."]
-    assert child_requests
-    assert all("danger" not in [tool.name for tool in r.tools] for r in child_requests)
+    assert world.withheld == ["danger"]
 
 
 def test_the_plan_reads_follow_the_starts_own_mode_in_its_window() -> None:
