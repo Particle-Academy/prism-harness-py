@@ -193,11 +193,21 @@ def test_a_host_row_recorded_inside_the_runtimes_write_window_is_outside(
         return original(self, key, callback, *args)
 
     monkeypatch.setattr(FileSessionStore, "with_lock", with_lock)
-    _, approvals = park(world, ("c1", "echo", {"n": 1}), ("c2", "lookup", {"n": 2}))
+    _, reported = park(world, ("c1", "echo", {"n": 1}), ("c2", "lookup", {"n": 2}))
     monkeypatch.setattr(FileSessionStore, "with_lock", original)
 
     assert seen == ["recorded"]
     stored = rows(world.fresh().root())
+    # The run reports only approvals still pending when it returns (G-387
+    # round 17): the host row ended the step's, so none.
+    assert reported == []
+    approvals = [
+        request["approval_id"]
+        for row in stored
+        if row.get("type") == "assistant"
+        for request in row.get("tool_approval_requests") or []
+    ]
+    assert len(approvals) == 1
     assert [row[SUPERSEDED] for row in stored if SUPERSEDED in row] == [{"approval_ids": approvals}]
     assert pending_approval_ids(stored) == []
     with pytest.raises(HarnessError) as caught:
