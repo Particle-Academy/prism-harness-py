@@ -366,9 +366,11 @@ with exactly one recorded outcome:
   writes on its own row is ignored. Neither mark is sent to the model.
 - **A started call reads interrupted.** Just before an approved call runs, the
   harness records that it started (`harness_started`). A started call with no
-  result, because the store failed after the tool ran or the process stopped,
-  reads `Tool call was interrupted, it may have run`. It is never run again,
-  and it may already have had its effect; a new approval is a new call.
+  result, because the store failed after the tool ran, the process stopped or
+  the call is still running, is answered `Tool call was interrupted, it may
+  have run` in the history sent to the model. That answer is never stored: the
+  call's own result, when it lands, is its one stored outcome. It is never run
+  again, and it may already have had its effect; a new approval is a new call.
 - **The decision is read again when the call starts.** If the decision that
   stands for its approval is no longer an approve at that moment, the call does
   not run and reads `Not run: this call is not the one that was approved, or it

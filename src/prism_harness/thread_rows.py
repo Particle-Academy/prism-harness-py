@@ -152,8 +152,8 @@ def thread_view(
     to a provider separately, a tool output would go twice. Folded, a result is
     keyed by its tool call id, tool name and arguments (never the id alone; see
     :func:`_fold`), and a later one replaces an earlier one in the earlier
-    one's position. A decision is keyed by its approval id, and the
-    any DENY for an approval is final (G-401).
+    one's position. A decision is keyed by its approval id, and any DENY
+    for an approval is final (G-401).
     """
     view: list[dict[str, Any]] = []
     # The view row holding the current step's results: a step's result rows
