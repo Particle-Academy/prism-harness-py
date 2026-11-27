@@ -52,6 +52,7 @@ from prism_harness.thread_rows import (
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
+    call_results,
     carried_agent_spend,
     decided_unresolved_ids,
     ended_by_start_row,
@@ -60,6 +61,7 @@ from prism_harness.thread_rows import (
     paused_approval_row,
     pending_approval_ids,
     repeats_call_ids,
+    step_requests,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -759,6 +761,10 @@ class AgentRuntime:
             raise
 
         turn_token = None
+        # Set at the task-row write itself: the in-memory fact that the
+        # start's task row is in the thread (G-387 round 13). Read before any
+        # undo, never a store read.
+        task_recorded = [False]
         # From here the run has begun: everything it does, its RunStarted
         # included, is inside this try (G-387 round 12), so whatever raises
         # (a store write, a listener's BaseException, an emit that throws)
@@ -947,7 +953,7 @@ class AgentRuntime:
 
             ended: list[ToolCallInput] = []
             if prompt != "" and started is not None:
-                ended = self._record_task(session, mode, run_id, prompt, attachments)
+                ended = self._record_task(session, mode, run_id, prompt, attachments, task_recorded)
             elif prompt != "":
                 # With attachments, the shape prism-ai-core's UserMessage.to_dict()
                 # writes: the media parts, then the turn's own text as a trailing
@@ -1015,6 +1021,12 @@ class AgentRuntime:
             # attributes cannot be read (a host subclass that never ran the
             # base constructor, a getter that raises) must not skip any of it.
             leave_own()
+            if started is not None and task_recorded[0]:
+                # Its task row is written: the start stands, whatever failed
+                # after the write (G-387 round 13). Never undone.
+                started = None
+                _quietly(lambda: self._trees.committed(member, run_id))
+                _quietly(lambda: session.confirm_child_start(run_id))
             if started is not None:
                 # Failed before its task was recorded: the child is put back
                 # as it was before the start, and the tree hold released.
@@ -1049,10 +1061,17 @@ class AgentRuntime:
             # a listener never sees a run start with no end: round 11), and it
             # propagates unchanged.
             leave_own()
+            if started is not None and task_recorded[0]:
+                started = None
+                _quietly(lambda: self._trees.committed(member, run_id))
+                _quietly(lambda: session.confirm_child_start(run_id))
             if started is not None:
                 self._undo_start(session, member, run_id, started)
             failure = _failure(error)
             _quietly(lambda: session.fail_run(run_id, failure))
+            # The plan reads the thread the run left, as on every other exit
+            # (G-387 round 13).
+            _quietly(lambda: self._plans.after_turn(session))
             _quietly(lambda: self._settle_child(session, run_id))
             _quietly(lambda: self._trees.finished(session, run_id))
             # Last: a listener's own BaseException cannot skip the holds.
@@ -1231,6 +1250,7 @@ class AgentRuntime:
         run_id: str,
         prompt: str,
         attachments: Sequence[object],
+        recorded: list[bool],
     ) -> list[ToolCallInput]:
         """A runner start's task row (G-387 round 9). It ENDS every call still
         pending on the child: each is recorded as not run, in the same write
@@ -1278,11 +1298,15 @@ class AgentRuntime:
                     ended_by_start_row(
                         closing,
                         approval_ids,
-                        list(results.values()),
+                        results,
                         list(decisions.values()),
                     )
                 )
             live.thread().record([*rows, turn], run_id)
+            # Recorded as written AT the write (G-387 round 13): a failure
+            # after it (the lock's release, an event, a read in cleanup) never
+            # makes the start read as unrecorded, so it is never undone.
+            recorded[0] = True
 
         options = self._settings(session)
         session.lock(
@@ -1776,7 +1800,7 @@ class AgentRuntime:
                     )
 
             live.thread().record(
-                [tool_result_row([*results.values(), *resolved], list(decisions.values()))],
+                [tool_result_row([*results, *resolved], list(decisions.values()))],
                 run_id,
             )
             return bounded
@@ -1794,7 +1818,7 @@ class AgentRuntime:
     ) -> (
         tuple[
             list[dict[str, Any]],
-            dict[str, dict[str, Any]],
+            list[dict[str, Any]],
             dict[str, dict[str, Any]],
             list[str | None],
             tuple[list[str], bool] | None,
@@ -1804,8 +1828,14 @@ class AgentRuntime:
         | None
     ):
         """The gated calls of the last tool-calling turn that have no result
-        yet, each with the approval id of its OWN request (or None), and
-        whether the turn repeats a call id (G-392)."""
+        yet, each with the approval id of its OWN request (or None), the
+        results the turn already has (one per call, in call order), and
+        whether the turn repeats a call id (G-392).
+
+        Results are matched to calls BY POSITION (G-387 round 13), never
+        through a map keyed by call id: a gated call that shares its id with
+        an ungated call that already ran is still pending, so a resume denies
+        it and a runner start ends it with its own approval."""
         rows = [entry.message for entry in session.thread().messages()]
         view = thread_view(rows)
         index = next(
@@ -1821,26 +1851,46 @@ class AgentRuntime:
             return None
 
         assistant = view[index]
-        answered = next((row for row in view[index + 1 :] if row["type"] == "tool_result"), None)
-        results = {e["tool_call_id"]: e for e in (answered or {}).get("tool_results", [])}
+        # The same step as stored: its results are read from the stored rows,
+        # which the view folds by call id.
+        at = next(
+            i
+            for i in range(len(rows) - 1, -1, -1)
+            if rows[i].get("type") == "assistant"
+            and isinstance(rows[i].get("tool_calls"), list)
+            and any(isinstance(call, dict) for call in rows[i]["tool_calls"])
+        )
+        answered = call_results(assistant["tool_calls"], rows[at + 1 :])
+        results = [answered[i] for i in sorted(answered)]
         # Which decision counts comes from the stored rows, the FIRST recorded
         # for an approval id standing; the view folds later over earlier.
         decisions = first_decisions(rows)
         # Each request paired with its own call by position, never through a
         # map keyed by call id, where the last request under a repeated id
-        # would answer every call carrying it (G-392).
+        # would answer every call carrying it (G-392); and never with a call
+        # the step ran at once (G-387 round 13).
+        stored_pairs = step_requests(rows, at)
         requested: dict[int, str] = {
-            index: request["approval_id"]
-            for request, index in paired_requests(assistant)
-            if index is not None
+            call: request["approval_id"]
+            for (_, call), request in zip(
+                stored_pairs, assistant["tool_approval_requests"], strict=False
+            )
+            if call is not None
         }
+        if len(stored_pairs) != len(assistant["tool_approval_requests"]):
+            # Requests kept in rows of their own (0.1.0): paired on the view.
+            requested = {
+                call: request["approval_id"]
+                for request, call in paired_requests(assistant)
+                if call is not None
+            }
 
         # A call that has a result is DONE, whatever its decision says. A call that
         # needs nobody is not this method's to run.
         pending = [
             (row, requested.get(index))
             for index, row in enumerate(assistant["tool_calls"])
-            if row["id"] not in results and (index in requested or mode.needs_approval(row["name"]))
+            if index not in answered and (index in requested or mode.needs_approval(row["name"]))
         ]
 
         if not pending:
@@ -2185,11 +2235,24 @@ def _record_decision(
         # resume runs it.
 
         run = live.run()
+        # A step whose call ids repeat cannot say which call a decision
+        # answers: every decision on it is recorded as a DENIAL with the
+        # G-392 text (G-387 round 13), as the PHP reference records it, so no
+        # reader (a plan, a later resume) ever reads one as approved.
+        tail = paused_approval_row(rows)
+        repeated = tail is not None and repeats_call_ids(tail)
 
         live.thread().record(
             [
                 tool_result_row(
-                    [], [{"approval_id": approval_id, "approved": approved, "reason": reason}]
+                    [],
+                    [
+                        {
+                            "approval_id": approval_id,
+                            "approved": False if repeated else approved,
+                            "reason": REPEATED_CALL_ID if repeated else reason,
+                        }
+                    ],
                 )
             ],
             run["id"] if run else None,

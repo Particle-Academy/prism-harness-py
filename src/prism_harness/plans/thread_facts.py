@@ -12,9 +12,9 @@ from typing import Any
 
 from prism_harness.thread_rows import (
     ended_approval_ids,
-    paired_requests,
     pending_approval_ids,
     repeats_call_ids,
+    step_requests,
 )
 from prism_harness.tool_policy import args_digest
 
@@ -36,12 +36,15 @@ def _digest(arguments: object) -> str:
 
 
 def _approval_call(rows: Rows, approval_id: str) -> dict[str, Any] | None:
-    for row in reversed(rows):
+    for at in range(len(rows) - 1, -1, -1):
+        row = rows[at]
         if row.get("type") != "assistant":
             continue
-        # Each request names its own call, paired by position (G-392).
+        # Each request names its own call, paired by position (G-392), and
+        # never an ungated call that shares its id and already ran (G-387
+        # round 13).
         calls = _dicts(row.get("tool_calls"))
-        for request, index in paired_requests(row):
+        for request, index in step_requests(rows, at):
             if request.get("approval_id") != approval_id or index is None:
                 continue
             call = calls[index]

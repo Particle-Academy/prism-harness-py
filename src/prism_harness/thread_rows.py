@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +23,7 @@ __all__ = [
     "REPEATED_CALL_ID",
     "ToolCallInput",
     "assistant_row",
+    "call_results",
     "ended_by_start_row",
     "thread_view",
     "tool_result_entry",
@@ -218,15 +219,10 @@ def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     turn, or an assistant step that asked nothing, ends it.
     """
     decided: set[str] = set()
-    finished: set[str] = set()
-    for row in reversed(rows):
+    for index in range(len(rows) - 1, -1, -1):
+        row = rows[index]
         kind = row.get("type")
         if kind == "tool_result":
-            for result in _dicts(row.get("tool_results")):
-                if isinstance(result.get("tool_call_id"), str):
-                    finished.add(result["tool_call_id"])
-            if "tool_results" not in row and isinstance(row.get("tool_call_id"), str):
-                finished.add(row["tool_call_id"])  # 0.1.0: one row per call
             for response in _dicts(row.get("tool_approval_responses")):
                 if isinstance(response.get("approval_id"), str):
                     decided.add(response["approval_id"])
@@ -239,13 +235,17 @@ def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
             return []
         if kind != "assistant":
             continue
+        # Which call has a result is matched BY POSITION (G-387 round 13):
+        # a result under a repeated id answers ONE call, never every call
+        # that carries the id.
+        done = call_results(_dicts(row.get("tool_calls")), rows[index + 1 :])
         found: list[str] = []
-        for request in _dicts(row.get("tool_approval_requests")):
+        for request, call in step_requests(rows, index):
             approval_id = request.get("approval_id")
             if (
                 isinstance(approval_id, str)
                 and approval_id in decided
-                and request.get("tool_call_id") not in finished
+                and (call is None or call not in done)
             ):
                 found.append(approval_id)
         return list(dict.fromkeys(found))
@@ -261,17 +261,21 @@ def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     APPROVAL ids. A result's text is never read (a tool can return any text),
     and nothing a tool, a model or a host prompt sends reaches that field: a
     tool's output is a result string, its arguments and a provider's state
-    live inside other rows. Scoped to its own turn: a mark ends only approval
+    live inside other rows. Scoped to its own step: a mark ends only approval
     ids the last assistant step before it asked for, never anything matched by
     a tool call id, which providers reuse across turns.
+
+    ANY tool result row after the approval's request row and before the next
+    assistant row counts (G-387 round 13), not only the first one carrying the
+    call's id: a step whose calls share an id has an earlier, unmarked result
+    row for the call that already ran, and that row must not hide the mark the
+    start wrote. The key is the harness's alone, so this is no looser.
     """
     ended: set[str] = set()
     asked: set[str] = set()
     for row in rows:
         kind = row.get("type")
-        if kind == "user":
-            asked = set()
-        elif kind == "assistant" and _dicts(row.get("tool_calls")):
+        if kind == "assistant":
             asked = {
                 request["approval_id"]
                 for request in _dicts(row.get("tool_approval_requests"))
@@ -488,32 +492,99 @@ def repeats_call_ids(assistant: Mapping[str, Any]) -> bool:
     return len(set(ids)) != len(ids) or len(set(asked)) != len(asked)
 
 
-def paired_requests(assistant: Mapping[str, Any]) -> list[tuple[dict[str, Any], int | None]]:
+def paired_requests(
+    assistant: Mapping[str, Any], ran: Collection[int] = ()
+) -> list[tuple[dict[str, Any], int | None]]:
     """Each approval request of one step with the index of the call it was
     issued for, or None (G-392).
 
     Paired by position: a request takes the first call, in call order, that
     has its ``tool_call_id`` and no request yet. The harness issues requests
     in call order, so with repeated ids every call still gets its own request,
-    never the last one issued under that id.
+    never the last one issued under that id. ``ran`` are the calls the step
+    ran at once (G-387 round 13): a call that ran was asked nothing, so a
+    request pairs with one of them only when no other call carries its id.
     """
     calls = _dicts(assistant.get("tool_calls"))
     taken: set[int] = set()
     pairs: list[tuple[dict[str, Any], int | None]] = []
     for request in _dicts(assistant.get("tool_approval_requests")):
         wanted = _text(request.get("tool_call_id"))
-        index = next(
-            (
-                i
-                for i, call in enumerate(calls)
-                if i not in taken and _text(call.get("id")) == wanted
-            ),
-            None,
-        )
+        free = [
+            i for i, call in enumerate(calls) if i not in taken and _text(call.get("id")) == wanted
+        ]
+        index = next((i for i in free if i not in ran), free[0] if free else None)
         if index is not None:
             taken.add(index)
         pairs.append((request, index))
     return pairs
+
+
+def step_requests(
+    rows: Sequence[Mapping[str, Any]], index: int
+) -> list[tuple[dict[str, Any], int | None]]:
+    """:func:`paired_requests` for the stored assistant row ``rows[index]``,
+    knowing which of its calls the step ran at once: the ones the tool result
+    row written right after it answers, before any decision (G-387 round 13).
+    A request is never paired with an ungated call that shares its id."""
+    assistant = rows[index]
+    following = rows[index + 1] if index + 1 < len(rows) else None
+    ran: set[int] = set()
+    if (
+        following is not None
+        and following.get("type") == "tool_result"
+        and not _dicts(following.get("tool_approval_responses"))
+        and ENDED_BY_START not in following
+    ):
+        ran = set(call_results(_dicts(assistant.get("tool_calls")), [following]))
+    return paired_requests(assistant, ran)
+
+
+def call_results(
+    calls: Sequence[Mapping[str, Any]], rows: Sequence[Mapping[str, Any]]
+) -> dict[int, dict[str, Any]]:
+    """Which of one step's ``calls`` the tool result ``rows`` after it
+    answer, by call INDEX, each with its first result (G-387 round 13).
+
+    Matched BY POSITION, never through a map keyed by call id, where a result
+    under a repeated id would answer every call carrying it. Within each row a
+    result takes one call: the first, in call order, with its id that the row
+    has not matched yet, preferring the one with its tool name and arguments,
+    then its tool name. So a gated call that shares its id with an ungated
+    one that ran stays unanswered. A row that repeats earlier results (a
+    resume's, a start's) matches the same calls again."""
+    matched: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if row.get("type") != "tool_result":
+            continue
+        normalised = _normalise(row, [])
+        if normalised is None:
+            continue
+        taken: set[int] = set()
+        for entry in normalised["tool_results"]:
+            index = _answered_call(calls, entry, taken)
+            if index is not None:
+                taken.add(index)
+                matched.setdefault(index, entry)
+    return matched
+
+
+def _answered_call(
+    calls: Sequence[Mapping[str, Any]], entry: Mapping[str, Any], taken: Collection[int]
+) -> int | None:
+    """The call one stored result answers: see :func:`call_results`."""
+    wanted = _text(entry.get("tool_call_id"))
+    free = [i for i, call in enumerate(calls) if i not in taken and _text(call.get("id")) == wanted]
+    named = [i for i in free if _text(calls[i].get("name")) == entry.get("tool_name")]
+    exact = [
+        i
+        for i in named
+        if (usable_arguments(calls[i].get("arguments")) or {}) == (entry.get("args") or {})
+    ]
+    for found in (exact, named, free):
+        if found:
+            return found[0]
+    return None
 
 
 def ambiguous_calls(assistant: Mapping[str, Any]) -> set[str]:

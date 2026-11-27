@@ -208,6 +208,24 @@
   gate, never as no limit.
 - `send_structured()` returns a `StructuredAgentResponse`, with no document,
   when the run parks on an approval or runs out of steps.
+- A call a runner start ended reads ended whatever else its step wrote: any
+  tool result row after the approval's request and before the next assistant
+  step that carries the harness's `harness_ended_by_start` mark naming the
+  approval ends it, not only the first row carrying the call's id.
+- A step whose tool call ids repeat records every decision on it as a denial,
+  with the same text its calls are given ("Tool call was not run because
+  another call in this step has the same id"), as the PHP reference does, so
+  neither a plan nor a later turn reads one as approved. Results are matched
+  to the step's calls by position, never by call id alone: a gated call that
+  shares its id with an ungated call that already ran is still pending, so a
+  resume denies it and a runner start ends it with its own approval, and its
+  approval request is never paired with the ungated call.
+- A runner start whose task row is written stands, whatever fails after the
+  write (a lock release, an event, a read while its run ends): the harness
+  records the task row as written at the write itself, and only a start that
+  fails before it is put back. The Session object that committed a start can
+  enter that start's own-run view only until its run ends. A run stopped by
+  an exception that is not an `Exception` runs the plan's after-turn hook too.
 
 ### Parity
 

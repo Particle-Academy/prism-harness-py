@@ -752,7 +752,9 @@ class Session:
         ``run_id`` enters it (G-387 round 12): on any other object, whatever
         run id it is handed (one read from storage, a crash's residue still
         marked running), nothing is entered and every reader keeps the
-        provisional rule.
+        provisional rule. And only until that run ends (round 13): the leave
+        forgets the commit, so the committing object cannot re-enter the view
+        on its own crash residue either.
 
         Internal: entered by the runtime."""
         if self._committed_start is None or self._committed_start != run_id:
@@ -766,6 +768,10 @@ class Session:
                 return
             left[0] = True
             self._own_start = None
+            # The start's run is over (G-387 round 13): this object never
+            # enters that view again, not even on its own crash residue.
+            if self._committed_start == run_id:
+                self._committed_start = None
             _OWN_START.reset(token)
 
         return leave

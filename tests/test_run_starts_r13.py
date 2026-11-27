@@ -40,7 +40,7 @@ from test_run_starts import direct
 from test_run_starts_r8 import is_child
 from test_run_starts_r9 import outage, refused_as_unbound, start
 from test_run_starts_r10 import Abort
-from test_step_allowance import World
+from test_step_allowance import World, rewrite_paused_row
 from test_step_allowance_r6 import dead_approval_child
 
 from prism_harness import (
@@ -461,3 +461,40 @@ def test_a_start_that_fails_after_its_task_row_keeps_its_records() -> None:
     assert result.outcome == "failed"
 
     _kept(world)
+
+
+# -- new channels ------------------------------------------------------------------
+
+
+def test_a_repeated_id_among_the_requests_alone_records_denials() -> None:
+    """A stored step whose calls are unique but whose requests both name one
+    call (written by another writer): every decision on it is a denial."""
+    world = Recording()
+    approvals = child_parked_on(world, ("a", "echo", {"n": 1}), ("b", "echo", {"n": 2}))
+
+    def same_call(row: dict[str, Any]) -> None:
+        for request in row["tool_approval_requests"]:
+            request["tool_call_id"] = "a"
+
+    rewrite_paused_row(world.child("worker"), same_call)
+    record_approval(world.fresh().child("worker"), approvals[0], True)
+
+    assert stored_decisions(world) == [
+        {"approval_id": approvals[0], "approved": False, "reason": REPEATED}
+    ]
+
+
+def test_a_start_whose_task_row_is_written_hands_its_tree_hold_over() -> None:
+    """The kept start after a store failure leaves no live hold behind: the
+    next delegation is not refused as busy, and the root's tree holds
+    nothing."""
+    world = World()
+    world.text("Child answer.")
+    with pytest.MonkeyPatch.context() as patch:
+        _failing_after_the_task_row(patch, world)
+        assert (
+            direct(world, world.root(), RunContext.root("host", RunBudget(8)), "Task.").outcome
+            == "failed"
+        )
+    assert world.runtime._trees.members == {}
+    assert "Child answer." in start(world, "direct", "Again.")
