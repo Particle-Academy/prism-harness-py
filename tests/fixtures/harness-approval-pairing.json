@@ -1253,6 +1253,78 @@
         "py": null
       },
       "agrees": false
+    },
+    {
+      "id": "apr-0020",
+      "title": "a later user row recorded by a caller under the step's own run id supersedes the parked step",
+      "since": "0.2.0",
+      "notes": "DECISION B (G-387 round 13). A host records the user row `A later message.` after the park and passes the parked step's OWN run id when it records it. A run id a caller passes is always outside the runs that own the step: only the runtime's own in-run recording is inside. So the step is superseded exactly as in apr-0018: each gated call gets ONE `Tool call was not run because a later step replaced it`, nothing runs, and the round approving both afterwards is refused with `approval_not_pending`.",
+      "supersede": "user_owning_run_id",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "c2",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": [],
+        "decided": [
+          null,
+          null
+        ],
+        "outcomes": [
+          "Tool call was not run because a later step replaced it",
+          "Tool call was not run because a later step replaced it"
+        ],
+        "refusals": [
+          "approval_not_pending"
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "ts": null,
+        "py": null
+      },
+      "agrees": false
     }
   ]
 }

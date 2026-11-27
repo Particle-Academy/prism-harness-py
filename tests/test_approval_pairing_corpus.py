@@ -115,7 +115,8 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
     session = harness.for_(Participant("User", 1)).session("corpus")
     runtime = AgentRuntime(client=client, modes=modes, tools=tools)
 
-    pending = runtime.send(session, "go").pending_approvals
+    parked = runtime.send(session, "go")
+    pending = parked.pending_approvals
     # DECISION B (0.2.0): a row that supersedes the parked step, recorded by a
     # host (outside the run that owns the step), or a new message.
     supersede = row.get("supersede")
@@ -125,6 +126,9 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
         session.thread().record([assistant_row("A later answer.", [])])
     elif supersede == "user":
         session.thread().record([{"type": "user", "content": "A later message."}])
+    elif supersede == "user_owning_run_id":
+        # A caller passing the parked step's OWN run id: still outside.
+        session.thread().record([{"type": "user", "content": "A later message."}], parked.run_id)
     elif supersede == "new_message":
         runtime.send(session, "Something else.")
     refusals: list[str | None] = []
