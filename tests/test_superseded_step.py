@@ -113,7 +113,15 @@ def test_a_host_recorded_row_supersedes_the_parked_step(kind: str, run: str, ste
     stored = rows(world.fresh().root())
     marked = [row for row in stored if SUPERSEDED in row]
     assert [row[SUPERSEDED] for row in marked] == [{"approval_ids": approvals}]
-    assert list(marked[0]) == ["type", "tool_results", "tool_approval_responses", SUPERSEDED]
+    # As read: the harness's own flag beside the stored keys (G-387 round
+    # 16), set on the denial the harness wrote for the host's row.
+    assert list(marked[0]) == [
+        "type",
+        "tool_results",
+        "tool_approval_responses",
+        SUPERSEDED,
+        "harness",
+    ]
     # Placed right before the row that superseded the step.
     at = stored.index(marked[0])
     assert stored[at + 1]["type"] == SUPERSEDING[kind]["type"]

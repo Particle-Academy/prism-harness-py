@@ -495,7 +495,9 @@ def read(
 ) -> dict[str, Any]:
     """Every reader on ``session``, and the actions ``acts`` names."""
     run = session.run()
-    rows = [entry.message for entry in world.child("worker").thread().messages()]
+    # As every reader takes them (G-387 round 16): marks count only with the
+    # harness flag, which bare messages do not carry.
+    rows = world.child("worker").thread().rows()
     found: dict[str, Any] = {
         "mode": session.mode(),
         "binding": session.child_binding(),
@@ -1068,7 +1070,7 @@ def _act(world: _Resolving, action: str, approval: str) -> str:
             world.queue.append(LlmResponse(text="Answer.", finish_reason="stop"))
             world.runtime.send(world.root(), "A new message.")
         elif action == "ended_mark":
-            forged = {
+            forged: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_results": [],
                 "tool_approval_responses": [],
@@ -1209,8 +1211,10 @@ def _resolution(phase: str, side: str, action: str) -> dict[str, Any]:
     return {
         "acted": acted[0] if acted else "never",
         "outcomes": outcomes,
-        "replaced": approval in superseded_approval_ids(rows),
-        "decided": approval_decisions(rows).get(approval),
+        # Read as every reader takes the rows (G-387 round 16): the
+        # harness's marks count only with its own flag.
+        "replaced": approval in superseded_approval_ids(world.fresh().root().thread().rows()),
+        "decided": approval_decisions(world.fresh().root().thread().rows()).get(approval),
         "ran": world.ran_with,
     }
 

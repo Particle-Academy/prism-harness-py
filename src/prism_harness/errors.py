@@ -165,6 +165,19 @@ class HarnessError(Exception):
         return cls(ErrorCode.RUN_NOT_PERMITTED, reason)
 
     @classmethod
+    def parked_elsewhere(cls) -> HarnessError:
+        """A run may take no further model step: a newer step on its session,
+        written by another run or a host after this run read the thread,
+        waits on approval (G-387 round 16; a tool's own nested send parked
+        the session). Its answer would replace the step a caller was just
+        told is waiting. The PHP reference's text."""
+        return cls(
+            ErrorCode.RUN_NOT_PERMITTED,
+            "This run may not take another model step (parked_elsewhere): "
+            "a newer step on its session is waiting on approval.",
+        )
+
+    @classmethod
     def child_binding_missing(cls) -> HarnessError:
         """A subagent child session has no saved provider and model binding.
 

@@ -534,7 +534,8 @@ def test_a_call_a_start_ended_never_reads_as_approved() -> None:
 
     assert "Child answer." in start(world, "direct", "New task.")
 
-    rows = [entry.message for entry in world.fresh().child("worker").thread().messages()]
+    # As every reader takes them (G-387 round 16).
+    rows = world.fresh().child("worker").thread().rows()
     assert "Not run" in str(rows)
     assert approval not in approval_decisions(rows)
     assert world.pending(world.child("worker")) == []

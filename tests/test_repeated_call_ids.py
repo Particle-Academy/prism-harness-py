@@ -85,6 +85,14 @@ def say(world: World, *calls: tuple[str, str, dict[str, Any]]) -> None:
 
 
 def rows(session: Session) -> list[dict[str, Any]]:
+    """The rows as every reader takes them (:meth:`Thread.rows`): a harness
+    mark counts only on a row read with the harness's own flag (G-387 round
+    16), which the stored messages alone do not carry."""
+    return session.thread().rows()
+
+
+def stored_messages(session: Session) -> list[dict[str, Any]]:
+    """The stored messages, byte for byte as written."""
     return [entry.message for entry in session.thread().messages()]
 
 

@@ -15,6 +15,7 @@ from prism_harness.thread_rows import (
     pending_approval_ids,
     repeats_call_ids,
     requested_step,
+    standing_decisions,
     step_requests,
     step_rows,
     superseded_approval_ids,
@@ -77,18 +78,23 @@ def approval_decisions(rows: Rows) -> dict[str, bool]:
     acted on, and reads as ended, never as approved."""
     # Nor one a later step replaced (DECISION B, G-387 round 13).
     ended = ended_approval_ids(rows) | superseded_approval_ids(rows)
-    decided: dict[str, bool] = {}
-    for row in rows:
-        if row.get("type") != "tool_result":
-            continue
-        for response in _dicts(row.get("tool_approval_responses")):
-            approval_id = response.get("approval_id")
-            if isinstance(approval_id, str) and approval_id not in ended:
-                # The first decision stands, but ANY DENY IS FINAL (G-401).
-                decided[approval_id] = decided.get(approval_id, True) and (
-                    response.get("approved") is True
-                )
-    return decided
+    # The decision that STOOD (G-401, G-387 round 16): the first one, unless
+    # a later one denies it before its call was acted on; one recorded after
+    # its call started or got its outcome is not it. The same reader as the
+    # replay and the resolver, so they never disagree.
+    # A plan reads the decisions tool result rows hold, never a 0.3.0
+    # single-decision row.
+    held = {
+        response.get("approval_id")
+        for row in rows
+        if row.get("type") == "tool_result"
+        for response in _dicts(row.get("tool_approval_responses"))
+    }
+    return {
+        approval_id: decision["approved"]
+        for approval_id, decision in standing_decisions(rows).items()
+        if approval_id not in ended and approval_id in held
+    }
 
 
 def approved_calls_awaiting_result(rows: Rows, name: str, digest: str) -> int:

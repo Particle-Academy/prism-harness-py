@@ -1154,10 +1154,16 @@ def decide(
     approved: bool,
     reason: str | None,
     broken: list[str],
+    answered: bool = False,
 ) -> bool:
     """Record one decision. After a row that superseded the step it must be
     refused, ``approval_not_pending``; a repeated approval id is answered
-    once (the second answer is refused the same way)."""
+    once (the second answer is refused the same way). ``answered``: a call
+    that carries the request's call id already has an outcome (a prior, a
+    forged or a lossy result), so the request may be refused the same way
+    (G-387 round 16: a call with an outcome keeps no approval pending). A
+    refusal the rule did not call for still shows: the outcome it decides
+    differs from the oracle's."""
     superseded = (
         case.insert is not None
         and case.insert.kind in SUPERSEDES
@@ -1167,13 +1173,31 @@ def decide(
         record_approval(session, approval, approved, reason)
     except HarnessError as error:
         if error.code == "approval_not_pending" and (
-            superseded or [r.approval_id for r in case.requests].count(approval) > 1
+            superseded or answered or [r.approval_id for r in case.requests].count(approval) > 1
         ):
             return False
         raise
     if superseded and case.insert is not None:
         broken.append(f"G-397: a decision was recorded after a {case.insert.kind} row")
     return True
+
+
+def answered_before_decision(case: Case, call_id: str) -> bool:
+    """Whether a call of the case step carrying ``call_id`` has an outcome
+    before the decisions are recorded: a prior result, the lossy result's
+    target, or a forged result inserted before the decision."""
+    lossy = cross_target(case)
+    forged = (
+        case.insert.call
+        if case.insert is not None
+        and case.insert.kind == "tool_result"
+        and case.insert.when == "before_decision"
+        else None
+    )
+    return any(
+        call.id == call_id and (call.prior or index == lossy or index == forged)
+        for index, call in enumerate(case.calls)
+    )
 
 
 def check(case: Case) -> list[str]:
@@ -1290,7 +1314,15 @@ def _check(
                 continue
             approval = approval_of[index]
             assert approval is not None
-            if decide(session, case, approval, call.decision == "approve", call.reason, broken):
+            if decide(
+                session,
+                case,
+                approval,
+                call.decision == "approve",
+                call.reason,
+                broken,
+                answered_before_decision(case, call.id),
+            ):
                 decided[approval] = (call.decision, call.reason)
     else:
         store_step(session, case)
@@ -1311,6 +1343,7 @@ def _check(
                 request.decision == "approve",
                 request.reason,
                 broken,
+                answered_before_decision(case, request.tool_call_id),
             ):
                 decided[request.approval_id] = (request.decision, request.reason)
         for at, call in enumerate(gated):
@@ -1421,6 +1454,13 @@ def _check(
     said_ran: dict[str, int] = {}
     for index, call in enumerate(case.calls):
         if not call.gated:
+            # Invariant 5 covers EVERY call (G-387 round 16): an ungated
+            # call that ran has exactly one outcome too.
+            texts = stored.get(("case", index), [])
+            if len(texts) != 1:
+                broken.append(
+                    f"5: ungated {call.token}#{index} has {len(texts)} recorded outcomes {texts}"
+                )
             continue
         texts = stored.get(("case", index), [])
         if len(texts) != 1:
@@ -1678,12 +1718,12 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
             assert any(k.forged == (mark, which) for k in examined), (mark, which)
     assert any(k.insert is not None and k.insert_run == "own" for k in examined)
     # The copies are rarer: a wider window of seeds (generating is cheap).
-    raws = [
+    raws: list[str | None] = [
         k.insert.variant
         for k in (generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + 3000))
         if k.raw and k.insert is not None
     ]
-    assert set(JUNK) | set(NEW_CALL) <= set(raws), sorted(set(raws))
+    assert set(JUNK) | set(NEW_CALL) <= set(raws), sorted(str(v) for v in set(raws))
     assert sorted(
         generate(seed, False).concurrent or ""
         for seed in CONCURRENT_SEEDS

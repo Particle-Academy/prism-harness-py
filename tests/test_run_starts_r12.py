@@ -59,7 +59,9 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def rows_of(world: World) -> list[dict[str, Any]]:
-    return [entry.message for entry in world.fresh().child("worker").thread().messages()]
+    """The child's rows as every reader takes them (G-387 round 16: a mark
+    counts only on a row read with the harness's own flag)."""
+    return world.fresh().child("worker").thread().rows()
 
 
 def on_disk(world: World, ending: str) -> Any:
@@ -115,6 +117,7 @@ def test_a_start_writes_the_reference_ended_mark_last_on_its_row() -> None:
         "tool_approval_responses",
         ENDED_BY_START,
         "harness_answers_step",
+        "harness",  # as read: the harness's own flag, never stored in the message
     ]
     assert approval in ended_approval_ids(rows)
     assert approval not in approval_decisions(rows)
@@ -132,6 +135,7 @@ def test_the_reference_shape_ends_its_approval() -> None:
         "tool_results": [],
         "tool_approval_responses": [],
         ENDED_BY_START: {"approval_ids": [approval]},
+        "harness": True,  # as read from a row a harness wrote (G-387 round 16)
     }
     found = [*rows, closing]
     assert approval in ended_approval_ids(found)

@@ -109,7 +109,9 @@ def test_z3_a_thread_with_no_session_takes_a_superseding_row_with_its_denial() -
     assert [row["type"] for row in stored] == ["user", "assistant", "tool_result", "user"]
     assert [entry.message["type"] for entry in recorded] == ["tool_result", "user"]
     assert _outcomes(stored) == [SUPERSEDED_RESULT]
-    assert superseded_approval_ids(stored) == {"apr_1"}
+    # Read as every reader takes the rows: the denial is the harness's own.
+    assert superseded_approval_ids(thread.rows()) == {"apr_1"}
+    assert superseded_approval_ids(stored) == set()  # no flag on a bare message
 
 
 # -- PHP Info 6a: a parked structured turn carries no raw step documents ---------

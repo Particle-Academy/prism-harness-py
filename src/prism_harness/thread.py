@@ -26,9 +26,10 @@ __all__ = ["Thread", "ThreadMessage"]
 #: caller records can set it.
 WRITTEN_BY_HARNESS = "harness"
 
-#: What a guarded write's guard is handed (the thread's rows, as read) and
-#: returns: the rows to write, or None to write nothing.
-Guard = Callable[[list[dict[str, Any]]], Sequence[dict[str, Any]] | None]
+#: What a guarded write's guard is handed (the thread's rows, as read, and
+#: each row's stored position) and returns: the rows to write, or None to
+#: write nothing.
+Guard = Callable[[list[dict[str, Any]], list[int]], Sequence[dict[str, Any]] | None]
 
 
 def _record_in_run(
@@ -121,6 +122,19 @@ class Thread:
         ]
         return _readable(listed)
 
+    def snapshot(self) -> tuple[list[dict[str, Any]], list[ThreadMessage]]:
+        """:meth:`rows` and :meth:`messages` from ONE read of the store (G-387
+        round 16): the rows every reader takes, and the stored entries beside
+        them (positions, run ids), index for index."""
+        stored = self._store.get(self._key)
+        entries = stored.get("messages") if stored is not None else None
+        listed = [
+            entry
+            for entry in (entries if isinstance(entries, list) else [])
+            if isinstance(entry, dict) and isinstance(entry.get("message"), dict)
+        ]
+        return _readable(listed), [self._to_message(entry) for entry in listed]
+
     def count(self) -> int:
         return len(self.messages())
 
@@ -168,7 +182,7 @@ class Thread:
             if guard is None:
                 given = list(messages)
             else:
-                allowed = guard(readable)
+                allowed = guard(readable, positions)
                 if allowed is None:
                     return []
                 given = list(allowed)
@@ -180,8 +194,12 @@ class Thread:
                 return []
             as_read = [_flagged(row, inside is not None) for row in _indexed(batch_in, positions)]
             original = {id(read): given for read, given in zip(as_read, batch_in, strict=True)}
+            # Each row with whether the HARNESS wrote it: the runtime's own
+            # rows, and the denials a superseding write makes the harness
+            # write whoever triggered it (G-387 round 16): the only rows
+            # whose marks count. A caller's own rows never.
             batch = [
-                original.get(id(row), row)
+                (original[id(row)], inside is not None) if id(row) in original else (row, True)
                 for row in superseding_denials(
                     [
                         (
@@ -207,9 +225,9 @@ class Thread:
                     "run_id": run_id,
                     "recorded_at": recorded_at,
                     # The harness's own write, and only that.
-                    **({WRITTEN_BY_HARNESS: True} if inside is not None else {}),
+                    **({WRITTEN_BY_HARNESS: True} if harness else {}),
                 }
-                for index, message in enumerate(batch)
+                for index, (message, harness) in enumerate(batch)
             ]
             document = {**stored, "messages": [*existing, *appended]}
             self._store.put(self._key, document)

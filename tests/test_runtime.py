@@ -322,7 +322,9 @@ def test_records_all_of_a_steps_results_as_one_row() -> None:
     )
 
     a_runtime(client).send(session, "go")
-    rows = [m.message for m in session.thread().messages()]
+    # The write-ahead started rows (G-387 round 16: one before each call the
+    # step runs at once) are the harness's own and never replayed: read past.
+    rows = [m.message for m in session.thread().messages() if "harness_started" not in m.message]
 
     assert [row["type"] for row in rows] == ["user", "assistant", "tool_result", "assistant"]
     assert [entry["result"] for entry in rows[2]["tool_results"]] == ["echoed:a", "echoed:b"]
@@ -490,7 +492,11 @@ def test_runs_the_calls_that_need_nobody_before_stopping_for_the_rest() -> None:
 
     assert counts == {"shout": 1}
     assert [p.tool_call_id for p in response.pending_approvals] == ["c1"]
-    assert [m.message["type"] for m in session.thread().messages()] == [
+    assert [
+        m.message["type"]
+        for m in session.thread().messages()
+        if "harness_started" not in m.message  # the write-ahead rows (G-387 round 16)
+    ] == [
         "user",
         "assistant",
         "tool_result",
@@ -698,7 +704,11 @@ def test_records_a_failed_tool_as_a_result_rather_than_crashing_the_run() -> Non
     response = a_runtime(client, tools=tools).send(session, "go")
 
     assert response.text == "Recovered."
-    result = next(m for m in session.thread().messages() if m.message["type"] == "tool_result")
+    result = next(
+        m
+        for m in session.thread().messages()
+        if m.message["type"] == "tool_result" and "harness_started" not in m.message
+    )
     assert "exploded" in result.message["tool_results"][0]["result"]
 
 

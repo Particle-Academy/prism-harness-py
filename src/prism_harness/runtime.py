@@ -44,7 +44,7 @@ from prism_harness.subagents import (
     RunContext,
     binding_route,
 )
-from prism_harness.thread import Thread, _record_in_run
+from prism_harness.thread import Thread, ThreadMessage, _record_in_run
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     NOT_THE_APPROVED_CALL,
@@ -74,6 +74,7 @@ from prism_harness.thread_rows import (
     replaced_earlier_steps,
     replaced_step_row,
     requested_step,
+    standing_decisions,
     started_calls,
     started_row,
     step_calls,
@@ -262,6 +263,22 @@ def current_turn_run(session_key: str | None = None) -> RunContext | None:
 
 #: How long a second worker waits for that lock before giving up without running anything.
 _RESOLUTION_WAIT_SECONDS = 30
+
+#: The sessions whose approvals are being resolved in this context, each
+#: with the session lock's CONFIGURED ttl and wait (G-387 round 16): a
+#: decision a tool records on its own session while the resolver holds that
+#: lock waits only as long as the agent is configured to, never a fixed 30 s.
+_RESOLVING: ContextVar[dict[str, tuple[float, float]] | None] = ContextVar(
+    "prism_harness_resolving", default=None
+)
+
+#: What a decision recorded from inside a running approved call on its own
+#: session is refused with: a fixed text, so no session key, thread key,
+#: participant or session name reaches the model through the tool's result.
+_OWN_SESSION_LOCKED = (
+    "A decision cannot be recorded on this session while one of its approved calls is "
+    "running; it was not recorded. Record it after the turn."
+)
 
 
 class RuntimeConfig(TypedDict, total=False):
@@ -678,11 +695,8 @@ class AgentRuntime:
         # a subagent child keeps the provider and model binding the runner gave
         # it, and a named agent keeps what it had spent against its ceiling.
         # Both are read from the paused row, which the harness wrote.
-        paused = (
-            paused_approval_row(session.thread().rows())
-            if prompt == "" and context is None
-            else None
-        )
+        history = session.thread().rows()
+        paused = paused_approval_row(history) if prompt == "" and context is None else None
         # The binding: from the runner's own context when the runner starts
         # the child, even under a run tree the host built
         # (RunTrees.binding_context_kind); otherwise the one SAVED with the
@@ -700,7 +714,7 @@ class AgentRuntime:
             # A runner start's records are absent until its task row (G-387
             # round 9), and so is anything older they replaced: never read
             # back from a paused row instead.
-            tail = paused_approval_row(session.thread().rows())
+            tail = paused_approval_row(history)
             saved_binding = ChildBinding.from_row(tail.get("harness_binding")) if tail else None
         route = binding_route(
             self._trees.binding_context_kind(context),
@@ -991,7 +1005,13 @@ class AgentRuntime:
                 self._record_new_message(session, run_id, turn)
             if started is None:
                 offered = self._resolve_approvals(
-                    session, mode, offered, run_id, called, scope is not None and scope[1]
+                    session,
+                    mode,
+                    offered,
+                    run_id,
+                    called,
+                    scope is not None and scope[1],
+                    stored if prompt == "" else None,
                 )
 
             ended: list[ToolCallInput] = []
@@ -1031,6 +1051,7 @@ class AgentRuntime:
                 schema,
                 system_prompt,
                 plan_gates,
+                read_rows=len(stored),
             )
         except Exception as error:
             # THE MODEL'S OWN WORDS DO NOT BELONG IN A RUN ROW OR AN EVENT. A
@@ -1476,7 +1497,11 @@ class AgentRuntime:
         schema: dict[str, Any] | None = None,
         system_prompt: str | None = None,
         plan_gates: Mapping[str, PlanTool] | None = None,
+        read_rows: int | None = None,
     ) -> AgentResponse:
+        """``read_rows``: how many rows the thread held when the run read its
+        history; a step recorded at or after that index by another writer
+        that waits on approval stops the run before its next model step."""
         thread = session.thread()
         gates = plan_gates or {}
         text = ""
@@ -1503,9 +1528,25 @@ class AgentRuntime:
             if refused is not None:
                 raise refused
 
+            rows = thread.rows()
+            # A NESTED PARK (G-387 round 16, the PHP reference's rule): a
+            # newer step on this session, written after this run read the
+            # thread by anyone else (a tool's own nested send, a host), waits
+            # on approval. Another model step here would answer past it and
+            # replace the step its caller was just told is waiting, so the
+            # run stops instead, before the provider is asked anything.
+            if read_rows is not None and pending_approval_ids(rows):
+                newest = requested_step(rows)
+                if (
+                    newest is not None
+                    and newest >= read_rows
+                    and not self._own_step(thread, newest, run_id)
+                ):
+                    raise HarnessError.parked_elsewhere()
+
             request = LlmRequest(
                 system_prompt=mode.system_prompt if system_prompt is None else system_prompt,
-                messages=placed_view(thread.rows()),
+                messages=placed_view(rows),
                 tools=offered,
                 provider=provider,
                 model=model,
@@ -1700,6 +1741,15 @@ class AgentRuntime:
                         continue
                     self._tool_decision(ToolAutoAllowed, session, run_id, call, declared, "policy")
 
+                # WRITE-AHEAD for the ungated batch too (G-387 round 16): the
+                # started row first, so a call that ran and whose results row
+                # then failed to write reads INTERRUPTED ("it may have run"),
+                # never "not run", and is never given a replaced denial.
+                _record_in_run(
+                    thread,
+                    [started_row({"id": call.id, "name": call.name}, "", step_position)],
+                    run_id,
+                )
                 called.append(call.name)
                 results.append(self._invoke(offered, call))
 
@@ -1735,6 +1785,14 @@ class AgentRuntime:
                 # with no document yet, as a spent one does.
                 return parked if schema is None else _structured(parked, None)
 
+    @staticmethod
+    def _own_step(thread: Thread, index: int, run_id: str) -> bool:
+        """Whether the step at ``index`` of the thread's rows is one this run
+        recorded itself (by its stored entry's run id, which only says who
+        wrote it, never whether a mark counts)."""
+        entries = thread.messages()
+        return 0 <= index < len(entries) and entries[index].run_id == run_id
+
     def _record_new_message(self, session: Session, run_id: str, turn: dict[str, Any]) -> None:
         """A new message's user row, in ONE write (G-404): any earlier step a
         later one replaced with calls left without an outcome (a thread the
@@ -1748,9 +1806,8 @@ class AgentRuntime:
         runs once this row is in."""
         thread = session.thread()
 
-        def rows_to_write(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        def rows_to_write(rows: list[dict[str, Any]], positions: list[int]) -> list[dict[str, Any]]:
             earlier = replaced_earlier_steps(rows)
-            positions = [entry.position for entry in thread.messages()] if earlier else []
             return [*(replaced_step_row(positions[at], calls) for at, calls in earlier), turn]
 
         _record_in_run(thread, [turn], run_id, rows_to_write)
@@ -1763,6 +1820,7 @@ class AgentRuntime:
         run_id: str,
         called: list[str],
         legacy_diagnostic_emitted: bool,
+        history: list[dict[str, Any]] | None = None,
     ) -> list[HarnessTool]:
         """Act on the decisions recorded for the last turn that stopped for a person.
 
@@ -1782,9 +1840,10 @@ class AgentRuntime:
         """
         # A read without the lock first: nearly every send() has nothing to
         # resolve and should not wait on the session lock to find that out.
-        if self._unresolved(session, mode) is None and not replaced_earlier_steps(
-            session.thread().rows()
-        ):
+        # ``history``: the rows the run already read, when nothing was
+        # written since (a resume): no second read (G-387 round 16).
+        first = session.thread().rows() if history is None else history
+        if self._unresolved(session, mode, first) is None and not replaced_earlier_steps(first):
             return list(offered)
 
         # Then under the session lock, reading again inside it. Two workers
@@ -1800,24 +1859,32 @@ class AgentRuntime:
             # An earlier step a later one replaced, left with calls that have
             # no outcome (a thread the 0.5.x line wrote): each gets its one
             # denial first, and nothing of it runs (G-387 round 13).
-            earlier = replaced_earlier_steps(thread.rows())
+            # ONE read of the thread for everything the answer needs (G-387
+            # round 16): the rows, their positions and run ids together.
+            stored, entries = thread.snapshot()
+            earlier = replaced_earlier_steps(stored)
             if earlier:
-                positions = [entry.position for entry in thread.messages()]
-                thread.record(
-                    [replaced_step_row(positions[at], calls) for at, calls in earlier], run_id
+                _record_in_run(
+                    thread,
+                    [replaced_step_row(entries[at].position, calls) for at, calls in earlier],
+                    run_id,
                 )
-            stored = thread.rows()
+                stored, entries = thread.snapshot()
             work = self._unresolved(live, mode, stored)
 
             if work is None:
                 return list(offered)
-            return answer(live, thread, work, _step_position(thread, stored))
+            step = last_tool_step(stored)
+            position = entries[step].position if step is not None else 0
+            return answer(live, thread, work, position, stored, entries)
 
         def answer(
             live: Session,
             thread: Thread,
             work: _Unresolved,
             position: int,
+            stored: list[dict[str, Any]],
+            entries: list[ThreadMessage],
         ) -> list[HarnessTool]:
 
             calls, results, decisions, approval_ids, scope, ambiguous, repeated, indexes = work
@@ -1825,7 +1892,7 @@ class AgentRuntime:
             # for it (a thread the 0.5.x line wrote): each call with no
             # result gets its one replaced-step denial (G-387 round 13).
             superseded = step_superseded(
-                list(zip(thread.rows(), [entry.run_id for entry in thread.messages()], strict=True))
+                list(zip(stored, [entry.run_id for entry in entries], strict=True))
             )
             # Bind calls, decisions and scope from the same locked snapshot.
             # A concurrent narrower approval also bounds the continuation.
@@ -1835,7 +1902,7 @@ class AgentRuntime:
                 )
             bounded = [tool for tool in offered if scope is not None and tool.name in scope[0]]
             resolved: list[tuple[int, dict[str, Any]]] = []
-            unusable = unusable_stored_calls(live.thread().rows()) | {
+            unusable = unusable_stored_calls(stored) | {
                 row["id"] for row in calls if not _digestible(row["arguments"])
             }
 
@@ -1912,12 +1979,14 @@ class AgentRuntime:
                         )
                     )
 
-            def answer_row(rows: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+            def answer_row(
+                rows: list[dict[str, Any]], positions: list[int]
+            ) -> list[dict[str, Any]] | None:
                 # Read in the answer's own write. EXACTLY ONE STORED OUTCOME
                 # PER CALL (G-387 round 15): every result the step already
                 # holds is left out (its earlier results, and a denial a
                 # superseding row gave a call meanwhile).
-                at = _at_position(thread, rows, position)
+                at = _at_position(rows, positions, position)
                 every = [*results, *(entry for _, entry in resolved)]
                 entries = new_results(rows, at, every) if at is not None else every
                 row = tool_result_row(entries, list(decisions.values()))
@@ -1934,11 +2003,13 @@ class AgentRuntime:
             _record_in_run(thread, [], run_id, answer_row)
             return bounded
 
-        return session.lock(
-            resolve,
-            seconds,
-            options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
-        )
+        wait = options.get("lock_wait", _RESOLUTION_WAIT_SECONDS)
+        resolving = _RESOLVING.get() or {}
+        token = _RESOLVING.set({**resolving, session.key(): (seconds, wait)})
+        try:
+            return session.lock(resolve, seconds, wait)
+        finally:
+            _RESOLVING.reset(token)
 
     @staticmethod
     def _start_call(
@@ -1956,8 +2027,10 @@ class AgentRuntime:
         must not run."""
         started: list[bool] = []
 
-        def row_for(rows: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
-            at = _at_position(thread, rows, position)
+        def row_for(
+            rows: list[dict[str, Any]], positions: list[int]
+        ) -> list[dict[str, Any]] | None:
+            at = _at_position(rows, positions, position)
             if at is None or index in started_calls(rows, at):
                 return None
             if index in call_results(step_calls(rows[at]), owned_rows(rows, at)):
@@ -1970,6 +2043,13 @@ class AgentRuntime:
             if own is None and not _dicts_of(rows[at].get("tool_approval_requests")):
                 own = {}  # 0.1.0: the requests are rows of their own, unbound
             if own is None or not binds(own, step_calls(rows[at])[index], call.get("arguments")):
+                return None
+            # And its approval must still STAND (G-387 round 16): a denial
+            # recorded by any channel since the resolver read its decisions
+            # (a host's raw row while an earlier call ran) refuses it here,
+            # in the same write as the started row, so it never runs.
+            standing = standing_decisions(rows).get(approval_id or "")
+            if approval_id is not None and (standing is None or standing["approved"] is not True):
                 return None
             started.append(True)
             return [started_row(call, approval_id or "", position)]
@@ -2229,10 +2309,13 @@ def _step_position(thread: Thread, rows: Sequence[Mapping[str, Any]]) -> int:
     return entries[at].position if at < len(entries) else 0
 
 
-def _at_position(thread: Thread, rows: Sequence[Mapping[str, Any]], position: int) -> int | None:
-    """The index in ``rows`` of the step at thread ``position``, or None."""
-    for index, entry in enumerate(thread.messages()):
-        if entry.position == position and index < len(rows):
+def _at_position(
+    rows: Sequence[Mapping[str, Any]], positions: Sequence[int], position: int
+) -> int | None:
+    """The index in ``rows`` of the step at thread ``position`` (``positions``
+    the rows' stored positions, index for index), or None."""
+    for index, stored in enumerate(positions):
+        if stored == position and index < len(rows):
             return index if step_calls(rows[index]) else None
     return None
 
@@ -2472,10 +2555,22 @@ def _record_decision(
             run["id"] if run else None,
         )
 
+    # From inside a call the resolver is running on this very session (a
+    # tool recording a decision on its own session): the lock is the one the
+    # resolver holds, so wait only as long as the agent is CONFIGURED to, and
+    # refuse with a fixed text that names no key (G-387 round 16).
+    own = (_RESOLVING.get() or {}).get(session.key())
+    if own is not None:
+        ttl_seconds, wait_seconds = own
     # A decision is never a runner start's own run: it reads the child's
     # records by the provisional rule, even from inside one (G-387 round 11).
     with outside_any_start():
-        session.lock(write, ttl_seconds, wait_seconds)
+        try:
+            session.lock(write, ttl_seconds, wait_seconds)
+        except HarnessError as error:
+            if own is None or error.code != "session_locked":
+                raise
+            raise HarnessError(error.code, _OWN_SESSION_LOCKED) from None
 
 
 def assert_decidable(session: Session, rows: Sequence[Mapping[str, Any]]) -> None:
