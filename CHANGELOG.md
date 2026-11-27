@@ -303,8 +303,6 @@
   participant or a session name.
 - Reading a long thread is linear: one index per read, and a resume reads the
   thread a bounded number of times.
-- The property nightly can test a release line: a validated `ref` input (the
-  default branch or `release/<name>`).
 
 ### Parity
 
