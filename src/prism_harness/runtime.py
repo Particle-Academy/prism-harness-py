@@ -28,6 +28,9 @@ from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     REPEATED_CALL_ID,
+    REPLACED_BY_LATER_STEP,
+    REPLACED_STEP,
+    SUPERSEDING,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
@@ -36,7 +39,8 @@ from prism_harness.thread_rows import (
     paired_requests,
     paired_results,
     repeats_call_ids,
-    step_results,
+    replaced_steps,
+    step_answers,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -716,7 +720,7 @@ class AgentRuntime:
         """
         # A read without the lock first: nearly every send() has nothing to
         # resolve and should not wait on the session lock to find that out.
-        if self._unresolved(session, mode) is None:
+        if self._unresolved(session, mode) is None and not self._replaced(session, mode):
             return list(offered)
 
         # Then under the session lock, reading again inside it. Two workers
@@ -725,6 +729,35 @@ class AgentRuntime:
         # finds the result the first recorded, and runs nothing. If it cannot get
         # the lock it raises, and nothing runs.
         def resolve(live: Session) -> list[HarnessTool]:
+            # An earlier parked step that a later step followed is answered
+            # first, once: each of its gated calls with no result is denied,
+            # and none of its decisions runs anything (G-392).
+            replaced = self._replaced(live, mode)
+            if replaced:
+                live.thread().record(
+                    [
+                        {
+                            **tool_result_row(
+                                [
+                                    tool_result_entry(
+                                        ToolCallInput(
+                                            id=row["id"],
+                                            name=row["name"],
+                                            arguments=row["arguments"],
+                                            result_id=row["result_id"],
+                                        ),
+                                        REPLACED_BY_LATER_STEP,
+                                    )
+                                    for row in rows
+                                ]
+                            ),
+                            REPLACED_STEP: {"position": position},
+                        }
+                        for position, rows in replaced
+                    ],
+                    run_id,
+                )
+
             work = self._unresolved(live, mode)
 
             if work is None:
@@ -777,8 +810,11 @@ class AgentRuntime:
                     )
                     resolved.append(tool_result_entry(cleared, _approval_expired(call.name)))
                 elif decision is not None and decision["approved"]:
-                    called.append(call.name)
-                    resolved.append(self._run_approved(bounded, call))
+                    entry, ran = self._run_approved(bounded, call)
+                    if ran:
+                        # Only a call that was invoked is reported as called.
+                        called.append(call.name)
+                    resolved.append(entry)
                 elif decision is None:
                     resolved.append(tool_result_entry(call, "No approval response provided"))
                 else:
@@ -797,6 +833,14 @@ class AgentRuntime:
             resolve,
             options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
             options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
+        )
+
+    @staticmethod
+    def _replaced(session: Session, mode: AgentMode) -> list[tuple[int, list[dict[str, Any]]]]:
+        """The gated calls of earlier steps a later step replaced, with no result yet."""
+        return replaced_steps(
+            [(entry.position, entry.message) for entry in session.thread().messages()],
+            mode.needs_approval,
         )
 
     @staticmethod
@@ -831,15 +875,20 @@ class AgentRuntime:
         if index is None:
             return None
 
+        # A user row or an assistant row after the step supersedes it: it is
+        # answered by the replaced-step denials, never resolved (G-397).
+        if any(row["type"] in SUPERSEDING for row in view[index + 1 :]):
+            return None
+
         assistant = view[index]
-        answered = next((row for row in view[index + 1 :] if row["type"] == "tool_result"), None)
-        # Each stored result paired with its own call by position, never through
-        # a map keyed by call id, where an ungated call's result would stand for
-        # a gated call sharing its id and leave that call with no outcome (G-392).
-        results = paired_results(assistant, step_results(rows))
-        decisions = {
-            d["approval_id"]: d for d in (answered or {}).get("tool_approval_responses", [])
-        }
+        # Results and decisions from EVERY tool result row after the turn, not
+        # only the first run of them: a row recorded in between must not make a
+        # call that already ran read as unanswered (G-399). Each result is
+        # paired with its own call by position, never through a map keyed by
+        # call id, where an ungated call's result would stand for a gated call
+        # sharing its id and leave that call with no outcome (G-392).
+        entries, decisions = step_answers(rows)
+        results = paired_results(assistant, entries)
         # Each request paired with its own call by position, never through a
         # map keyed by call id, where the last request under a repeated id
         # would answer every call carrying it (G-392).
@@ -871,8 +920,11 @@ class AgentRuntime:
         )
 
     @classmethod
-    def _run_approved(cls, offered: Sequence[HarnessTool], call: ToolCallInput) -> dict[str, Any]:
-        """Run a call a person approved, or record why it could not run.
+    def _run_approved(
+        cls, offered: Sequence[HarnessTool], call: ToolCallInput
+    ) -> tuple[dict[str, Any], bool]:
+        """Run a call a person approved, or record why it could not run, and
+        say whether it was invoked.
 
         Recorded rather than raised. Resolution runs at the start of every
         send(), so a call that raises here, because its tool is no longer
@@ -881,14 +933,20 @@ class AgentRuntime:
         stands, but the call does not run.
         """
         if not any(tool.name == call.name for tool in offered):
-            return tool_result_entry(call, f"Not run: {call.name} is not available to this run.")
+            return (
+                tool_result_entry(call, f"Not run: {call.name} is not available to this run."),
+                False,
+            )
 
         try:
-            return cls._invoke(offered, call)
+            return cls._invoke(offered, call), True
         except HarnessError as error:
             if error.code == "call_not_authorized":
-                return tool_result_entry(
-                    call, f"Not run: this call to {call.name} is not authorized."
+                return (
+                    tool_result_entry(
+                        call, f"Not run: this call to {call.name} is not authorized."
+                    ),
+                    False,
                 )
             raise
 
