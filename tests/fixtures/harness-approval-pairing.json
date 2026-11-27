@@ -1710,10 +1710,44 @@
             "approval_not_pending"
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it"
+          ],
+          "later_outcomes": [
+            "forged"
+          ],
+          "refusals": [
+            null,
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it"
+          ],
+          "later_outcomes": [
+            "forged"
+          ],
+          "refusals": [
+            null,
+            "approval_not_pending"
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0022",
@@ -1796,10 +1830,42 @@
             "approval_not_pending"
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it"
+          ],
+          "later_outcomes": [
+            "ok"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it"
+          ],
+          "later_outcomes": [
+            "ok"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     }
   ]
 }
