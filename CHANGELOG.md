@@ -2,20 +2,22 @@
 
 ## 0.5.4 (unreleased)
 
-Security fixes on the 0.5 line. Each tool call is now decided only by its own approval, and gets exactly one outcome.
+Security fixes on the 0.5 line. Each tool call is now decided only by its own approval, and every approval-gated call ends with exactly one recorded outcome.
 
 BREAKING CHANGE: a security fix that fails closed. Approval-gated calls that could run before are now denied when their step repeats a call id, a request call id or an approval id. They are also denied when their paused step has been replaced by a later step with tool calls, or by a user or assistant message your application records while the approval is pending. A decision recorded for such a step runs nothing.
 
 ### Fixed
 
 - If a resumed run's pending step holds two tool calls with the same call id (an empty id counts), none of the step's approval-gated calls run, whatever was decided. The same applies when two approval requests name the same call id, or share one approval id. Each of those calls gets its own result, `Tool call was not run because another call in this step has the same id`, and no later decision or resume runs it. When the ids in a step are distinct, each call is decided on its own approval, as before.
-- Stored results are paired with the step's tool calls by position, never through a map keyed by the call id, whether their arguments were stored as a map or as a JSON string. A result counts only for the calls of the step it was recorded after, never for another step's. A call that has its own result never gets a second outcome and never runs again, whatever arguments that result was stored with, and another call's result never ends it.
+- Stored results are paired with the step's tool calls by position, never through a map keyed by the call id, whether their arguments were stored as a map or as a JSON string. Two identical calls in one step (same id, tool and arguments) each keep their own result. A result counts only for the calls of the step it was recorded after, never for another step's. A call that has its own result never gets a second outcome and never runs again, whatever arguments that result was stored with, and another call's result never ends it.
 - When two calls of one step share an id, the history sent to the model keeps each call's own result; a later row replaces only the result of the same call (same id, tool name and arguments).
 - The history sent to the model holds each of a step's results once, in the step's place, even when other rows were recorded between its result rows.
 - Results and decisions are read from every tool result row recorded after the step, not only the first group of them. A call that already has a result never runs again on a later resume.
 - A paused step is replaced when a later step with tool calls is recorded after it, or when the application records a user or assistant message on the thread while the approval is pending. Each of the replaced step's approval-gated calls that has no result gets `Tool call was not run because a later step replaced it`, once, and none of them runs. A decision recorded for a replaced step runs nothing.
+- Every result row the harness writes for a step (ungated results, a failed step's refusals, a resolution) names the step it answers as `harness_answers_step: {"position": N}`, recorded only through the harness's own path, so a step with tool calls recorded while an approved call runs never takes that call's result, and the call that ran is never recorded as replaced. A mark on a row your application records is ignored. `ThreadMessage.harness` says whether the harness recorded a row.
+- A user or assistant message replaces a paused step only when it is recorded outside the runs that own the step; the runtime's own answer after a resume never does.
 - An approved call refused because its tool is not available to the run, or because it is not authorized, is no longer listed in the run's `tool_calls`.
-- `send_structured` returns a `StructuredAgentResponse` with `structured` `None` when the run stops for an approval or runs out of steps, instead of failing with an `AssertionError`.
+- `send_structured` returns a `StructuredAgentResponse` with `structured` `None` when the run stops for an approval or runs out of steps, instead of failing with an `AssertionError`. Check `finish_reason` before reading `structured`.
 
 ### Upgrading
 

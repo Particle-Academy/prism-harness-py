@@ -228,6 +228,24 @@ response.structured  # {"title": "Ship it", "steps": ["write", "test"]}
 response.text  # the document as the model wrote it
 ```
 
+**Check `finish_reason` before reading `structured`.** A structured turn that
+stops before the model answers, because it is waiting for a person
+(`"awaiting_approval"`, with `pending_approvals`) or because it is out of steps
+(`"budget_exhausted"`, with `stopped_because`), returns a
+`StructuredAgentResponse` whose `structured` is `None`. That is not an answer of
+"nothing": record the decisions and resume with `send_structured` again.
+
+```python
+response = runtime.send_structured(session, brief, schema)
+
+if response.finish_reason == "awaiting_approval":
+    ...  # decide response.pending_approvals, then resume
+elif response.structured is None:
+    ...  # stopped early: response.stopped_because says why
+else:
+    plan = response.structured
+```
+
 It is the same run as `send()` — the mode's system prompt, its tools, the step
 budget, the events — asking the provider for structured output. Your client
 receives the schema as `request.schema` and returns what it parsed as
@@ -252,7 +270,7 @@ except HarnessError as error:
     error.document  # what the model actually said
 ```
 
-Nothing is coerced, nothing is trimmed to the fields that fit, and the result is
+Nothing is coerced, nothing is trimmed to the fields that fit, and an answer is
 never an empty document. An empty plan settles a batch as `done`, which reads
 exactly like a considered answer of "nothing to propose" — the failure this
 refusal exists to prevent. The exchange is still recorded, and the run is marked
@@ -321,6 +339,31 @@ then the model continues. The model is not asked to make the calls again. A
 pending call with no decision is refused with "No approval response provided".
 A call that has a result never runs again. Who may approve is your application's
 decision: authorize before calling `record_approval()`.
+
+Each call is decided by its own approval, and every approval-gated call ends
+with exactly one recorded outcome:
+
+- **Repeated ids are denied.** If the paused step holds two tool calls with the
+  same call id (an empty id counts), or two approval requests name the same
+  call or share one approval id, none of the step's approval-gated calls runs,
+  whatever was decided. Each gets `Tool call was not run because another call in
+  this step has the same id`. Some providers give every call to one function
+  the same id, so asking one tool twice in one step does this.
+- **A replaced step runs nothing.** A paused step is replaced when a later step
+  with tool calls is recorded after it, or when your application records a user
+  or assistant message on the thread (through `Thread.record`) while the
+  approval is pending. Each of its approval-gated calls without a result gets
+  `Tool call was not run because a later step replaced it`, once, in a row
+  marked `harness_replaced_step`; a decision recorded for it is kept and runs
+  nothing. Messages the runtime itself records in the run, such as the model's
+  answer after a resume, never replace a step.
+- **Record decisions before messages.** If your application records user or
+  assistant messages while an approval is pending, record every decision first
+  and resume, then record the message.
+- **Results answer their own step.** Every result row the harness writes names
+  the step it answers (`harness_answers_step`). A result counts only for that
+  step, even when another step was recorded while a call ran, and a mark a host
+  writes on its own row is ignored. Neither mark is sent to the model.
 
 ## Task lists
 
