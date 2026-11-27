@@ -174,6 +174,16 @@ def thread_view(
         if normalised is None:
             continue
 
+        if (
+            normalised["type"] == "assistant"
+            and not normalised["tool_calls"]
+            and not entries[index].harness
+        ):
+            # A host's assistant row without tool calls sends no tool call in
+            # its provider-native content either: nobody would answer it, and
+            # the provider refuses an unanswered tool call (G-415).
+            normalised["additional_content"] = _without_tool_items(normalised["additional_content"])
+
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             segment_results = None
             current = entries[index].position
@@ -257,6 +267,28 @@ def decided(rows: Sequence[Mapping[str, Any]], approval_id: str) -> set[bool]:
             )
         view.append(normalised)
     return verdicts
+
+
+def _without_tool_items(extra: Mapping[str, Any]) -> dict[str, Any]:
+    """Provider-native content with its tool items left out: Anthropic
+    ``content_blocks`` of a ``*tool_use`` type and OpenAI ``output_items`` of a
+    ``*_call`` type. Everything else is kept as stored."""
+    kept = dict(extra)
+    blocks = kept.get("content_blocks")
+    if isinstance(blocks, list):
+        kept["content_blocks"] = [
+            b
+            for b in blocks
+            if not (isinstance(b, dict) and str(b.get("type", "")).endswith("tool_use"))
+        ]
+    items = kept.get("output_items")
+    if isinstance(items, list):
+        kept["output_items"] = [
+            i
+            for i in items
+            if not (isinstance(i, dict) and str(i.get("type", "")).endswith("_call"))
+        ]
+    return kept
 
 
 def approval_run_steps(
