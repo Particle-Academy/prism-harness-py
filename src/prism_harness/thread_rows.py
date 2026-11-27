@@ -102,8 +102,9 @@ def tool_result_row(
 def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """The thread as the model is shown it.
 
-    Rows written by 0.1.0 read in today's shape, and consecutive tool result
-    rows fold into one. An approval leaves several in a row: the results of the
+    Rows written by 0.1.0 read in today's shape, and a step's tool result
+    rows fold into one, consecutive or not (each result is replayed once, in
+    the step's segment, the first such row's position). An approval leaves several in a row: the results of the
     calls a stopped step did run, the decisions, and the results written when
     the run resumes. Rows are never rewritten, so all of them stay stored; shown
     to a provider separately, a tool output would go twice. Folded, a result is
@@ -112,6 +113,10 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     an earlier one in the earlier one's position.
     """
     view: list[dict[str, Any]] = []
+    # The view row holding the current step's results: a step's result rows
+    # that are not consecutive (a note between them, say) fold into the FIRST,
+    # so each result is replayed exactly once, in its own segment.
+    segment_results: int | None = None
 
     for row in rows:
         if is_replaced_row(row):
@@ -124,10 +129,18 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         if normalised is None:
             continue
 
-        if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
+        if normalised["type"] == "assistant" and normalised["tool_calls"]:
+            segment_results = None
+
+        if normalised["type"] == "tool_result" and segment_results is not None:
+            view[segment_results] = _fold(view[segment_results], normalised)
+        elif normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
             view[-1] = _fold(view[-1], normalised)
+            segment_results = len(view) - 1
         else:
             view.append(normalised)
+            if normalised["type"] == "tool_result":
+                segment_results = len(view) - 1
 
     return view
 
