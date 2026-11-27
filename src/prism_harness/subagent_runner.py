@@ -249,7 +249,7 @@ class SubagentRunner:
         try:
             return self._runtime.mode_for(parent)
         except HarnessError as error:
-            if error.code == "mode_not_configured":
+            if harness_code(error) == "mode_not_configured":
                 return None
             raise
 

@@ -286,6 +286,11 @@ class Session:
 
         Internal: written by the runtime when the subagent runner starts a
         child run."""
+        if self.child_provisional():
+            # A runner start that has not recorded its task: still a child
+            # the runner started, under no tree and no plan budget, so every
+            # turn on it is refused as a child with no binding.
+            return {"tree": None, "plan_ledger": None}
         refs = self._child_field("child_refs")
         if not isinstance(refs, dict):
             return None
@@ -387,6 +392,8 @@ class Session:
                 {"steps": 0, "holds": {}, "charged": {}}
                 if reset
                 else _child_steps(current.get("child_steps"))
+                if self._confirmed(current)
+                else None
             )
             if record is None or run_id in record["holds"] or run_id in record["charged"]:
                 decide(None)
@@ -502,6 +509,11 @@ class Session:
         raises refuses the write (the runtime re-reads the child's pending
         approvals there).
 
+        Everything it writes is marked ``provisional`` with ``run_id``: every
+        reader treats it as absent until that run's task row is in the thread
+        (:meth:`child_provisional`), so a start that fails before then needs
+        no second write to stay harmless.
+
         Returns what :meth:`undo_child_start` needs to put the child back: the
         records as they were before this write, and what it wrote.
 
@@ -535,6 +547,9 @@ class Session:
                     "holds": {run_id: {"steps": taken, "at": now}} if taken > 0 else {},
                     "charged": {},
                 },
+                # Everything here is ABSENT to every reader until this run's
+                # task row is in the thread (G-387 round 9).
+                _PROVISIONAL: run_id,
                 "child_binding": deepcopy(binding),
                 "child_depth": depth,
                 "child_ceiling": ceiling,
@@ -575,7 +590,10 @@ class Session:
 
     def undo_child_start(self, run_id: str, handle: Mapping[str, Any]) -> None:
         """Put a child back as it was before :meth:`start_child`, when the
-        start failed before its task was recorded (G-387): in ONE locked write,
+        start failed before its task was recorded (G-387). Housekeeping only:
+        what :meth:`start_child` wrote is provisional, absent to every reader
+        until a task row confirms it, so whether this lands changes nothing.
+        In ONE locked write,
         and only what is still exactly what that write left. A record another
         writer changed since is never clobbered; only this run's own hold is
         removed from it. The same for the session mode.
@@ -620,18 +638,92 @@ class Session:
         (capabilities) another process may change while the runner writes."""
         return f"{self.key()}:child"
 
+    def child_provisional(self) -> bool:
+        """Whether this session's child records were written by a runner start
+        whose task row is not in the thread (G-387 round 9). Every reader then
+        treats them as ABSENT: no binding, no depth, no saved ceiling, no
+        delegation count, no run tree or plan references, while the session
+        still reads as a child the runner started, so the fail-closed rules
+        for a linked child with no binding apply. A mark that is not a run id
+        never confirms. Records with no mark (written before the mark existed,
+        or confirmed since) read as they are.
+
+        Internal: read by the runtime."""
+        stored = self._durable.get(self._child_key())
+        return isinstance(stored, dict) and not self._confirmed(stored)
+
+    def _confirmed(self, stored: Mapping[str, Any]) -> bool:
+        """Whether a record carrying a ``provisional`` run id is confirmed:
+        that run's task row (a user row recorded under its id) is in the
+        thread. Confirmation is only ever READ from the thread, never written,
+        so no failed write can leave an unconfirmed start in force."""
+        if _PROVISIONAL not in stored:
+            return True
+        run_id = stored[_PROVISIONAL]
+        return type(run_id) is str and run_id != "" and run_id in self._task_runs()
+
+    def _task_runs(self) -> set[str]:
+        """The run ids the thread holds a task row (a user row) for. Read
+        only: never allocates the thread."""
+        store = (
+            IndexedSessionStore(
+                self._raw_durable, self._address_index, self.address, "durable", "thread"
+            )
+            if self._address_index is not None
+            else self._durable
+        )
+        return {
+            entry.run_id
+            for entry in Thread(store, f"{self.key()}:thread").messages()
+            if entry.run_id is not None and entry.message.get("type") == "user"
+        }
+
+    def confirm_child_start(self, run_id: str) -> None:
+        """Housekeeping once a runner start's task row is recorded: drop the
+        ``provisional`` mark from the child's records and its run state. The
+        task row is the authority; whether this write lands changes nothing.
+
+        Internal: called by the runtime, best effort."""
+        self._assert_writable()
+        key = self._child_key()
+
+        def change() -> None:
+            stored = self._durable.get(key)
+            if isinstance(stored, dict) and stored.get(_PROVISIONAL) == run_id:
+                self._durable.put(
+                    key, {name: value for name, value in stored.items() if name != _PROVISIONAL}
+                )
+
+        self._durable.with_lock(key, change, 10, 5)
+        run = self.state().get("run")
+        if isinstance(run, dict) and run.get("id") == run_id and _PROVISIONAL in run:
+            self._write(
+                "run",
+                {
+                    name: value
+                    for name, value in run.items()
+                    if name not in (_PROVISIONAL, _PREVIOUS)
+                },
+            )
+
     def _child_field(self, name: str) -> Any:
         """A saved child field: from the child key, or, for a child saved
-        before that key existed, from the session's durable record."""
+        before that key existed, from the session's durable record. A
+        provisional record (:meth:`child_provisional`) holds nothing."""
         stored = self._durable.get(self._child_key())
+        if isinstance(stored, dict) and not self._confirmed(stored):
+            return None
         if isinstance(stored, dict) and name in stored:
             return stored[name]
         legacy = self._durable.get(self._durable_key()) or {}
         return legacy.get(name)
 
     def _child_field_raw(self, name: str) -> tuple[bool, Any]:
-        """Whether a child field was saved at all, and its value."""
+        """Whether a child field was saved at all, and its value. A
+        provisional record (:meth:`child_provisional`) saved nothing."""
         stored = self._durable.get(self._child_key())
+        if isinstance(stored, dict) and not self._confirmed(stored):
+            return False, None
         if isinstance(stored, dict) and name in stored:
             return True, stored[name]
         legacy = self._durable.get(self._durable_key()) or {}
@@ -665,8 +757,25 @@ class Session:
     # -- runs ---------------------------------------------------------------
 
     def run(self) -> dict[str, Any] | None:
+        """The session's current run. A run a runner start began is ABSENT
+        until its task row is in the thread (G-387 round 9): the run it
+        replaced is read instead, so a start that failed before its task row
+        never stands in for the run the child is parked on."""
         run = self.state().get("run")
-        return run if isinstance(run, dict) and isinstance(run.get("id"), str) else None
+        if not isinstance(run, dict) or not isinstance(run.get("id"), str):
+            return None
+        if _PROVISIONAL in run and not (
+            run.get(_PROVISIONAL) == run["id"] and run["id"] in self._task_runs()
+        ):
+            previous = run.get(_PREVIOUS)
+            return (
+                previous
+                if isinstance(previous, dict)
+                and isinstance(previous.get("id"), str)
+                and _PROVISIONAL not in previous
+                else None
+            )
+        return run
 
     def begin_run(
         self,
@@ -676,20 +785,33 @@ class Session:
         model: str,
         tree: dict[str, str] | str = "none",
         depth: int = 0,
+        provisional: bool = False,
     ) -> Session:
         """``tree`` and ``depth`` are the run's membership (G-381): the run tree
         it belongs to (``{session, run}``, ``host`` or ``none``) and how deep it
         is, decided once when the run begins. Also kept durably, by run id,
         so the root that resumes a run parked on approvals stays in the tree
         that run began in, whatever became of the ephemeral half
-        (:meth:`resumed_run_tree`)."""
+        (:meth:`resumed_run_tree`).
+
+        ``provisional`` (a runner start): the run state and the run-tree
+        history entry are absent to every reader until the run's task row is
+        in the thread (G-387 round 9); :meth:`run` reads the run it replaced
+        meanwhile."""
         self._assert_writable()
-        self._remember_run_tree(
-            run_id, {"tree": dict(tree) if isinstance(tree, dict) else tree, "depth": depth}
-        )
+        member: dict[str, Any] = {
+            "tree": dict(tree) if isinstance(tree, dict) else tree,
+            "depth": depth,
+        }
+        marks: dict[str, Any] = {}
+        if provisional:
+            member[_PROVISIONAL] = run_id
+            marks = {_PROVISIONAL: run_id, _PREVIOUS: deepcopy(self.run())}
+        self._remember_run_tree(run_id, member)
         return self._write(
             "run",
             {
+                **marks,
                 "id": run_id,
                 "status": "running",
                 "mode": mode,
@@ -757,6 +879,15 @@ class Session:
             stored = self._durable.get(key) or {}
             runs = stored.get("runs") if isinstance(stored.get("runs"), dict) else {}
             assert isinstance(runs, dict)
+            # An earlier runner start's entry whose task row never landed is
+            # absent (G-387 round 9): dropped, never kept in place of a run
+            # the history should hold.
+            tasks: set[str] | None = None
+            for held, entry in list(runs.items()):
+                if isinstance(entry, dict) and _PROVISIONAL in entry:
+                    tasks = self._task_runs() if tasks is None else tasks
+                    if not (entry.get(_PROVISIONAL) == held and held in tasks):
+                        runs = {name: kept for name, kept in runs.items() if name != held}
             last = stored.get("seq")
             seq = last + 1 if type(last) is int else 1
             runs = {**runs, run_id: {**member, "seq": seq}}
@@ -777,6 +908,12 @@ class Session:
         stored = self._durable.get(self._run_trees_key()) or {}
         runs = stored.get("runs")
         recorded = runs.get(run_id) if isinstance(runs, dict) else None
+        if (
+            isinstance(recorded, dict)
+            and _PROVISIONAL in recorded
+            and not (recorded.get(_PROVISIONAL) == run_id and run_id in self._task_runs())
+        ):
+            return None
         tree = recorded.get("tree") if isinstance(recorded, dict) else None
         return _stored_pair(tree, "session", "run")
 
@@ -894,6 +1031,14 @@ def _stored_pair(value: object, first: str, second: str) -> dict[str, str] | Non
 
 
 _MAX_SAFE_INTEGER = 2**53 - 1
+
+#: The mark a runner start puts on everything it writes before its task row
+#: (G-387 round 9): the start's run id. Absent to every reader until that run's
+#: task row is in the thread.
+_PROVISIONAL = "provisional"
+
+#: Beside a provisional run state: the run it replaced, read meanwhile.
+_PREVIOUS = "previous"
 
 #: The code a runner start is refused with when a turn on the child still
 #: holds steps from its delegation count.

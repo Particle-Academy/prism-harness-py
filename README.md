@@ -317,9 +317,13 @@ What one run tree is:
   writes nothing at all and comes back as a framed result. A start the gate
   lets through commits the tree hold, then the child's records and its mode
   (one locked write that re-checks the child is not busy and has no approval
-  a person could answer), then the run. Until the start's task is recorded a
-  failure puts the child's records and mode back as they were, so a failed
-  start never re-binds a child; after that a stop only stops model steps. The
+  a person could answer), then the run. Everything the start writes is
+  provisional until its task row is in the child's thread: every reader treats
+  it as absent until then (read from the thread, never confirmed by another
+  write), so a start that fails first leaves the child unbound, whether or not
+  its housekeeping undo lands. The task row ends every call still pending on
+  the child as not run; a runner start never acts on a recorded decision.
+  After that a stop only stops model steps. The
   start is narrowed from the ledger as the gate read it, so steps spent on a
   shared context after the read count against the child. Anything that raises
   around a child comes back as a framed `failed` result naming the exception's

@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from test_run_starts import delegate_in_a_turn, direct
+from test_run_starts import direct
 from test_run_starts_r8 import child_state, fail_tools_for_the_child, is_child, live_holds
 from test_step_allowance import World, approve_and_resume, rewrite_paused_row
 from test_step_allowance_r2 import child_requests, drop_child_field, set_child_field
@@ -106,9 +106,7 @@ def outage(patch: pytest.MonkeyPatch) -> None:
         if original is None:
             continue
 
-        def failing(
-            self: Session, *args: Any, _original: Any = original, **kwargs: Any
-        ) -> Any:
+        def failing(self: Session, *args: Any, _original: Any = original, **kwargs: Any) -> Any:
             if is_child(self):
                 raise OSError("store down")
             return _original(self, *args, **kwargs)
@@ -358,13 +356,16 @@ def test_a_row_under_another_run_or_of_another_kind_never_confirms() -> None:
     assert isinstance(mark, str) and mark
 
     thread = world.child("worker").thread()
-    # A user row recorded under ANOTHER run id, and a non-user row recorded
-    # under the start's own run id: neither is that start's task row.
-    thread.record([{"type": "user", "content": "Hi."}], "another-run")
-    thread.record([{"type": "assistant", "content": "x", "tool_calls": []}], mark)
-
+    # A non-user row recorded under the start's own run id is not its task row.
+    thread.record([decision_row("apr_other")], mark)
     refused_as_unbound(lambda: record_approval(world.fresh().child("worker"), approval, True))
-    assert world.fresh().child("worker").child_binding() is None
+    # Nor is a user row recorded under ANOTHER run id.
+    thread.record([{"type": "user", "content": "Hi."}], "another-run")
+    child = world.fresh().child("worker")
+    assert child.child_binding() is None
+    assert child.child_ceiling_state() == ("absent", None)
+    refused_as_unbound(lambda: world.fresh().runtime.send(world.child("worker"), "Hello."))
+    assert "echo" not in world.ran
 
 
 def test_a_starts_mark_is_its_own_fresh_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -413,14 +414,15 @@ def test_every_reader_sees_a_start_in_its_window_as_absent(
         found["ceiling"] = child.child_ceiling_state()
         found["refs"] = child.child_refs()
         found["run"] = child.run()
-        for name, act in {
+        acts: dict[str, Callable[[], object]] = {
             "decision": lambda: record_approval(world.child("worker"), approval, True),
             "resume": lambda: world.runtime.send(world.child("worker"), ""),
             "message": lambda: world.runtime.send(world.child("worker"), "Hello."),
             "host": lambda: world.runtime.send(
                 world.child("worker"), "", context=RunContext.root("h", RunBudget(10))
             ),
-        }.items():
+        }
+        for name, act in acts.items():
             try:
                 act()
                 found[name] = "ran"
@@ -503,7 +505,9 @@ ERRORS: dict[str, Callable[[], BaseException]] = {
 }
 
 
-def raise_from_the_child_tools(patch: pytest.MonkeyPatch, error: Callable[[], BaseException]) -> None:
+def raise_from_the_child_tools(
+    patch: pytest.MonkeyPatch, error: Callable[[], BaseException]
+) -> None:
     original = ToolRegistry.resolve_detailed
 
     def failing(self: ToolRegistry, names: Any, session: Session | None = None) -> Any:
@@ -651,9 +655,7 @@ def test_the_framed_start_text_never_names_foreign_codes() -> None:
         pass
 
     with pytest.MonkeyPatch.context() as patch:
-        raise_from_the_child_tools(
-            patch, lambda: Foreign("operator.note.db.password.hunter2", "x")
-        )
+        raise_from_the_child_tools(patch, lambda: Foreign("operator.note.db.password.hunter2", "x"))
         result = direct(world, world.root(), RunContext.root("host", RunBudget(8)), "Look.")
 
     assert "hunter2" not in result.text
