@@ -25,7 +25,7 @@ from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
-from prism_harness.thread import HARNESS_RECORDING, ThreadMessage
+from prism_harness.thread import _HARNESS_RECORDING, ThreadMessage
 from prism_harness.thread_rows import (
     ANSWERS_STEP,
     ARGUMENTS_AS_SENT,
@@ -497,7 +497,7 @@ class AgentRuntime:
                         "additional_attributes": {},
                     }
                 )
-                thread.record([turn], run_id, HARNESS_RECORDING)
+                thread.record([turn], run_id, _HARNESS_RECORDING)
 
             return self._loop(session, mode, run, run_id, provider, model, offered, called, schema)
         except Exception as error:
@@ -609,7 +609,7 @@ class AgentRuntime:
             row = assistant_row(response.text, calls, metadata, requests)
             if requests:
                 row["harness_tool_names"] = [tool.name for tool in offered]
-            [recorded_step] = thread.record([row], run_id, HARNESS_RECORDING)
+            [recorded_step] = thread.record([row], run_id, _HARNESS_RECORDING)
             # Every result row the harness writes for this step names it: a
             # step recorded while a call runs never takes its results (G-407).
             answers = {ANSWERS_STEP: {"position": recorded_step.position}}
@@ -633,7 +633,7 @@ class AgentRuntime:
                             }
                         ],
                         run_id,
-                        HARNESS_RECORDING,
+                        _HARNESS_RECORDING,
                     )
                 raise HarnessError.model_step_failed(
                     "error" if finish_reason == "error" else "unknown"
@@ -682,7 +682,7 @@ class AgentRuntime:
                 results.append(self._invoke(offered, call))
 
             if results:
-                thread.record([{**tool_result_row(results), **answers}], run_id, HARNESS_RECORDING)
+                thread.record([{**tool_result_row(results), **answers}], run_id, _HARNESS_RECORDING)
 
             if requests:
                 # FAILS CLOSED. The gated calls have not run, and the requests are
@@ -768,7 +768,7 @@ class AgentRuntime:
                         for position, rows in replaced
                     ],
                     run_id,
-                    HARNESS_RECORDING,
+                    _HARNESS_RECORDING,
                 )
 
             work = self._unresolved(live, mode)
@@ -846,7 +846,7 @@ class AgentRuntime:
                     }
                 ],
                 run_id,
-                HARNESS_RECORDING,
+                _HARNESS_RECORDING,
             )
             return bounded
 
@@ -905,10 +905,8 @@ class AgentRuntime:
             return None
 
         assistant = view[index]
-        # Decisions from EVERY tool result row after the turn, not only the
-        # first run of them, and results from the turn's whole segment: a row
-        # recorded in between must not make a call that already ran read as
-        # unanswered (G-399). Each result is paired with its own call by
+        # Decisions from every tool result row after the turn, and results
+        # from the turn's whole segment (G-399). Each result is paired with its own call by
         # position, never through a map keyed by call id, where an ungated
         # call's result would stand for a gated call sharing its id and leave
         # that call with no outcome (G-392).

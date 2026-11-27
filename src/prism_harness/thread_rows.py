@@ -138,6 +138,12 @@ def thread_view(
 ) -> list[dict[str, Any]]:
     """The thread as the model is shown it.
 
+    Given ``stored`` (the :class:`ThreadMessage` rows the rows came from), it is
+    the runtime's replay: marks the harness itself recorded are honoured, so a
+    replaced step's denial row is hidden and a result row is shown in the place
+    of the step it answers. Given the rows alone it is the RAW view: every row
+    is read as a host's, so no mark is honoured.
+
     Rows written by 0.1.0 read in today's shape, and a step's tool result
     rows fold into one, consecutive or not (each result is replayed once, in
     the step's segment, the first such row's position). An approval leaves several in a row: the results of the
@@ -220,21 +226,21 @@ def approval_run_steps(
 ) -> int | None:
     """Model steps the run paused at the transcript tail has already taken.
 
-    None when nothing at the tail is waiting on an approval. A run that pauses
-    for a person and is resumed is the SAME run, so its step limit continues
-    rather than starting again. Counted from the stored rows (one assistant row
-    per model step since the turn's user row), so the count survives a reload,
-    a different worker and a deploy, with no extra state.
+    An empty prompt continues the turn: a run that pauses for a person and is
+    resumed is the SAME run, so its step limit continues rather than starting
+    again, and a resume that ended the run out of steps leaves it out of
+    steps, however many empty sends follow. None when the turn has no step yet.
+    Counted from the stored rows (one assistant row per model step since the
+    turn's user row), so the count survives a reload, a different worker and a
+    deploy, with no extra state.
     """
-    if approval_tool_scope(rows, stored) is None:
-        return None
     steps = 0
     for row in reversed(rows):
         if row.get("type") == "user":
             break
         if row.get("type") == "assistant":
             steps += 1
-    return steps
+    return steps or None
 
 
 def approval_tool_scope(
@@ -358,11 +364,8 @@ def step_answers(
     """Every result and every decision stored for the last tool-calling turn
     (G-392, G-399).
 
-    Read from EVERY tool result row after that turn, whatever sits between
-    them: a host can record an assistant note, a user row or any other row
-    while an approval is pending, and the results written after it are still
-    this turn's. Reading only the first run of tool result rows would read a
-    call that already ran as unanswered, and run it again.
+    Read from EVERY tool result row after that turn, whatever rows a host
+    recorded between them while an approval was pending.
 
     The results are in stored order and NOT folded by call id: folded, a
     result is keyed by its call id, so with a repeated id one call's result

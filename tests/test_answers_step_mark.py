@@ -30,7 +30,9 @@ from prism_harness import (
     ToolRegistry,
     record_approval,
 )
-from prism_harness.thread import HARNESS_RECORDING
+
+# Internal to the package, used here only to write a mark that does not hold.
+from prism_harness.thread import _HARNESS_RECORDING
 
 REPLACED = "Tool call was not run because a later step replaced it"
 MODES = ModeRegistry(
@@ -224,7 +226,7 @@ def test_a_mark_that_does_not_hold_falls_back_to_the_segment(bad: str) -> None:
     session.thread().record(
         [result_row(call_id, "echo", "a", "recorded", harness_answers_step={"position": target})],
         None,
-        HARNESS_RECORDING,
+        _HARNESS_RECORDING,
     )
     for _ in range(3):
         runtime.send(session, "")

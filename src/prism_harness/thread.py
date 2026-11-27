@@ -10,20 +10,20 @@ from typing import Any
 from prism_harness.errors import HarnessError
 from prism_harness.stores.base import SessionStore
 
-__all__ = ["HARNESS_RECORDING", "Thread", "ThreadMessage"]
+__all__ = ["Thread", "ThreadMessage"]
 
 
 class _HarnessRecording:
     def __repr__(self) -> str:
-        return "HARNESS_RECORDING"
+        return "<the harness's own recording path>"
 
 
-#: The harness's own recording path (G-392, G-407). Rows recorded with it, and
-#: only those, are stored as the harness's: their marks (the step a result
-#: row answers) are honoured, and a row they hold never counts as recorded
-#: from outside a run. A host recording through :meth:`Thread.record` has no
-#: reason to pass it; a row it records is always read as written from outside.
-HARNESS_RECORDING = _HarnessRecording()
+#: The harness's own recording path (G-392, G-407), internal to this package.
+#: Rows recorded with it, and only those, are stored as the harness's: their
+#: marks (the step a result row answers) are honoured, and a row they hold
+#: never counts as recorded from outside a run. A row a host records through
+#: :meth:`Thread.record` is always read as written from outside.
+_HARNESS_RECORDING = _HarnessRecording()
 
 
 @dataclass(frozen=True)
@@ -87,9 +87,9 @@ class Thread:
 
         Read-and-write inside ONE lock. See the class docstring.
 
-        ``origin`` is for the harness itself (:data:`HARNESS_RECORDING`).
+        ``origin`` is internal to the harness; a host never passes it.
         """
-        harness = origin is HARNESS_RECORDING
+        harness = origin is _HARNESS_RECORDING
         if not messages:
             return []
 
