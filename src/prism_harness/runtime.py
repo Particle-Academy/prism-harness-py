@@ -29,11 +29,11 @@ from prism_harness.thread import _HARNESS_RECORDING, ThreadMessage
 from prism_harness.thread_rows import (
     ANSWERS_STEP,
     ARGUMENTS_AS_SENT,
+    INTERRUPTED,
+    NOT_OPEN,
     REPEATED_CALL_ID,
     REPLACED_BY_LATER_STEP,
     REPLACED_STEP,
-    STARTED,
-    STARTED_NOT_RECORDED,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
@@ -45,7 +45,8 @@ from prism_harness.thread_rows import (
     paired_requests,
     repeats_call_ids,
     replaced_steps,
-    started_approvals,
+    started_calls,
+    started_row,
     step_answers,
     step_position,
     thread_view,
@@ -748,6 +749,7 @@ class AgentRuntime:
             # first, once: each of its gated calls with no result is denied,
             # and none of its decisions runs anything (G-392).
             replaced = self._replaced(live, mode)
+            started_before = started_calls(live.thread().messages()) if replaced else set()
             if replaced:
                 live.thread().record(
                     [
@@ -761,7 +763,9 @@ class AgentRuntime:
                                             arguments=row["arguments"],
                                             result_id=row["result_id"],
                                         ),
-                                        REPLACED_BY_LATER_STEP,
+                                        INTERRUPTED
+                                        if (position, row["id"], row["name"]) in started_before
+                                        else REPLACED_BY_LATER_STEP,
                                     )
                                     for row in rows
                                 ]
@@ -790,33 +794,9 @@ class AgentRuntime:
             resolved: list[dict[str, Any]] = []
             unusable = unusable_stored_calls([entry.message for entry in live.thread().messages()])
 
-            # Before any approved call runs, record that it was started. If the
-            # store then fails to record its result, a later resume finds it
-            # started with no result and never runs it again (G-392).
-            started = started_approvals(live.thread().messages())
-            starting = [
-                approval_id
-                for row, approval_id in zip(calls, approval_ids, strict=True)
-                if not repeated
-                and approval_id is not None
-                and approval_id not in started
-                and (decision := decisions.get(approval_id)) is not None
-                and decision["approved"]
-                and row["id"] not in unusable
-                and row["id"] not in ambiguous
-                and any(tool.name == row["name"] for tool in bounded)
-            ]
-            if starting:
-                live.thread().record(
-                    [
-                        {
-                            **tool_result_row([]),
-                            STARTED: {"position": step, "approval_ids": starting},
-                        }
-                    ],
-                    run_id,
-                    _HARNESS_RECORDING,
-                )
+            # A call the harness recorded as started and has no result may have
+            # run: it reads interrupted, and never runs again (G-410).
+            started = started_calls(live.thread().messages())
 
             for row, approval_id in zip(calls, approval_ids, strict=True):
                 call = ToolCallInput(
@@ -831,9 +811,8 @@ class AgentRuntime:
                     # A repeated id cannot say which decision answers which
                     # call, so none of the step's gated calls runs (G-392).
                     resolved.append(tool_result_entry(call, REPEATED_CALL_ID))
-                elif approval_id is not None and approval_id in started:
-                    # Started before, and its result never recorded.
-                    resolved.append(tool_result_entry(call, STARTED_NOT_RECORDED))
+                elif (step, call.id, call.name) in started:
+                    resolved.append(tool_result_entry(call, INTERRUPTED))
                 elif decision is not None and decision["approved"] and call.id in unusable:
                     resolved.append(
                         tool_result_entry(
@@ -857,7 +836,7 @@ class AgentRuntime:
                     )
                     resolved.append(tool_result_entry(cleared, _approval_expired(call.name)))
                 elif decision is not None and decision["approved"]:
-                    entry, ran = self._run_approved(bounded, call)
+                    entry, ran = self._start_and_run(live, bounded, call, approval_id, step, run_id)
                     if ran:
                         # Only a call that was invoked is reported as called.
                         called.append(call.name)
@@ -979,6 +958,34 @@ class AgentRuntime:
             repeats_call_ids(assistant),
             step_position(messages),
         )
+
+    @classmethod
+    def _start_and_run(
+        cls,
+        live: Session,
+        offered: Sequence[HarnessTool],
+        call: ToolCallInput,
+        approval_id: str | None,
+        step: int,
+        run_id: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Record that the approved call is starting, then run it (G-410).
+
+        The decision that STANDS for its approval is read again at this
+        moment: a denial recorded since the resume read its history refuses
+        the call. The write-ahead row comes first, so a call whose result the
+        store then fails to record reads interrupted, and never runs again.
+        """
+        if not any(tool.name == call.name for tool in offered):
+            return cls._run_approved(offered, call)
+        messages = live.thread().messages()
+        _, standing = step_answers([entry.message for entry in messages], messages)
+        if approval_id is None or standing.get(approval_id, {}).get("approved") is not True:
+            return tool_result_entry(call, NOT_OPEN), False
+        live.thread().record(
+            [started_row(call.id, call.name, approval_id, step)], run_id, _HARNESS_RECORDING
+        )
+        return cls._run_approved(offered, call)
 
     @classmethod
     def _run_approved(

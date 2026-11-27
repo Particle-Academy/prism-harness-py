@@ -460,6 +460,15 @@ def _valid_marks(entries: Sequence[StoredRow]) -> dict[int, int]:
             for call in _dicts(step.message.get("tool_calls"))
         }
         results = _dicts(entry.message.get("tool_results"))
+        started = entry.message.get(STARTED_KEY)
+        if isinstance(started, dict):
+            results = [
+                *results,
+                {
+                    "tool_call_id": started.get("tool_call_id"),
+                    "tool_name": started.get("tool_name"),
+                },
+            ]
         if not calls or not all(
             (_text(r.get("tool_call_id")), _text(r.get("tool_name"))) in calls for r in results
         ):
@@ -662,39 +671,51 @@ def _paired(
     return paired
 
 
-#: The result a call recorded as started gets when its result was never
-#: recorded (the store failed after it ran): it is not run again (G-392).
-STARTED_NOT_RECORDED = "Not run again: the call was started, and its result was not recorded"
+#: What a call the harness recorded as started, with no result, reads: it may
+#: have run, and it is never run again (G-410), identical in every language.
+INTERRUPTED = "Tool call was interrupted, it may have run"
 
-#: The key on the row the harness records just before it runs approved calls:
-#: ``{"position": N, "approval_ids": [...]}``, the step and the approvals whose
-#: calls it is about to run. Honoured only on a row the harness recorded.
-STARTED = "harness_started"
+#: What an approved call reads when, at the moment it would start, it is no
+#: longer the call its standing decision approves, or no longer open (G-410).
+NOT_OPEN = "Not run: this call is not the one that was approved, or it is no longer open."
+
+#: The key on the row the harness records just BEFORE it runs one approved
+#: call: ``{"tool_call_id", "tool_name", "approval_id"}`` (G-410).
+STARTED_KEY = "harness_started"
 
 
-def started_approvals(messages: Sequence[StoredRow]) -> set[str]:
-    """The approvals of the last step with tool calls whose calls the harness
-    recorded as started (G-392)."""
-    steps, _ = _thread_steps(messages)
-    if not steps:
-        return set()
-    position = steps[-1][0]
-    started: set[str] = set()
-    for entry in messages:
-        mark = entry.message.get(STARTED) if entry.message.get("type") == "tool_result" else None
-        if (
-            not entry.harness
-            or not isinstance(mark, dict)
-            or mark.get("position") != position
-            or entry.position <= position
-        ):
-            continue
-        started.update(a for a in _dicts_or_strings(mark.get("approval_ids")))
+def started_row(
+    tool_call_id: str, tool_name: str, approval_id: str, position: int
+) -> dict[str, Any]:
+    """The write-ahead row for one approved call, keys in the shared order:
+    an empty result row, then ``harness_started``, then ``harness_answers_step``
+    (the 1-based position of the step) as the LAST key."""
+    return {
+        "type": "tool_result",
+        "tool_results": [],
+        "tool_approval_responses": [],
+        STARTED_KEY: {
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "approval_id": approval_id,
+        },
+        ANSWERS_STEP: {"position": position},
+    }
+
+
+def started_calls(messages: Sequence[StoredRow]) -> set[tuple[int, str, str]]:
+    """The calls the harness recorded as started, by (step position, call id,
+    tool name): only a started row the harness itself recorded, whose mark
+    names an earlier step with tool calls holding that call (G-410)."""
+    marks = _valid_marks(messages)
+    started: set[tuple[int, str, str]] = set()
+    for index, entry in enumerate(messages):
+        mark = entry.message.get(STARTED_KEY)
+        if index in marks and isinstance(mark, dict):
+            started.add(
+                (marks[index], _text(mark.get("tool_call_id")), _text(mark.get("tool_name")))
+            )
     return started
-
-
-def _dicts_or_strings(value: object) -> list[str]:
-    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
 def own_approvals(messages: Sequence[StoredRow]) -> set[str]:
