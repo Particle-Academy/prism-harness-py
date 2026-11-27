@@ -34,7 +34,9 @@ from prism_harness.thread_rows import (
     approval_tool_scope,
     assistant_row,
     paired_requests,
+    paired_results,
     repeats_call_ids,
+    step_results,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -767,7 +769,7 @@ class AgentRuntime:
                     )
 
             live.thread().record(
-                [tool_result_row([*results.values(), *resolved], list(decisions.values()))],
+                [tool_result_row([*results, *resolved], list(decisions.values()))],
                 run_id,
             )
             return bounded
@@ -785,7 +787,7 @@ class AgentRuntime:
     ) -> (
         tuple[
             list[dict[str, Any]],
-            dict[str, dict[str, Any]],
+            list[dict[str, Any]],
             dict[str, dict[str, Any]],
             list[str | None],
             tuple[list[str], bool] | None,
@@ -813,7 +815,10 @@ class AgentRuntime:
 
         assistant = view[index]
         answered = next((row for row in view[index + 1 :] if row["type"] == "tool_result"), None)
-        results = {e["tool_call_id"]: e for e in (answered or {}).get("tool_results", [])}
+        # Each stored result paired with its own call by position, never through
+        # a map keyed by call id, where an ungated call's result would stand for
+        # a gated call sharing its id and leave that call with no outcome (G-392).
+        results = paired_results(assistant, step_results(rows))
         decisions = {
             d["approval_id"]: d for d in (answered or {}).get("tool_approval_responses", [])
         }
@@ -831,7 +836,7 @@ class AgentRuntime:
         pending = [
             (row, requested.get(index))
             for index, row in enumerate(assistant["tool_calls"])
-            if row["id"] not in results and (index in requested or mode.needs_approval(row["name"]))
+            if index not in results and (index in requested or mode.needs_approval(row["name"]))
         ]
 
         if not pending:
@@ -839,7 +844,7 @@ class AgentRuntime:
 
         return (
             [row for row, _ in pending],
-            results,
+            [results[index] for index in sorted(results)],
             decisions,
             [approval_id for _, approval_id in pending],
             approval_tool_scope(rows),
