@@ -65,10 +65,36 @@ class Echo:
 
     def __init__(self, ran: list[int]) -> None:
         self.ran = ran
+        #: Host code run once, inside the next call of this tool (0.6.0).
+        self.during: list[Any] = []
 
     def handle(self, args: dict[str, Any]) -> Any:
         self.ran.append(int(args["n"]))
+        while self.during:
+            self.during.pop(0)()
         return "ok"
+
+
+def answers_every_call(requests: list[LlmRequest]) -> bool:
+    """0.6.0 (G-387 round 17): whether every request answers every call of
+    every step it carries, exactly once, in that step's own result run (the
+    tool result rows directly after it; the multiset of ids)."""
+    for request in requests:
+        messages = list(request.messages)
+        at = 0
+        while at < len(messages):
+            message = messages[at]
+            at += 1
+            if message.get("type") != "assistant" or not message.get("tool_calls"):
+                continue
+            needed = sorted(str(call.get("id")) for call in message["tool_calls"])
+            got: list[str] = []
+            while at < len(messages) and messages[at].get("type") == "tool_result":
+                got.extend(str(e.get("tool_call_id")) for e in messages[at].get("tool_results", []))
+                at += 1
+            if sorted(got) != needed:
+                return False
+    return True
 
 
 class Free:
@@ -85,7 +111,9 @@ class Free:
 def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
     ran: list[int] = []
     free = Free()
-    tools = ToolRegistry().register(Echo(ran)).register(free)
+    echo = Echo(ran)
+    tools = ToolRegistry().register(echo).register(free)
+    sent: list[LlmRequest] = []
     modes = ModeRegistry(
         {
             "default": "guarded",
@@ -102,6 +130,7 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
     steps = [0]
 
     def client(request: LlmRequest) -> LlmResponse:
+        sent.append(request)
         steps[0] += 1
         if steps[0] == 1:
             return LlmResponse(
@@ -173,6 +202,20 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
         session.thread().record([copy])
         if supersede == "altered_copy_after_approval":
             runtime.send(session, "")
+    elif supersede in ("concurrent_user", "concurrent_text"):
+        # 0.6.0 (G-387 round 17, item 1): every pending approval recorded
+        # approved; WHILE the resume runs the call a host records a user row
+        # (or an assistant text row); then one more turn, ``later``.
+        for approval in pending:
+            record_approval(session, approval.id, True)
+        host_row: dict[str, Any] = (
+            {"type": "user", "content": "A host row while the call runs."}
+            if supersede == "concurrent_user"
+            else assistant_row("A host note while the call runs.", [])
+        )
+        echo.during.append(lambda: session.thread().record([host_row]))
+        runtime.send(session, "")
+        runtime.send(session, "later")
     elif supersede == "host_result":
         # 0.5.0 (G-387 round 16): a host records a result for the first echo
         # call right after the park: its call has an outcome, so its approval
@@ -301,6 +344,8 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
         # later step's rounds first. Python records decisions one by one (it
         # has no batch call): a round is refused when any of its decisions is.
         outcome["refusals"] = refusals
+    if supersede in ("concurrent_user", "concurrent_text"):
+        outcome["sent"] = answers_every_call(sent)
     return outcome
 
 
