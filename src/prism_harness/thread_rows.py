@@ -192,6 +192,14 @@ def thread_view(
             # calls (G-415).
             normalised["additional_content"] = {}
 
+        if normalised["type"] == "assistant" and not entries[index].harness:
+            # A reasoning id or summary on a host row's tool call cannot be
+            # checked against the row, and a client sends it back as a
+            # reasoning item: it is not sent (G-415).
+            for call in normalised["tool_calls"]:
+                call["reasoning_id"] = None
+                call["reasoning_summary"] = None
+
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             segment_results = None
             current = entries[index].position
