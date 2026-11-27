@@ -41,7 +41,7 @@ CORPUS: dict[str, Any] = json.loads(
 )
 
 
-def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
+def rows_for(case: dict[str, Any]) -> list[Any]:
     """The same conversion prism-parity's recorder makes."""
     if case.get("read") == "approval_states":
         # Which approvals read ended by a runner start (G-387 round 13), read
