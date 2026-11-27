@@ -286,7 +286,10 @@ def test_an_empty_stored_list_stays_empty() -> None:
 def test_a_malformed_stored_wildcard_does_not_grant_authority() -> None:
     row = exercise(seed={"scope": ["*"]}, decision=False)
     assert row["counts"]["scope_ceiling"] == 0
-    assert row["offers"][0] == []
+    # Read as no stored offer: the requested tool only (G-387 round 17),
+    # never the wildcard's whole mode; the denied call runs nothing.
+    assert row["offers"][0] == ["scope_safe"]
+    assert row["counts"]["scope_safe"] == 0
 
 
 def test_a_wildcard_mode_freezes_actual_names() -> None:

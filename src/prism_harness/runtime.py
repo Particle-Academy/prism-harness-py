@@ -943,7 +943,7 @@ class AgentRuntime:
                 names, legacy = scope
                 if legacy:
                     logging.getLogger(__name__).warning(
-                        "Pending approval has no valid stored tool scope; offering approved requests only."
+                        "Pending approval has no valid stored tool scope; offering the requested tools only."
                     )
                 offered = [
                     tool
@@ -2028,7 +2028,7 @@ class AgentRuntime:
             # A concurrent narrower approval also bounds the continuation.
             if scope is not None and scope[1] and not legacy_diagnostic_emitted:
                 logging.getLogger(__name__).warning(
-                    "Pending approval has no valid stored tool scope; offering approved requests only."
+                    "Pending approval has no valid stored tool scope; offering the requested tools only."
                 )
             bounded = [tool for tool in offered if scope is not None and tool.name in scope[0]]
             resolved: list[tuple[int, dict[str, Any]]] = []

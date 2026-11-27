@@ -1300,12 +1300,6 @@ DELEGATION_ENDED = "Not run: the delegation this call was proposed under ended."
 @_reading
 def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], bool] | None:
     """Stored approval authority, separate from the provider replay view."""
-    # Which decision counts is read from the stored rows, first one standing;
-    # the view's fold is for replay to a provider, not for authority.
-    decisions = {
-        approval_id: decision["approved"] is True
-        for approval_id, decision in first_decisions(rows).items()
-    }
     # The step is the one requested_step() selects (G-397), read on the
     # view, where a 0.1.0 step's separate request rows are folded into it.
     view = thread_view(rows)
@@ -1336,15 +1330,17 @@ def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], b
             isinstance(name, str) and name not in ("", "*") for name in scope
         ):
             return list(dict.fromkeys(scope)), False
-        approved_calls = {
-            request["tool_call_id"]
-            for request in requests
-            if decisions.get(request["approval_id"]) is True
-        }
+        # No offer the runtime stored (an older worker's step, or a HOST's:
+        # the offer is run state, read only on the harness's own step). Only
+        # the calls this step asked a person about are knowable: every one
+        # of them, approved or not (G-387 round 17, the reference's rule),
+        # so the resolution can answer each as it answers a step the runtime
+        # wrote. A call still runs only on its own approval.
+        requested_calls = {request["tool_call_id"] for request in requests}
         names = [
             call["name"]
             for call in row.get("tool_calls", [])
-            if call.get("id") in approved_calls
+            if call.get("id") in requested_calls
             and isinstance(call.get("name"), str)
             and call["name"] not in ("", "*")
         ]
