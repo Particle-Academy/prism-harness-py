@@ -7,7 +7,8 @@ row's calls, each under the row's id, and every later reply is the text
 ``done``. ``echo`` is gated by mode and ``free`` is not. Python has no batch
 decision call, so each round records the listed decisions one by one with
 ``record_approval`` and then resumes once with an empty prompt; a decision the
-harness refuses (``approval_not_pending``) is swallowed.
+harness refuses (``approval_not_pending``) is swallowed. ``decided`` (0.2.0)
+is what the thread recorded for each approval, read from the stored rows.
 """
 
 from __future__ import annotations
@@ -123,7 +124,20 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
                     raise
         runtime.send(session, "")
 
-    return {"approvals": len(pending), "free": free.count, "ran": sorted(ran)}
+    # What the thread RECORDED for each approval the first step issued, in
+    # issue order: the first answer, or None when none was recorded (0.2.0).
+    recorded: dict[str, bool] = {}
+    for entry in session.thread().messages():
+        if entry.message.get("type") != "tool_result":
+            continue
+        for response in entry.message.get("tool_approval_responses", []):
+            recorded.setdefault(response["approval_id"], response["approved"] is True)
+    return {
+        "approvals": len(pending),
+        "free": free.count,
+        "ran": sorted(ran),
+        "decided": [recorded.get(approval.id) for approval in pending],
+    }
 
 
 def test_has_rows() -> None:

@@ -21,7 +21,7 @@ from prism_harness import (
     thread_view,
     tool_result_row,
 )
-from prism_harness.thread_rows import paired_requests
+from prism_harness.thread_rows import ended_approval_ids, paired_requests
 
 CORPUS: dict[str, Any] = json.loads(
     (Path(__file__).parent / "fixtures" / "harness-thread-rows.json").read_text(encoding="utf-8")
@@ -30,6 +30,16 @@ CORPUS: dict[str, Any] = json.loads(
 
 def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
     """The same conversion prism-parity's recorder makes."""
+    if case.get("read") == "approval_states":
+        # Which approvals read ended by a runner start (G-387 round 13), read
+        # from the stored rows by the harness's own reader, one entry per id
+        # asked about, in order.
+        ended = ended_approval_ids(case["stored"])
+        return [
+            {"approval_id": approval, "ended_by_start": approval in ended}
+            for approval in case["approvals"]
+        ]
+
     if "fold" in case:
         return thread_view(case["fold"])
 
@@ -102,7 +112,7 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def test_is_the_whole_suite_not_a_subset_someone_trimmed_to_green() -> None:
-    assert len(CORPUS["cases"]) == 14
+    assert len(CORPUS["cases"]) == 15
 
 
 @pytest.mark.parametrize("case", CORPUS["cases"], ids=lambda case: case["id"])

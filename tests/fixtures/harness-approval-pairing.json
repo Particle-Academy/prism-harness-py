@@ -1,9 +1,9 @@
 {
   "suite": "harness-approval-pairing",
   "schema_version": 1,
-  "corpus_version": "0.1.0",
+  "corpus_version": "0.2.0",
   "generated_by": "Hand-written expectations (G-392), written before any language ran. Each language's runner drives its real runtime offline with a fake model and asserts the outcome equals `expected`; `result` records those measured outcomes.",
-  "pins_note": "Whether each approval decision reaches exactly the call it was issued for. Tools: `echo` (gated by mode, integer arg `n`) and `free` (ungated). The fake model's first reply is the row's `calls` in order; every later reply is the text `done`. Each round decides the listed approvals, by index into the parked step's pending approvals in issue order, as one batch where the language has one, then resumes once with an empty prompt; a decision the harness refuses is swallowed and the row continues. Recorded: `approvals` (how many approvals the first step issued), `free` (times the ungated tool ran) and `ran` (the sorted `n` of every echo that ran).",
+  "pins_note": "Whether each approval decision reaches exactly the call it was issued for. Tools: `echo` (gated by mode, integer arg `n`) and `free` (ungated). The fake model's first reply is the row's `calls` in order; every later reply is the text `done`. Each round decides the listed approvals, by index into the parked step's pending approvals in issue order, as one batch where the language has one, then resumes once with an empty prompt; a decision the harness refuses is swallowed and the row continues. Recorded: `approvals` (how many approvals the first step issued), `free` (times the ungated tool ran), `ran` (the sorted `n` of every echo that ran) and (0.2.0) `decided`: the decision the thread RECORDED for each approval the first step issued, in issue order, the first answer or null when none was recorded. On a step whose call ids repeat, every recorded decision is a denial whatever was decided.",
   "cases": [
     {
       "id": "apr-0001",
@@ -43,6 +43,10 @@
         "free": 0,
         "ran": [
           2
+        ],
+        "decided": [
+          false,
+          true
         ]
       },
       "result": {
@@ -51,6 +55,10 @@
           "free": 0,
           "ran": [
             2
+          ],
+          "decided": [
+            false,
+            true
           ]
         },
         "ts": {
@@ -68,7 +76,7 @@
           ]
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0002",
@@ -108,6 +116,10 @@
         "free": 0,
         "ran": [
           1
+        ],
+        "decided": [
+          true,
+          false
         ]
       },
       "result": {
@@ -116,6 +128,10 @@
           "free": 0,
           "ran": [
             1
+          ],
+          "decided": [
+            true,
+            false
           ]
         },
         "ts": {
@@ -133,7 +149,7 @@
           ]
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0003",
@@ -174,6 +190,10 @@
         "ran": [
           1,
           2
+        ],
+        "decided": [
+          true,
+          true
         ]
       },
       "result": {
@@ -183,6 +203,10 @@
           "ran": [
             1,
             2
+          ],
+          "decided": [
+            true,
+            true
           ]
         },
         "ts": {
@@ -202,7 +226,7 @@
           ]
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0004",
@@ -240,13 +264,21 @@
       "expected": {
         "approvals": 2,
         "free": 0,
-        "ran": []
+        "ran": [],
+        "decided": [
+          false,
+          false
+        ]
       },
       "result": {
         "php": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "ts": {
           "approvals": 2,
@@ -259,7 +291,7 @@
           "ran": []
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0005",
@@ -297,13 +329,21 @@
       "expected": {
         "approvals": 2,
         "free": 0,
-        "ran": []
+        "ran": [],
+        "decided": [
+          false,
+          false
+        ]
       },
       "result": {
         "php": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "ts": {
           "approvals": 2,
@@ -316,7 +356,7 @@
           "ran": []
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0006",
@@ -354,13 +394,21 @@
       "expected": {
         "approvals": 2,
         "free": 0,
-        "ran": []
+        "ran": [],
+        "decided": [
+          false,
+          false
+        ]
       },
       "result": {
         "php": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "ts": {
           "approvals": 2,
@@ -373,7 +421,7 @@
           "ran": []
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0007",
@@ -411,13 +459,21 @@
       "expected": {
         "approvals": 2,
         "free": 0,
-        "ran": []
+        "ran": [],
+        "decided": [
+          false,
+          false
+        ]
       },
       "result": {
         "php": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "ts": {
           "approvals": 2,
@@ -430,7 +486,7 @@
           "ran": []
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0008",
@@ -479,13 +535,23 @@
       "expected": {
         "approvals": 3,
         "free": 0,
-        "ran": []
+        "ran": [],
+        "decided": [
+          false,
+          false,
+          false
+        ]
       },
       "result": {
         "php": {
           "approvals": 3,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false,
+            false
+          ]
         },
         "ts": {
           "approvals": 3,
@@ -498,7 +564,7 @@
           "ran": []
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0009",
@@ -541,13 +607,21 @@
       "expected": {
         "approvals": 2,
         "free": 1,
-        "ran": []
+        "ran": [],
+        "decided": [
+          false,
+          false
+        ]
       },
       "result": {
         "php": {
           "approvals": 2,
           "free": 1,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "ts": {
           "approvals": 2,
@@ -560,7 +634,7 @@
           "ran": []
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0010",
@@ -600,13 +674,21 @@
       "expected": {
         "approvals": 2,
         "free": 0,
-        "ran": []
+        "ran": [],
+        "decided": [
+          false,
+          null
+        ]
       },
       "result": {
         "php": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            null
+          ]
         },
         "ts": {
           "approvals": 2,
@@ -619,7 +701,7 @@
           "ran": []
         }
       },
-      "agrees": true
+      "agrees": false
     },
     {
       "id": "apr-0011",
@@ -659,13 +741,21 @@
       "expected": {
         "approvals": 2,
         "free": 0,
-        "ran": []
+        "ran": [],
+        "decided": [
+          false,
+          null
+        ]
       },
       "result": {
         "php": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            null
+          ]
         },
         "ts": {
           "approvals": 2,
@@ -678,7 +768,203 @@
           "ran": []
         }
       },
-      "agrees": true
+      "agrees": false
+    },
+    {
+      "id": "apr-0012",
+      "title": "an ungated call shares the gated call's id, the gated call first: approve it",
+      "since": "0.2.0",
+      "notes": "G-387 round 13. The ungated call runs at step time and its result carries the shared id. Matched by id, that result read as the gated call's: the step did not park, or a later start never ended the gated call and a person's approval of it stood as approved work that never ran. Matched by position, the step parks on the gated call's one approval, the decision is recorded as a denial (the step repeats an id), and nothing gated runs.",
+      "calls": [
+        {
+          "id": "dup",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "dup",
+          "name": "free",
+          "args": {}
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 1,
+        "free": 1,
+        "ran": [],
+        "decided": [
+          false
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        },
+        "ts": null,
+        "py": null
+      },
+      "agrees": false
+    },
+    {
+      "id": "apr-0013",
+      "title": "an ungated call shares the gated call's id, the ungated call first: approve it",
+      "since": "0.2.0",
+      "notes": "G-387 round 13. The ungated call runs at step time and its result carries the shared id. Matched by id, that result read as the gated call's: the step did not park, or a later start never ended the gated call and a person's approval of it stood as approved work that never ran. Matched by position, the step parks on the gated call's one approval, the decision is recorded as a denial (the step repeats an id), and nothing gated runs.",
+      "calls": [
+        {
+          "id": "dup",
+          "name": "free",
+          "args": {}
+        },
+        {
+          "id": "dup",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 1,
+        "free": 1,
+        "ran": [],
+        "decided": [
+          false
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        },
+        "ts": null,
+        "py": null
+      },
+      "agrees": false
+    },
+    {
+      "id": "apr-0014",
+      "title": "an ungated call and a gated call with empty ids, the gated call first: approve it",
+      "since": "0.2.0",
+      "notes": "G-387 round 13. The ungated call runs at step time and its result carries the shared id. Matched by id, that result read as the gated call's: the step did not park, or a later start never ended the gated call and a person's approval of it stood as approved work that never ran. Matched by position, the step parks on the gated call's one approval, the decision is recorded as a denial (the step repeats an id), and nothing gated runs.",
+      "calls": [
+        {
+          "id": "",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "",
+          "name": "free",
+          "args": {}
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 1,
+        "free": 1,
+        "ran": [],
+        "decided": [
+          false
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        },
+        "ts": null,
+        "py": null
+      },
+      "agrees": false
+    },
+    {
+      "id": "apr-0015",
+      "title": "an ungated call and a gated call with empty ids, the ungated call first: approve it",
+      "since": "0.2.0",
+      "notes": "G-387 round 13. The ungated call runs at step time and its result carries the shared id. Matched by id, that result read as the gated call's: the step did not park, or a later start never ended the gated call and a person's approval of it stood as approved work that never ran. Matched by position, the step parks on the gated call's one approval, the decision is recorded as a denial (the step repeats an id), and nothing gated runs.",
+      "calls": [
+        {
+          "id": "",
+          "name": "free",
+          "args": {}
+        },
+        {
+          "id": "",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 1,
+        "free": 1,
+        "ran": [],
+        "decided": [
+          false
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        },
+        "ts": null,
+        "py": null
+      },
+      "agrees": false
     }
   ]
 }
