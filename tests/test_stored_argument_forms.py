@@ -142,3 +142,28 @@ def test_a_newest_steps_result_is_never_credited_to_an_earlier_open_call(
     texts = results(session)
     assert texts.count("Tool call was not run because a later step replaced it") == 1
     assert texts.count("echo:X") >= 1
+
+
+@pytest.mark.parametrize("form", FORMS)
+def test_two_steps_with_the_same_call_and_the_same_result_each_keep_their_own(form: str) -> None:
+    # The same call, answered the same way, in two steps: each step's result
+    # is its own, not a restatement of the other's, and neither call runs.
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    session.thread().record(
+        [
+            {"type": "user", "content": "go"},
+            step("a", stored({"value": "X"}, form), "apr_1"),
+            result("a", stored({"value": "X"}, form), "echo:X", "apr_1"),
+            {"type": "user", "content": "again"},
+            step("a", stored({"value": "X"}, form), "apr_2"),
+            result("a", stored({"value": "X"}, form), "echo:X", "apr_2"),
+        ]
+    )
+    runtime = guarded_runtime(once([]), counts)
+
+    for _ in range(3):
+        runtime.send(session, "")
+
+    assert counts == {}
+    assert set(results(session)) == {"echo:X"}
