@@ -2,42 +2,54 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, TypeVar
+from typing import Any
 
 from prism_harness.errors import HarnessError
 from prism_harness.stores.base import SessionStore
-from prism_harness.thread_rows import REPLACED_STEP, superseding_denials
+from prism_harness.thread_rows import (
+    ANSWERS_STEP,
+    HARNESS,
+    REPLACED_STEP,
+    bound_step,
+    superseding_denials,
+)
 
 __all__ = ["Thread", "ThreadMessage"]
 
-T = TypeVar("T")
+#: The flag on a stored thread ENTRY (beside ``run_id``, never inside the
+#: message) saying the harness itself wrote the row, through its private
+#: in-run write (G-406, G-387 round 15). Only such a row's marks are
+#: honoured (:data:`~prism_harness.thread_rows.ANSWERS_STEP`), and nothing a
+#: caller records can set it.
+WRITTEN_BY_HARNESS = "harness"
 
-#: The field on the stored thread document (beside ``messages``, never a
-#: row) that holds a resolution's CLAIM on the paused step while the resolver
-#: runs its approved calls (G-404, G-387 round 14): ``{token, until}``, the
-#: claim's private token and when it lapses (epoch seconds). While it stands
-#: the thread takes no row but the resolver's own answer, so a superseding
-#: row can never deny a call that is running, whoever records it.
-CLAIM = "harness_resolving"
+#: What a guarded write's guard is handed (the thread's rows, as read) and
+#: returns: the rows to write, or None to write nothing.
+Guard = Callable[[list[dict[str, Any]]], Sequence[dict[str, Any]] | None]
 
 
 def _record_in_run(
     thread: Thread,
     messages: Sequence[dict[str, Any]],
     run_id: str,
-    release: str | None = None,
+    guard: Guard | None = None,
 ) -> list[ThreadMessage]:
     """Record ``messages`` as the runtime's own rows of run ``run_id``.
 
     Internal, and scoped to exactly this one record call (G-406): inside-ness
     travels as an argument of this write, never as ambient state that a host
-    write made during it (from a store, a listener) could share. With
-    ``release``, the same write ends the resolution claim that token holds."""
-    return thread._append(messages, run_id, run_id, release)
+    write made during it (from a store, a listener) could share. Each row is
+    stored as written by the harness, so its marks are honoured.
+
+    With ``guard``, the rows written are not ``messages`` but what ``guard``
+    returns when handed the thread's rows (as :meth:`Thread.rows` reads them)
+    INSIDE this write's lock, and nothing is written when it returns None: a
+    check and the write it allows are one step, so no row recorded in between
+    is missed (G-387 round 15)."""
+    return thread._append(messages, run_id, run_id, guard)
 
 
 @dataclass(frozen=True)
@@ -92,12 +104,22 @@ class Thread:
     def rows(self) -> list[dict[str, Any]]:
         """The stored messages as every reader takes them, one per message.
 
-        A 0.5.x ``harness_replaced_step`` mark names a thread POSITION
-        (``entry.position``); the readers take it as the row's place in this
-        list, so it is mapped here (G-387 round 14): a mark naming a position
-        no row has names nothing. Every other row is the stored one."""
-        entries = self.messages()
-        return _indexed([entry.message for entry in entries], [e.position for e in entries])
+        A 0.5.x ``harness_replaced_step`` mark and a ``harness_answers_step``
+        mark name a thread POSITION (``entry.position``); the readers take it
+        as the row's place in this list, so it is mapped here (G-387 rounds 14
+        and 15): a mark naming a position no row has names nothing. A tool
+        result row the harness itself wrote reads with ``"harness": true``
+        (:data:`~prism_harness.thread_rows.HARNESS`), and no other row does,
+        whatever its stored message holds: only the harness's marks count.
+        Every other row is the stored one."""
+        stored = self._store.get(self._key)
+        entries = stored.get("messages") if stored is not None else None
+        listed = [
+            entry
+            for entry in (entries if isinstance(entries, list) else [])
+            if isinstance(entry, dict) and isinstance(entry.get("message"), dict)
+        ]
+        return _readable(listed)
 
     def count(self) -> int:
         return len(self.messages())
@@ -117,10 +139,10 @@ class Thread:
         A run id passed here is always outside. Nothing of the step runs after
         it, and no decision is accepted for it.
 
-        While a resume is running the step's approved calls (G-404) the
-        thread takes no row at all: :class:`~prism_harness.errors.HarnessError`
-        ``session_locked``, with nothing written. Record it once the resume
-        has answered the step.
+        A call the harness is RUNNING (its started row recorded, its result
+        not yet; G-387 round 15) is answered-in-progress: it gets no denial,
+        and its result pairs to it wherever it lands. So a row recorded here
+        never waits on, and is never refused by, a resume in progress.
         """
         return self._append(messages, run_id, None)
 
@@ -129,26 +151,34 @@ class Thread:
         messages: Sequence[dict[str, Any]],
         run_id: str | None,
         inside: str | None,
-        release: str | None = None,
+        guard: Guard | None = None,
     ) -> list[ThreadMessage]:
-        if not messages:
+        if not messages and guard is None:
             return []
-        batch_in = list(messages)
 
         def append() -> list[ThreadMessage]:
             stored = self._store.get(self._key) or {}
-            claim = stored.get(CLAIM)
-            held = claim.get("token") if isinstance(claim, dict) else None
-            if _standing(claim) and (release is None or held != release):
-                raise HarnessError.session_locked(self._key, 0)
             existing = [
                 entry for entry in (stored.get("messages") or []) if isinstance(entry, dict)
             ]
             listed = [entry for entry in existing if isinstance(entry.get("message"), dict)]
             positions = [_position(entry) for entry in listed]
             # Read in index terms (see rows()); written as given.
-            readable = _indexed([entry["message"] for entry in listed], positions)
-            as_read = _indexed(batch_in, positions)
+            readable = _readable(listed)
+            if guard is None:
+                given = list(messages)
+            else:
+                allowed = guard(readable)
+                if allowed is None:
+                    return []
+                given = list(allowed)
+            # Every stored step's approval requests carry their binding (G-387
+            # round 15), whoever records it: computed here, never taken as
+            # given.
+            batch_in = [bound_step(row) for row in given]
+            if not batch_in:
+                return []
+            as_read = [_flagged(row, inside is not None) for row in _indexed(batch_in, positions)]
             original = {id(read): given for read, given in zip(as_read, batch_in, strict=True)}
             batch = [
                 original.get(id(row), row)
@@ -176,56 +206,17 @@ class Thread:
                     "message": message,
                     "run_id": run_id,
                     "recorded_at": recorded_at,
+                    # The harness's own write, and only that.
+                    **({WRITTEN_BY_HARNESS: True} if inside is not None else {}),
                 }
                 for index, message in enumerate(batch)
             ]
             document = {**stored, "messages": [*existing, *appended]}
-            if release is not None and held == release:
-                document.pop(CLAIM, None)
             self._store.put(self._key, document)
 
             return [self._to_message(entry) for entry in appended]
 
         return self._store.with_lock(self._key, append)
-
-    def _claim(
-        self,
-        token: str,
-        seconds: float,
-        work: Callable[[list[dict[str, Any]]], T | None],
-    ) -> T | None:
-        """Internal (G-404): read ``work`` from the rows inside the thread lock,
-        and when it finds something to resolve, claim the thread for ``token``
-        in the same lock, for ``seconds``. A superseding row recorded after
-        the read is refused until the claim is released; one recorded before
-        it is in the rows ``work`` read."""
-
-        def claim() -> T | None:
-            stored = self._store.get(self._key) or {}
-            if _standing(stored.get(CLAIM)):
-                raise HarnessError.session_locked(self._key, 0)
-            found = work(self.rows())
-            if found is not None:
-                self._store.put(
-                    self._key,
-                    {**stored, CLAIM: {"token": token, "until": time.time() + max(seconds, 1)}},
-                )
-            return found
-
-        return self._store.with_lock(self._key, claim)
-
-    def _release(self, token: str) -> None:
-        """Internal (G-404): end ``token``'s claim, if it still stands."""
-
-        def release() -> None:
-            stored = self._store.get(self._key) or {}
-            claim = stored.get(CLAIM)
-            if isinstance(claim, dict) and claim.get("token") == token:
-                rest = dict(stored)
-                rest.pop(CLAIM, None)
-                self._store.put(self._key, rest)
-
-        self._store.with_lock(self._key, release)
 
     def clear(self) -> None:
         """Forget the conversation.
@@ -262,18 +253,28 @@ class Thread:
         )
 
 
-def _standing(claim: object) -> bool:
-    """Whether a stored claim still holds: the shape the runtime writes, not
-    yet lapsed. A claim a crashed resolver left lapses with its lock's ttl."""
-    if not isinstance(claim, Mapping):
-        return False
-    until = claim.get("until")
-    return (
-        isinstance(claim.get("token"), str)
-        and isinstance(until, (int, float))
-        and not isinstance(until, bool)
-        and until > time.time()
-    )
+def _readable(listed: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Stored entries as every reader takes their rows: positions mapped
+    (:func:`_indexed`), and each tool result row flagged
+    :data:`~prism_harness.thread_rows.HARNESS` exactly when the harness wrote
+    it -- a flag no stored message can carry for itself."""
+    rows = _indexed([entry["message"] for entry in listed], [_position(e) for e in listed])
+    return [
+        _flagged(row, entry.get(WRITTEN_BY_HARNESS) is True)
+        for row, entry in zip(rows, listed, strict=True)
+    ]
+
+
+def _flagged(row: dict[str, Any], harness: bool) -> dict[str, Any]:
+    """A tool result row with the read-only harness flag set exactly to
+    ``harness`` (any copy of the key a message stored dropped); every other
+    row unchanged. Unchanged rows are the same objects."""
+    if row.get("type") != "tool_result" or (not harness and HARNESS not in row):
+        return row
+    flagged = {key: value for key, value in row.items() if key != HARNESS}
+    if harness:
+        flagged[HARNESS] = True
+    return flagged
 
 
 def _position(entry: Mapping[str, Any]) -> int:
@@ -282,16 +283,18 @@ def _position(entry: Mapping[str, Any]) -> int:
 
 
 def _indexed(rows: Sequence[dict[str, Any]], positions: Sequence[int]) -> list[dict[str, Any]]:
-    """``rows`` with each 0.5.x replaced-step mark's thread position mapped
-    to its row's place among ``rows`` (from 1), or to 0 when no row of those
-    holds that position. Unchanged rows are the same objects."""
+    """``rows`` with each replaced-step and answers-step mark's thread
+    position mapped to its row's place among ``rows`` (from 1), or to 0 when
+    no row of those holds that position. Unchanged rows are the same
+    objects."""
     place: dict[int, int] = {}
     for index, position in enumerate(positions):
         place.setdefault(position, index + 1)
     out: list[dict[str, Any]] = []
     for row in rows:
-        mark = row.get(REPLACED_STEP)
-        if isinstance(mark, dict) and type(mark.get("position")) is int:
-            row = {**row, REPLACED_STEP: {**mark, "position": place.get(mark["position"], 0)}}
+        for key in (REPLACED_STEP, ANSWERS_STEP):
+            mark = row.get(key)
+            if isinstance(mark, dict) and type(mark.get("position")) is int:
+                row = {**row, key: {**mark, "position": place.get(mark["position"], 0)}}
         out.append(row)
     return out

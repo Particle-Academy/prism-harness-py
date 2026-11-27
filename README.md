@@ -511,11 +511,24 @@ refused. A new message's denials stand even if its turn then fails. A decision
 only ever applies to the step whose approvals were requested: a row recorded
 after the park ends that step for every reader at once.
 
-While a resume is running a step's approved calls, the thread takes no other
-row: `session.thread().record()` raises a `HarnessError` coded
-`session_locked` and writes nothing, and a new message waits for the resume
-(up to the agent's `lock_wait`) and then sees the calls' results. Record the
-row again once the resume has answered the step.
+Immediately before a resume runs an approved call it records a `started` row
+for that call (written by the harness alone, never replayed). A call that has
+started and has no result yet is answered-in-progress: a row recorded while it
+runs, by a host, another worker, a new message, or the tool itself on its own
+session, is recorded at once (it never waits and is never refused) and gives
+that call no denial. The call's result names its step and pairs to it wherever
+it lands, so every gated call ends with exactly one outcome. A started call
+that never got a result (the process died while it ran) reads "Tool call was
+interrupted, it may have run": it is never run again, and running it again
+needs a new call and a fresh approval.
+
+An approval is bound to the exact call the person was shown: every stored
+approval request records the call's tool name and the digest of its
+arguments, and a call runs only when they still match. An approval belongs
+only to the step that first asked for it, so a later row repeating its id
+asks for nothing. Any denial is final: a denial recorded after an approval the
+resume has not acted on yet revokes it; an approval after a denial is refused.
+A row whose `tool_calls` holds no object call is not a step for any reader.
 
 A decision must answer an approval the session is waiting on. `record_approval()`
 raises a `HarnessError` coded `approval_not_pending` for an approval id the run

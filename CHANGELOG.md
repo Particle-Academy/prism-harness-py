@@ -257,14 +257,23 @@
   pairing property test.
 - A new message denies the paused step's approved calls that have not run
   yet, even when that turn then fails: the denials and the message's row are
-  one write. That write waits on the session lock a resume holds, so a new
-  message sent while a resume runs an approved call sees that call's result
-  instead of denying it. A resume claims the step on the thread while it runs
-  the step's approved calls, and until its answer is written the thread
-  records no other row: `Thread.record()` raises `session_locked` with nothing
-  written. Every gated call ends with exactly one outcome, and a decision on a
-  replaced step is refused at every moment, including straight after its
-  denial.
+  one write. A resume records a write-ahead `started` row immediately before it
+  runs each approved call; a call that has started and has no result is
+  answered-in-progress, so a row recorded meanwhile (a host row, another
+  worker's new message, or the tool recording on its own session) is
+  recorded at once, never waits and is never refused, and denies that call
+  nothing. Its result names its step (`harness_answers_step`, honoured only on
+  rows the harness wrote) and pairs to it wherever it lands. A started call
+  with no result reads "Tool call was interrupted, it may have run" and is
+  never run again. Every gated call ends with exactly one stored outcome, and
+  a decision on a replaced step is refused at every moment.
+- Every stored approval request is bound to its call (`harness_call`: the
+  tool name and the digest of the arguments), and a call runs only when that
+  still matches; an approval belongs only to the step that first asked for
+  it. Any denial is final: a denial recorded after an approval that has not
+  been acted on revokes it.
+- One rule for what a step is: an assistant row whose `tool_calls` holds at
+  least one object call. Any other row is a text row for every reader.
 - The history sent to the model keeps each call's own result when two calls
   of one step share an id: a later row replaces only the result of the same
   call (same id, tool name and arguments). Each result is sent once, in its
