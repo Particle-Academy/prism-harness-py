@@ -503,7 +503,8 @@ def paired_requests(
     in call order, so with repeated ids every call still gets its own request,
     never the last one issued under that id. ``ran`` are the calls the step
     ran at once (G-387 round 13): a call that ran was asked nothing, so a
-    request pairs with one of them only when no other call carries its id.
+    request never pairs with one of them (it pairs with no call instead); an
+    ungated call never receives an approval.
     """
     calls = _dicts(assistant.get("tool_calls"))
     taken: set[int] = set()
@@ -513,7 +514,7 @@ def paired_requests(
         free = [
             i for i, call in enumerate(calls) if i not in taken and _text(call.get("id")) == wanted
         ]
-        index = next((i for i in free if i not in ran), free[0] if free else None)
+        index = next((i for i in free if i not in ran), None)
         if index is not None:
             taken.add(index)
         pairs.append((request, index))
