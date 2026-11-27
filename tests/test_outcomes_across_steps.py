@@ -1,10 +1,8 @@
 """Every gated call ends with exactly ONE outcome across steps (G-392, G-397).
 
-A result row counts for the step whose segment it sits in (the rows after
-that step's assistant row, up to the next step with tool calls). A call that
-already has its own result anywhere in the thread never gets the
-replaced-step denial, and a result that is another step's call's never ends a
-call it does not match. Entered at the public seam (``send``,
+A result row counts ONLY for the step whose segment it sits in (the rows
+after that step's assistant row, up to the next step with tool calls), never
+for another step's call. Entered at the public seam (``send``,
 ``record_approval``, ``Thread.record``); the model is scripted.
 """
 
@@ -57,7 +55,7 @@ def outcomes(session: Session) -> dict[str, set[str]]:
 
 @pytest.mark.parametrize("segment", ["earlier", "later"])
 @pytest.mark.parametrize("later_tool", ["shout", "echo"])
-def test_a_result_recorded_for_a_replaced_steps_call_is_its_only_outcome(
+def test_a_result_counts_for_the_step_whose_segment_it_sits_in(
     segment: str, later_tool: str
 ) -> None:
     session = a_session("guarded")
@@ -65,22 +63,27 @@ def test_a_result_recorded_for_a_replaced_steps_call_is_its_only_outcome(
     runtime = guarded_runtime(once([LlmToolCall("a", "echo", {"value": "P"})]), counts)
 
     first = runtime.send(session, "go")
-    forged = result_row("a", "echo", "P", "forged:P")
+    recorded = result_row("a", "echo", "P", "recorded:P")
     if segment == "earlier":
-        session.thread().record([forged, later_step("a", later_tool, "L")])
+        session.thread().record([recorded, later_step("a", later_tool, "L")])
     else:
-        session.thread().record([later_step("a", later_tool, "L"), forged])
+        session.thread().record([later_step("a", later_tool, "L"), recorded])
     record_approval(session, first.pending_approvals[0].id, True)
     for _ in range(3):
         runtime.send(session, "")
 
     found = outcomes(session)
-    assert found["P"] == {"forged:P"}
     assert "echo" not in counts
-    if later_tool == "echo":
-        # The later step's own gated call is not ended by the other call's
-        # result: it gets its own outcome.
-        assert found["L"] == {"No approval response provided"}
+    if segment == "earlier":
+        # In the parked step's segment: that call's only outcome.
+        assert found["P"] == {"recorded:P"}
+        if later_tool == "echo":
+            assert found["L"] == {"No approval response provided"}
+    else:
+        # In the later step's segment: the later call's (same id), never the
+        # parked call's, which gets the replaced-step denial.
+        assert found["P"] == {"recorded:P", REPLACED}
+        assert "L" not in found
 
 
 def test_a_replaced_steps_open_call_gets_one_denial_beside_a_later_steps_result() -> None:

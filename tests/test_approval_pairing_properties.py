@@ -149,6 +149,9 @@ class Call:
     reason: str | None = None
     #: Stored steps only: the call already has a result.
     prior: bool = False
+    #: Its prior result was stored with OTHER arguments (lossy or redacted):
+    #: ``{"token": "<token>-lossy"}``, which an earlier-step DECOY call has.
+    lossy: bool = False
 
 
 @dataclass(frozen=True)
@@ -231,6 +234,7 @@ class Case:
                         **({"decision": c.decision} if self.path == "live" and c.gated else {}),
                         **({"reason": c.reason} if c.reason is not None else {}),
                         **({"prior_result": True} if c.prior else {}),
+                        **({"lossy_result_arguments": True} if c.lossy else {}),
                     }
                     for c in self.calls
                 ],
@@ -434,6 +438,33 @@ def generate(seed: int) -> Case:
                     prior=not gated or rng.random() < 0.25,
                 )
             )
+    if path == "stored":
+        # Only where its call is the one call with that id and tool, so the
+        # step's own fallback (id and tool) can only mean that call.
+        lossy = [
+            i
+            for i, c in enumerate(calls)
+            if c.gated
+            and c.prior
+            and sum(1 for d in calls if d.id == c.id and d.gated == c.gated) == 1
+        ]
+        if lossy and rng.random() < 0.3:
+            index = rng.choice(lossy)
+            calls[index] = replace(calls[index], lossy=True)
+            decision, reason = a_decision(rng)
+            # The DECOY: an earlier call with the same id and tool whose
+            # arguments are the ones the lossy result was stored with.
+            earlier.append(
+                Call(
+                    id=calls[index].id,
+                    gated=True,
+                    token=f"{calls[index].token}-lossy",
+                    decision=decision,
+                    reason=reason,
+                    prior=False,
+                )
+            )
+    if earlier:
         current = [c for c in calls if c.gated]
         if current and rng.random() < 0.4:
             # A TWIN: the same id and arguments as a call of the current step,
@@ -483,6 +514,11 @@ class Expected:
     runs: list[str] = field(default_factory=list)
     #: Each gated call's one outcome text, by token.
     outcomes: dict[str, str] = field(default_factory=dict)
+    #: Texts stored under a token that are ANOTHER call's outcome: a result
+    #: recorded with that token's arguments in a later step's segment.
+    extras: dict[str, set[str]] = field(default_factory=dict)
+    #: The later step's call was ended by a result in its segment.
+    later_credited: bool = False
     repeated: bool = False
 
 
@@ -519,6 +555,15 @@ def oracle(case: Case) -> Expected:
     forged = (
         case.insert.call if case.insert is not None and case.insert.kind == "tool_result" else -1
     )
+    # A result counts ONLY for the step whose segment it sits in. Recorded
+    # after a later step, the forged result is the later step's: it ends the
+    # later call when that call has its id, and never the parked call.
+    if forged >= 0 and case.later is not None and case.later.order == "before_insert":
+        token = case.calls[forged].token
+        expected.extras[token] = {f"forged:{token}"}
+        later_id = case.calls[case.later.reuses].id if case.later.reuses is not None else "later"
+        expected.later_credited = later_id == case.calls[forged].id
+        forged = -1
 
     # A later step replaced the earlier one: its gated calls never run, and
     # each one with no result gets one denial.
@@ -623,6 +668,10 @@ def stored_rows(
         value = {"token": call.token}
         return json.dumps(value) if strings else value
 
+    def lossy_arguments(call: Call) -> Any:
+        value = {"token": f"{call.token}-lossy"}
+        return json.dumps(value) if strings else value
+
     rows: list[dict[str, Any]] = [
         {
             "type": "assistant",
@@ -655,7 +704,7 @@ def stored_rows(
                     {
                         "tool_call_id": c.id,
                         "tool_name": GATED if c.gated else UNGATED,
-                        "args": arguments(c),
+                        "args": lossy_arguments(c) if c.lossy else arguments(c),
                         "result": f"prior:{c.token}",
                         "tool_call_result_id": None,
                         "artifacts": [],
@@ -713,6 +762,12 @@ def outcomes_by_token(session: Session) -> dict[str, list[str]]:
             if isinstance(args, str):
                 args = json.loads(args)
             token = str((args or {}).get("token", ""))
+            text = str(result.get("result"))
+            # A result the test recorded names its call in its text; its
+            # stored arguments may be another call's (lossy).
+            for kind in ("prior:", "forged:"):
+                if text.startswith(kind):
+                    token = text[len(kind) :]
             found.setdefault(token, []).append(str(result.get("result")))
     return found
 
@@ -857,7 +912,8 @@ def _check(
     current_tokens = {c.token for c in case.calls}
     if case.later is not None and case.later.gated:
         later = set(stored.get("later", []))
-        if later != {expected.outcomes["later"]} or counts.get("later"):
+        wanted_later = set() if expected.later_credited else {expected.outcomes["later"]}
+        if later != wanted_later or counts.get("later"):
             broken.append(
                 f"1/5: the later step's call ran {counts.get('later', 0)}x and is recorded as "
                 f"{sorted(later)}, the rule says once {expected.outcomes['later']!r}"
@@ -872,6 +928,7 @@ def _check(
             )
     for call in gated:
         texts = set(stored.get(call.token, []))
+        texts -= expected.extras.get(call.token, set())
         if call.token in twins:
             # Two calls share this token, one per step: each has its own outcome.
             wanted = {expected.outcomes[call.token], expected.outcomes[f"{call.token}#earlier"]}
@@ -1082,6 +1139,20 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
                 for k in examined
             ), (order, gated_later)
     assert any(k.later is not None and k.insert is None for k in examined)
+    # A result stored with other arguments (lossy), beside an earlier call
+    # those arguments name; and a recorded result in a later step's segment,
+    # crediting the later call or none.
+    assert any(any(c.lossy for c in k.calls) for k in examined)
+    assert any(any(c.lossy for c in k.calls) and k.string_arguments for k in examined)
+    for credited in (True, False):
+        assert any(
+            k.insert is not None
+            and k.insert.kind == "tool_result"
+            and k.later is not None
+            and k.later.order == "before_insert"
+            and oracle(k).later_credited == credited
+            for k in examined
+        ), credited
     # String-stored arguments, and ids (and arguments) reused across steps.
     assert any(k.string_arguments and k.earlier for k in examined)
     for prior in (True, False):
