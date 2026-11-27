@@ -168,7 +168,8 @@ class StructuredAgentResponse(AgentResponse):
     """
 
     #: Checked against the schema before it got here; a run that could not
-    #: produce one raised.
+    #: produce one raised. None when the run stopped before the model answered
+    #: (``awaiting_approval``, ``budget_exhausted``): see ``finish_reason``.
     structured: Any = None
 
 
@@ -363,15 +364,32 @@ class AgentRuntime:
         explain the retry sitting next to it. The run is marked failed and
         ``RunFailed`` is emitted, as for any other failure.
 
+        A RUN THAT STOPS BEFORE THE ANSWER is not a failure: one waiting for a
+        person, or out of steps, returns with ``structured`` None, and its
+        ``finish_reason``, ``pending_approvals`` and ``stopped_because`` as
+        :meth:`send` returns them. Resume it with ``send_structured`` again.
+
         :raises HarnessError: ``structured_unreadable`` or
             ``structured_schema_violation``.
         """
         response = self._turn(session, prompt, tool_names, context, additional_content, schema)
 
-        # Narrowed by _turn: with a schema it always returns the structured shape.
-        assert isinstance(response, StructuredAgentResponse)
+        if isinstance(response, StructuredAgentResponse):
+            return response
 
-        return response
+        # The run stopped before the model answered: for a person, or out of
+        # steps. There is no document yet, so ``structured`` is None and the
+        # stop fields say why (G-395).
+        return StructuredAgentResponse(
+            run_id=response.run_id,
+            text=response.text,
+            steps=response.steps,
+            tool_calls=response.tool_calls,
+            finish_reason=response.finish_reason,
+            pending_approvals=response.pending_approvals,
+            stopped_because=response.stopped_because,
+            structured=None,
+        )
 
     def _turn(
         self,
