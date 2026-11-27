@@ -369,7 +369,7 @@ def _thread_steps(
             if type(target) is int:
                 normalised = _normalise(row, view)
                 if normalised is not None:
-                    written.setdefault(target, []).extend(normalised["tool_results"])
+                    written.setdefault(target, []).extend(_occurrences(normalised["tool_results"]))
             continue
 
         normalised = _normalise(row, view)
@@ -382,7 +382,7 @@ def _thread_steps(
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             steps.append((position, normalised, []))
         elif normalised["type"] == "tool_result" and steps:
-            steps[-1][2].extend(_parsed_arguments(row, normalised["tool_results"]))
+            steps[-1][2].extend(_occurrences(_parsed_arguments(row, normalised["tool_results"])))
 
         if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
             view[-1] = _fold(view[-1], normalised)
@@ -393,6 +393,28 @@ def _thread_steps(
         (position, assistant, [*entries, *written.get(position, [])])
         for position, assistant, entries in steps
     ], superseded
+
+
+#: The key an entry carries, inside this module only, for its occurrence among
+#: identical entries of its own row (G-392).
+_OCCURRENCE = "_harness_occurrence"
+
+
+def _occurrences(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each entry with its occurrence among IDENTICAL entries of its row.
+
+    Two identical calls in one step (same id, tool and arguments) get two
+    identical results in one row. Counted per occurrence, the second is the
+    second call's own result; a later row restating both restates the first
+    and the second occurrence, and pairs with nothing.
+    """
+    seen: list[dict[str, Any]] = []
+    tagged: list[dict[str, Any]] = []
+    for entry in entries:
+        plain = {k: v for k, v in entry.items() if k != _OCCURRENCE}
+        tagged.append({**plain, _OCCURRENCE: sum(1 for done in seen if done == plain)})
+        seen.append(plain)
+    return tagged
 
 
 def _parsed_arguments(
@@ -427,8 +449,10 @@ def _paired(
     call never reads as unanswered and never runs again, and an earlier step's
     unanswered gated calls get the replaced-step denial.
 
-    An entry identical to one already paired in its own step is the same
-    result restated by a later row, and pairs with nothing.
+    An entry identical to one already paired in its own step, AND the same
+    occurrence among identical entries of its row, is the same result restated
+    by a later row, and pairs with nothing. Two identical calls' results are
+    the first and the second occurrence, and each pairs with its own call.
     """
 
     def same(call: Mapping[str, Any], entry: Mapping[str, Any], exact: int) -> bool:
@@ -470,6 +494,10 @@ def _paired(
             if index is not None:
                 paired[step][index] = entry
 
+    # The occurrence decided restatement; the results handed back are plain.
+    for results in paired:
+        for index, entry in results.items():
+            results[index] = {k: v for k, v in entry.items() if k != _OCCURRENCE}
     return paired
 
 
