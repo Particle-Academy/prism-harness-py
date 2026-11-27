@@ -1,7 +1,7 @@
 {
   "suite": "harness-thread-rows",
   "schema_version": 1,
-  "corpus_version": "0.4.0",
+  "corpus_version": "0.5.0",
   "generated_by": "prism-parity:tools/generate-thread-rows.php for php; tools/record-thread-rows.mjs for ts and tools/record_thread_rows.py for py. Every output is execution output, encoded as compact JSON with keys in the order each language wrote them.",
   "pins_note": "The rows a harness stores for a run, and what a stored run is replayed as. A PHP app and a TypeScript or Python agent can share one session. If they store tool calls, approvals or decisions in different shapes, one language resumes the other’s approval against the wrong call or never, or replays a conversation a provider refuses.",
   "cases": [
@@ -796,7 +796,230 @@
       },
       "agrees": true,
       "notes": "G-387 round 13: the READ rule for the ended mark. An approval reads ended by a runner start when ANY result row after the assistant row that asked for it, and before the next assistant row, carries `harness_ended_by_start` naming its approval id; nothing else ends it. apr_1 was asked on a step whose two calls share the id `dup`: the ungated echo ran first and its row (no mark) carries `dup`, then the person's decision, then the start's marked row. A reader that stopped at the FIRST result row carrying the call id read apr_1 as not ended, so the decision stood for a call that never ran. apr_0's own step ended at the next assistant row, so a mark naming it after that row does not end it, and apr_9 was never asked. The output is one entry per id in `approvals`, in that order: `{approval_id, ended_by_start}`."
+    },
+    {
+      "id": "thr-0016",
+      "title": "two calls that share an id but not their tool or arguments each keep their own result",
+      "since": "0.5.0",
+      "fold": [
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "dup",
+              "name": "echo",
+              "arguments": {
+                "text": "hi"
+              }
+            },
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "dup",
+              "name": "weather",
+              "arguments": {
+                "city": "Rome"
+              }
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "dup"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "dup",
+              "tool_name": "echo",
+              "args": {
+                "text": "hi"
+              },
+              "result": "echo:hi"
+            }
+          ],
+          "tool_approval_responses": []
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": false,
+              "reason": "Tool call was not run because another call in this step has the same id"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "dup",
+              "tool_name": "echo",
+              "args": {
+                "text": "hi"
+              },
+              "result": "echo:hi"
+            },
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "dup",
+              "tool_name": "weather",
+              "args": {
+                "city": "Rome"
+              },
+              "result": "Tool call was not run because another call in this step has the same id"
+            }
+          ],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": false,
+              "reason": "Tool call was not run because another call in this step has the same id"
+            }
+          ]
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"dup\",\"name\":\"echo\",\"arguments\":{\"text\":\"hi\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"dup\",\"name\":\"weather\",\"arguments\":{\"city\":\"Rome\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"dup\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"dup\",\"tool_name\":\"echo\",\"args\":{\"text\":\"hi\"},\"result\":\"echo:hi\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"dup\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Rome\"},\"result\":\"Tool call was not run because another call in this step has the same id\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":false,\"reason\":\"Tool call was not run because another call in this step has the same id\"}]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"dup\",\"name\":\"echo\",\"arguments\":{\"text\":\"hi\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"dup\",\"name\":\"weather\",\"arguments\":{\"city\":\"Rome\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"dup\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"dup\",\"tool_name\":\"echo\",\"args\":{\"text\":\"hi\"},\"result\":\"echo:hi\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"dup\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Rome\"},\"result\":\"Tool call was not run because another call in this step has the same id\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":false,\"reason\":\"Tool call was not run because another call in this step has the same id\"}]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"dup\",\"name\":\"echo\",\"arguments\":{\"text\":\"hi\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"dup\",\"name\":\"weather\",\"arguments\":{\"city\":\"Rome\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_1\",\"tool_call_id\":\"dup\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"dup\",\"tool_name\":\"echo\",\"args\":{\"text\":\"hi\"},\"result\":\"echo:hi\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"dup\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Rome\"},\"result\":\"Tool call was not run because another call in this step has the same id\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_1\",\"approved\":false,\"reason\":\"Tool call was not run because another call in this step has the same id\"}]}]"
+      },
+      "agrees": true,
+      "notes": "G-403 (G-387 round 14). The replay keys a result by its tool call id, tool name AND recorded arguments, never by the call id alone: a provider may give two calls of one step the same id. The step's ungated echo ran at once, the gated weather call was denied as a repeated-id step, and the resolution row carries both results again. Folded, the replay holds BOTH results once each, in call order, and the decision once. A fold keyed by id alone kept one of the two, so the model was not shown the output of a tool that ran."
+    },
+    {
+      "id": "thr-0017",
+      "title": "a step's results recorded after a system row are replayed once, in the step's own rows",
+      "since": "0.5.0",
+      "fold": [
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "call_1",
+              "name": "echo",
+              "arguments": {
+                "text": "hi"
+              }
+            },
+            {
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null,
+              "id": "call_2",
+              "name": "weather",
+              "arguments": {
+                "city": "Paris"
+              }
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_2",
+              "tool_call_id": "call_2"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_1",
+              "tool_name": "echo",
+              "args": {
+                "text": "hi"
+              },
+              "result": "echo:hi"
+            }
+          ],
+          "tool_approval_responses": []
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_2",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "type": "system",
+          "content": "A note."
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_1",
+              "tool_name": "echo",
+              "args": {
+                "text": "hi"
+              },
+              "result": "echo:hi"
+            },
+            {
+              "tool_call_result_id": null,
+              "artifacts": [],
+              "tool_call_id": "call_2",
+              "tool_name": "weather",
+              "args": {
+                "city": "Paris"
+              },
+              "result": "Sunny in Paris"
+            }
+          ],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_2",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "type": "assistant",
+          "content": "Done.",
+          "tool_calls": [],
+          "additional_content": {},
+          "tool_approval_requests": []
+        }
+      ],
+      "rows": {
+        "php": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"echo\",\"arguments\":{\"text\":\"hi\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_2\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"echo\",\"args\":{\"text\":\"hi\"},\"result\":\"echo:hi\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_2\",\"approved\":true,\"reason\":null}]},{\"type\":\"system\",\"content\":\"A note.\"},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_2\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Sunny in Paris\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]},{\"type\":\"assistant\",\"content\":\"Done.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "ts": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"echo\",\"arguments\":{\"text\":\"hi\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_2\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"echo\",\"args\":{\"text\":\"hi\"},\"result\":\"echo:hi\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_2\",\"approved\":true,\"reason\":null}]},{\"type\":\"system\",\"content\":\"A note.\"},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_2\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Sunny in Paris\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]},{\"type\":\"assistant\",\"content\":\"Done.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]",
+        "py": "[{\"type\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"name\":\"echo\",\"arguments\":{\"text\":\"hi\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null},{\"id\":\"call_2\",\"name\":\"weather\",\"arguments\":{\"city\":\"Paris\"},\"result_id\":null,\"reasoning_id\":null,\"reasoning_summary\":null}],\"additional_content\":{},\"tool_approval_requests\":[{\"approval_id\":\"apr_2\",\"tool_call_id\":\"call_2\"}]},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"echo\",\"args\":{\"text\":\"hi\"},\"result\":\"echo:hi\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[{\"approval_id\":\"apr_2\",\"approved\":true,\"reason\":null}]},{\"type\":\"system\",\"content\":\"A note.\"},{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_2\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Sunny in Paris\",\"tool_call_result_id\":null,\"artifacts\":[]}],\"tool_approval_responses\":[]},{\"type\":\"assistant\",\"content\":\"Done.\",\"tool_calls\":[],\"additional_content\":{},\"tool_approval_requests\":[]}]"
+      },
+      "agrees": true,
+      "notes": "G-387 round 14, item 5. A step's segment is every row after it up to the next assistant row with tool calls, and its result rows need not be consecutive: a system row leaves the step parked, and the resolution recorded after it carries the step's earlier results again. The replay emits each result (tool call id, tool name and arguments, occurrence by occurrence) and each decision ONCE per segment: the first stands where it was, a later run of the segment leaves out what an earlier run already replayed, and a run left with nothing is not replayed. Here call_1's result is replayed once, before the system row, and call_2's once, after it. A fold of consecutive rows alone replayed call_1 twice, which a provider can refuse as a duplicate tool result."
     }
   ],
-  "divergence_note": "thr-0001..thr-0013 agree across PHP, TypeScript and Python. thr-0015 (0.4.0) pins how the ended mark is READ on a step whose call ids repeat; it agrees once each port reads every result row of the step, not only the first that carries the call id. thr-0014 (0.3.0) pins the ended mark, which the three languages wrote in three different shapes before it; it agrees once each port records the PHP reference's row. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised. User rows are out of scope here by decision; a draft of thr-0013 that carried them found PHP writing additional_content and additional_attributes as empty LISTS where both ports write neither key, recorded under G-58 rather than pinned in a suite that says it does not cover them."
+  "divergence_note": "thr-0001..thr-0013 agree across PHP, TypeScript and Python. thr-0016 and thr-0017 (0.5.0) pin the replay fold for same-id calls and for a step whose result rows are not consecutive; the ports agree once they fold by id, tool name and arguments, once per segment. thr-0015 (0.4.0) pins how the ended mark is READ on a step whose call ids repeat; it agrees once each port reads every result row of the step, not only the first that carries the call id. thr-0014 (0.3.0) pins the ended mark, which the three languages wrote in three different shapes before it; it agrees once each port records the PHP reference's row. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised. User rows are out of scope here by decision; a draft of thr-0013 that carried them found PHP writing additional_content and additional_attributes as empty LISTS where both ports write neither key, recorded under G-58 rather than pinned in a suite that says it does not cover them."
 }

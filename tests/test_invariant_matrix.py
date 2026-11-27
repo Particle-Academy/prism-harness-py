@@ -52,6 +52,16 @@ PHP's ``cancel S`` column has no Python counterpart: there is no cancel by run
 id (no durable tree cancel, G-285); a host cancels a start through the context
 it handed the runner, which the ``cancelled`` outcome covers.
 
+Round 14 (G-404) adds the action ``supersede``: a host's user row recorded on
+the child's thread by ANOTHER worker (another OS thread, its own objects),
+concurrently with the phase. ``S``: it records, and it adds no replaced
+denial, because the start's task row already ended every call of the step.
+And THE RESOLUTION MATRIX at the end of this file: a superseding row, a new
+message or a decision, from the same worker (inside the approved tool) or
+another, before, DURING and after the resolver runs an approved call. Every
+gated call ends with exactly one outcome; a row that would supersede a step
+the resolver has claimed is refused ``session_locked`` with nothing written.
+
 Every future fix must keep this green.
 """
 
@@ -59,7 +69,8 @@ from __future__ import annotations
 
 import json
 import socket
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from functools import cache
 from typing import Any
 
@@ -130,10 +141,11 @@ READERS = (
     "resume",
     "second_start",
     "host_turn",
+    "supersede",
 )
 #: The columns that ACT (an entry point), not read; each is exercised only in
 #: the phases its rule covers, ``-`` elsewhere.
-ACTIONS = ("decision", "decision_same", "resume", "second_start", "host_turn")
+ACTIONS = ("decision", "decision_same", "resume", "second_start", "host_turn", "supersede")
 PHASES = (
     "before_gate",
     "run_started",
@@ -238,7 +250,7 @@ EXPECTED: dict[str, dict[str, dict[str, str]]] = {
     },
     "own_run": {
         "inside": _row(**_RECORDED, decision_same="E"),
-        "outside": _row(**_RECORDED, decision="E", second_start="D"),
+        "outside": _row(**_RECORDED, decision="E", second_start="D", supersede="S"),
         "own_outside": _row(**_RECORDED, decision_same="E"),
     },
     "tool_denied": {
@@ -255,7 +267,7 @@ EXPECTED: dict[str, dict[str, dict[str, str]]] = {
     },
     "after_task_row": {
         "inside": _row(**_FINISHED, decision_same="E"),
-        "outside": _row(**_FINISHED, decision="E"),
+        "outside": _row(**_FINISHED, decision="E", supersede="S"),
         "own_outside": _row(**_FINISHED, decision_same="E", host_turn="H"),
     },
     "failing_undone": {
@@ -400,6 +412,38 @@ def _host_turn(world: World, session: Session) -> str:
     return f"ran:{len(world.requests) - before}"
 
 
+def _supersede(world: World) -> tuple[str, int]:
+    """A host's user row on the child's thread, recorded by ANOTHER worker
+    (another OS thread, its own harness objects over the same disk), while
+    the phase is in progress. What it returned, and how many replaced
+    denials it added."""
+    other = World()
+    other.directory = world.directory
+    other.fresh()
+    before = _superseded_rows(world)
+    found: dict[str, str] = {}
+
+    def record() -> None:
+        try:
+            other.child("worker").thread().record([{"type": "user", "content": "Host."}])
+            found["outcome"] = "recorded"
+        except HarnessError as error:
+            found["outcome"] = str(error.code)
+
+    worker = threading.Thread(target=record, daemon=True)
+    worker.start()
+    worker.join(60)
+    return found.get("outcome", "hung"), _superseded_rows(world) - before
+
+
+def _superseded_rows(world: World) -> int:
+    return sum(
+        1
+        for entry in world.child("worker").thread().messages()
+        if "harness_superseded" in entry.message
+    )
+
+
 def raw_marks(world: World) -> list[str]:
     """Every ended mark on the child's thread as the EXACT text stored on
     disk, never re-serialised."""
@@ -486,6 +530,8 @@ def read(
         found["second_start"] = _second_start(world)
     if "host_turn" in acts:
         found["host_turn"] = _host_turn(world, session)
+    if "supersede" in acts:
+        found["supersede"] = _supersede(world)
     return found
 
 
@@ -732,6 +778,7 @@ def observed(scenario: str, outcome: str) -> dict[str, Any]:
         "0": dict.fromkeys(READERS, None),
         "R": {"resume": "child_binding_missing:0"},
         "D": {"second_start": ("denied", True, 0)},
+        "S": {"supersede": ("recorded", 0)},
         "H": {"host_turn": _HOST_TURN.get(outcome)},
         "L": {"run": later[0] if later else None},
     }
@@ -857,3 +904,221 @@ def test_two_starts_onto_one_child_in_one_parent_step_run_in_turn() -> None:
     assert isinstance(run, dict) and run["id"] == tasks[-1][0]
     assert not child.child_provisional()
     assert child.child_binding() is not None
+
+
+# -- THE RESOLUTION MATRIX (G-404, G-387 round 14) --------------------------------------
+#
+# A root parked on one gated call (``echo``, argument n=1), approved. One
+# action, in one phase, from one side, then a resume settles the step:
+#
+# - phases: ``parked`` (after the decision, before the resume), ``resolving``
+#   (inside the approved call, while the resolver holds its claim) and
+#   ``resolved`` (after the resume);
+# - sides: ``same`` (the worker running the resume: inside the approved tool
+#   while resolving) and ``other`` (another worker: another OS thread, its own
+#   harness objects over the same disk);
+# - actions: a host ``user`` row, an assistant ``text`` row, an assistant
+#   ``step`` row with a tool call, a ``new_message`` through the harness, and
+#   a ``decision`` on the approval.
+#
+# Read after it: what the action returned, every outcome of the gated call,
+# whether its approval reads as replaced, the decision standing for it, and
+# what ran. ``-`` is a cell no caller can reach without deadlocking itself:
+# the worker holding the session lock waiting on that same lock.
+
+RESOLUTION_PHASES = ("parked", "resolving", "resolved")
+RESOLUTION_SIDES = ("same", "other")
+RESOLUTION_ACTIONS = ("user", "text", "step", "new_message", "decision")
+
+_RAN = ["echo:1"]
+_REPLACED = ["Tool call was not run because a later step replaced it"]
+
+
+def _cell(acted: str, outcomes: list[str], replaced: bool, decided: bool | None) -> dict[str, Any]:
+    return {
+        "acted": acted,
+        "outcomes": outcomes,
+        "replaced": replaced,
+        "decided": decided,
+        "ran": [("echo", 1)] if outcomes == _RAN else [],
+    }
+
+
+#: Expected, written before the fix.
+_SUPERSEDED_CELL = _cell("recorded", _REPLACED, True, None)
+_RAN_CELL = _cell("recorded", _RAN, False, True)
+_REFUSED_CELL = _cell("session_locked", _RAN, False, True)
+_LATE_DECISION = _cell("approval_not_pending", _RAN, False, True)
+_REPLACED_DECISION = _cell("approval_not_pending", _REPLACED, True, None)
+
+RESOLUTION_EXPECTED: dict[tuple[str, str, str], dict[str, Any] | None] = {}
+for _side in RESOLUTION_SIDES:
+    for _action in ("user", "text", "step"):
+        RESOLUTION_EXPECTED[("parked", _side, _action)] = _SUPERSEDED_CELL
+        RESOLUTION_EXPECTED[("resolving", _side, _action)] = _REFUSED_CELL
+        RESOLUTION_EXPECTED[("resolved", _side, _action)] = _RAN_CELL
+    RESOLUTION_EXPECTED[("parked", _side, "new_message")] = _SUPERSEDED_CELL
+    RESOLUTION_EXPECTED[("resolved", _side, "new_message")] = _RAN_CELL
+    # The approval was decided before the action: a second decision is refused.
+    RESOLUTION_EXPECTED[("parked", _side, "decision")] = _cell(
+        "approval_not_pending", _RAN, False, True
+    )
+    RESOLUTION_EXPECTED[("resolved", _side, "decision")] = _LATE_DECISION
+# Another worker's new message and decision WAIT for the resolver, then act
+# on the settled step: the message sees the real result, the decision is late.
+RESOLUTION_EXPECTED[("resolving", "other", "new_message")] = _RAN_CELL
+RESOLUTION_EXPECTED[("resolving", "other", "decision")] = _LATE_DECISION
+RESOLUTION_EXPECTED[("resolving", "same", "new_message")] = None
+RESOLUTION_EXPECTED[("resolving", "same", "decision")] = None
+
+_ROWS: dict[str, dict[str, Any]] = {
+    "user": {"type": "user", "content": "Host row."},
+    "text": {"type": "assistant", "content": "Host text.", "tool_calls": []},
+    "step": {
+        "type": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "later", "name": "lookup", "arguments": {"n": 7}}],
+        "tool_approval_requests": [],
+    },
+}
+
+
+class _Resolving(World):
+    """The World whose ``echo`` runs host code (once) while it runs."""
+
+    def __init__(self) -> None:
+        self.during: Callable[[], None] | None = None
+        self.ran_with: list[tuple[str, Any]] = []
+        super().__init__()
+
+    def _runtime(self) -> Any:
+        runtime = super()._runtime()
+        world = self
+
+        class Echo:
+            name = "echo"
+
+            def handle(self, args: dict[str, Any]) -> Any:
+                world.ran_with.append(("echo", args.get("n")))
+                hook, world.during = world.during, None
+                if hook is not None:
+                    hook()
+                return f"echo:{args.get('n')}"
+
+        runtime._tools.register(Echo())
+        return runtime
+
+
+def _act(world: _Resolving, action: str, approval: str) -> str:
+    try:
+        if action == "decision":
+            record_approval(world.root(), approval, True)
+        elif action == "new_message":
+            world.queue.append(LlmResponse(text="Answer.", finish_reason="stop"))
+            world.runtime.send(world.root(), "A new message.")
+        else:
+            world.root().thread().record([dict(_ROWS[action])])
+    except HarnessError as error:
+        return str(error.code)
+    return "recorded"
+
+
+def _resolution(phase: str, side: str, action: str) -> dict[str, Any]:
+    world = _Resolving()
+    world.queue.append(
+        LlmResponse(
+            text="",
+            finish_reason="tool_calls",
+            tool_calls=[LlmToolCall("c1", "echo", {"n": 1})],
+        )
+    )
+    parked = world.runtime.send(world.root(), "Go")
+    approval = parked.pending_approvals[0].id
+    record_approval(world.fresh().root(), approval, True)
+    acted: list[str] = []
+
+    def act() -> None:
+        if side == "same":
+            acted.append(_act(world, action, approval))
+            return
+        other = _Resolving()
+        other.directory = world.directory
+        other.fresh()
+        reached = threading.Event()
+        found: dict[str, str] = {}
+
+        def run() -> None:
+            found["acted"] = _act(other, action, approval)
+            reached.set()
+
+        worker = threading.Thread(target=run, daemon=True)
+        original = Session.lock
+
+        def lock(self: Session, *args: Any, **kwargs: Any) -> Any:
+            if threading.current_thread() is worker:
+                reached.set()  # it waits here, on the lock the resolver holds
+            return original(self, *args, **kwargs)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(Session, "lock", lock)
+            worker.start()
+            assert reached.wait(60)
+        if phase != "resolving":
+            worker.join(60)
+        acted.append("pending")
+        world.waiting = (worker, found)  # type: ignore[attr-defined]
+
+    if phase == "parked":
+        act()
+    world.text("Done.")
+    world.fresh()
+    if phase == "resolving":
+        world.during = act
+    world.runtime.send(world.root(), "")
+    if phase == "resolved":
+        act()
+    waiting = getattr(world, "waiting", None)
+    if waiting is not None:
+        waiting[0].join(60)
+        acted[-1] = waiting[1].get("acted", "hung")
+
+    rows = [entry.message for entry in world.fresh().root().thread().messages()]
+    outcomes = [
+        entry["result"]
+        for row in rows
+        if row.get("type") == "tool_result"
+        for entry in row["tool_results"]
+        if entry["tool_call_id"] == "c1"
+    ]
+    from prism_harness.thread_rows import superseded_approval_ids
+
+    return {
+        "acted": acted[0] if acted else "never",
+        "outcomes": outcomes,
+        "replaced": approval in superseded_approval_ids(rows),
+        "decided": approval_decisions(rows).get(approval),
+        "ran": world.ran_with,
+    }
+
+
+RESOLUTION_CELLS = [
+    (phase, side, action)
+    for phase in RESOLUTION_PHASES
+    for side in RESOLUTION_SIDES
+    for action in RESOLUTION_ACTIONS
+    if RESOLUTION_EXPECTED[(phase, side, action)] is not None
+]
+
+
+@pytest.mark.parametrize(("phase", "side", "action"), RESOLUTION_CELLS)
+def test_the_resolution_matrix(phase: str, side: str, action: str) -> None:
+    expected = RESOLUTION_EXPECTED[(phase, side, action)]
+    assert expected is not None
+    assert _resolution(phase, side, action) == expected
+
+
+def test_the_resolution_table_covers_every_cell() -> None:
+    for phase in RESOLUTION_PHASES:
+        for side in RESOLUTION_SIDES:
+            for action in RESOLUTION_ACTIONS:
+                assert (phase, side, action) in RESOLUTION_EXPECTED

@@ -188,7 +188,7 @@ class Plans:
         plan = self.load(session)
         if not machine.is_live(plan):
             return plan
-        rows = [entry.message for entry in session.thread().messages()]
+        rows = session.thread().rows()
         pending = [] if superseding else pending_approval_calls(rows)
         decided = approval_decisions(rows)
         return self.mutate(
@@ -628,7 +628,7 @@ def _active_agent_step(plan: Plan | None) -> dict[str, Any] | None:
 
 
 def _rows(session: Session) -> list[dict[str, Any]]:
-    return [entry.message for entry in session.thread().messages()]
+    return session.thread().rows()
 
 
 def _paused_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:

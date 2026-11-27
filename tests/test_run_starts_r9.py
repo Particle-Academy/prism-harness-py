@@ -446,10 +446,11 @@ def test_every_reader_sees_a_start_in_its_window_as_absent(
 def test_a_resume_racing_the_task_row_write_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     world = World()
     dead_approval_child(world)
-    original = Thread.record
+    # Every write, the runtime's own in-run record included (G-387 round 14).
+    original = Thread._append
     found: list[str] = []
 
-    def hooked(self: Thread, messages: Any, run_id: str | None = None) -> Any:
+    def hooked(self: Thread, messages: Any, *args: Any) -> Any:
         if (
             not found
             and "::sub::worker" in self._key
@@ -460,10 +461,10 @@ def test_a_resume_racing_the_task_row_write_is_refused(monkeypatch: pytest.Monke
                 found.append("ran")
             except HarnessError as error:
                 found.append(error.code)
-        return original(self, messages, run_id)
+        return original(self, messages, *args)
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(Thread, "record", hooked)
+        patch.setattr(Thread, "_append", hooked)
         start(world, "direct", "New task.")
 
     assert found == ["child_binding_missing"]

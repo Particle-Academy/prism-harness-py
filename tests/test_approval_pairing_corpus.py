@@ -13,6 +13,7 @@ is what the thread recorded for each approval, read from the stored rows.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import socket
 from collections.abc import Iterator
@@ -110,6 +111,8 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
                     LlmToolCall(call["id"], call["name"], call["args"]) for call in row["calls"]
                 ],
             )
+        if steps[0] == 2 and row.get("supersede") == "new_message_failed":
+            raise RuntimeError("provider down")
         return LlmResponse(text="done", finish_reason="stop")
 
     harness = PrismHarness(
@@ -135,6 +138,11 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
         session.thread().record([{"type": "user", "content": "A later message."}], parked.run_id)
     elif supersede == "new_message":
         runtime.send(session, "Something else.")
+    elif supersede == "new_message_failed":
+        # G-404 (0.3.0): the new message's turn fails at the provider; its
+        # denials and its row are one write before the request, so they stand.
+        with contextlib.suppress(RuntimeError):
+            runtime.send(session, "Something else.")
     # SEGMENT OWNERSHIP (0.2.0, G-387 round 13b): a later step a host records
     # after the park, each echo call asking its own approval
     # (``apr_later_<k>``, k counting the step's echo calls), then ONE result

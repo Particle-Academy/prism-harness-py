@@ -178,14 +178,15 @@ def test_a_host_row_carrying_the_steps_own_run_id_supersedes_it(kind: str, step:
 
 @pytest.mark.parametrize(("run", "supersedes"), [("r0", False), ("r1", False), ("r2", True)])
 def test_the_runtime_own_row_is_inside_only_in_an_owning_run(run: str, supersedes: bool) -> None:
-    """The runtime's own recording (record_in_run) is inside when its run owns
-    the step (it recorded the step, r0, or one of its results, r1)."""
-    from prism_harness.thread import record_in_run
+    """The runtime's own recording (the private _record_in_run) is inside
+    when its run owns the step (it recorded the step, r0, or one of its
+    results, r1)."""
+    from prism_harness.thread import _record_in_run
 
     world = Recording()
     session = _stored_step(world, [("apr_a", "a"), ("apr_b", "b")], "a")
 
-    record_in_run(session.thread(), [{"type": "user", "content": "Later."}], run)
+    _record_in_run(session.thread(), [{"type": "user", "content": "Later."}], run)
 
     assert marks(world.root()) == ([{"approval_ids": ["apr_b"]}] if supersedes else [])
 

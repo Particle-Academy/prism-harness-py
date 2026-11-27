@@ -255,6 +255,25 @@
   runs at most once whatever another writer stored. The earlier step's calls
   keep their one "replaced" denial. Pinned by seam tests and the approval
   pairing property test.
+- A new message denies the paused step's approved calls that have not run
+  yet, even when that turn then fails: the denials and the message's row are
+  one write. That write waits on the session lock a resume holds, so a new
+  message sent while a resume runs an approved call sees that call's result
+  instead of denying it. A resume claims the step on the thread while it runs
+  the step's approved calls, and until its answer is written the thread
+  records no other row: `Thread.record()` raises `session_locked` with nothing
+  written. Every gated call ends with exactly one outcome, and a decision on a
+  replaced step is refused at every moment, including straight after its
+  denial.
+- The history sent to the model keeps each call's own result when two calls
+  of one step share an id: a later row replaces only the result of the same
+  call (same id, tool name and arguments). Each result is sent once, in its
+  own step's place, even when another row sits between the rows holding it.
+- A `harness_replaced_step` position written by the 0.5.x line is read as the
+  row's thread position, so a thread whose positions do not start at 1 still
+  reads its replaced step. New rows are numbered after the highest position.
+- The runtime's own in-run recording is private and scoped to the one record
+  call it makes; nothing else recorded meanwhile counts as inside the run.
 
 ### Parity
 

@@ -142,8 +142,14 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     calls a stopped step did run, the decisions, and the results written when
     the run resumes. Rows are never rewritten, so all of them stay stored; shown
     to a provider separately, a tool output would go twice. Folded, a result is
-    keyed by its tool call id and a decision by its approval id, and a later one
-    replaces an earlier one in the earlier one's position.
+    keyed by its tool call id, tool name and arguments (never the id alone; see
+    :func:`_fold`) and a decision by its approval id, and a later one replaces
+    an earlier one in the earlier one's position.
+
+    And each result is shown ONCE, in its own step's segment (G-387 round 14):
+    a tool result row that is not next to the earlier ones (a host's row sits
+    between them) adds no copy of a result or a decision that segment has
+    already shown (see :func:`_once`).
     """
     view: list[dict[str, Any]] = []
 
@@ -158,7 +164,46 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         else:
             view.append(normalised)
 
-    return view
+    return _once(view)
+
+
+def _once(view: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The folded view with each result shown once per segment (G-387 round
+    14). A segment is the rows after an assistant row with tool calls, up to
+    the next one. A tool result row there drops each result the segment has
+    already shown (the same call id, tool name and arguments, its n-th such
+    result of the row against the n shown so far) and each decision for an
+    approval id already shown; a row left with neither is dropped. The
+    resolution row restates the results its step already had, so with a
+    host's row between them a provider would otherwise get one tool output
+    twice, which some providers refuse."""
+    out: list[dict[str, Any]] = []
+    shown: dict[tuple[str, str, str], int] = {}
+    decided: set[str] = set()
+    for row in view:
+        if row["type"] == "assistant" and row["tool_calls"]:
+            shown, decided = {}, set()
+        if row["type"] != "tool_result":
+            out.append(row)
+            continue
+        seen: dict[tuple[str, str, str], int] = {}
+        results: list[dict[str, Any]] = []
+        for entry in row["tool_results"]:
+            same = (entry["tool_call_id"], entry["tool_name"], _canonical(entry["args"]))
+            seen[same] = seen.get(same, 0) + 1
+            if seen[same] > shown.get(same, 0):
+                results.append(entry)
+        decisions = [d for d in row["tool_approval_responses"] if d["approval_id"] not in decided]
+        for same, count in seen.items():
+            shown[same] = max(shown.get(same, 0), count)
+        decided.update(d["approval_id"] for d in row["tool_approval_responses"])
+        if len(results) == len(row["tool_results"]) and len(decisions) == len(
+            row["tool_approval_responses"]
+        ):
+            out.append(row)
+        elif results or decisions:
+            out.append(tool_result_row(results, decisions))
+    return out
 
 
 def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
@@ -223,12 +268,14 @@ def pending_approval_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
 
     Read from the stored rows: the step :func:`requested_step` selects (a
     user turn, or an assistant step that asked nothing, ends the scope), less
-    every id answered after it. An id answered once is no longer pending.
+    every id answered after it. An id answered once is no longer pending, and
+    neither is one a harness mark ended or replaced (G-387 round 14): a
+    replaced step is never answerable, whatever row follows its denial.
     """
     index = requested_step(rows)
     if index is None:
         return []
-    answered: set[str] = set()
+    answered: set[str] = ended_approval_ids(rows) | superseded_approval_ids(rows)
     for row in rows[index + 1 :]:
         if row.get("type") == "tool_result":
             for response in _dicts(row.get("tool_approval_responses")):
@@ -253,6 +300,8 @@ def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     index = requested_step(rows)
     if index is None:
         return []
+    # Ended or replaced (a harness mark): never acted on (G-387 round 14).
+    closed = ended_approval_ids(rows) | superseded_approval_ids(rows)
     decided: set[str] = set()
     for row in rows[index + 1 :]:
         kind = row.get("type")
@@ -272,6 +321,7 @@ def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
         if (
             isinstance(approval_id, str)
             and approval_id in decided
+            and approval_id not in closed
             and (call is None or call not in done)
         ):
             found.append(approval_id)
@@ -571,9 +621,10 @@ def step_superseded(
     )
 
 
-def replaced_step_row(at: int, calls: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """The row answering ``calls`` of the earlier step at index ``at`` with
-    one denial each, in the 0.5.x line's shape."""
+def replaced_step_row(position: int, calls: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The row answering ``calls`` of the earlier step at thread POSITION
+    ``position`` (its ``entry.position``, never a list index) with one denial
+    each, in the 0.5.x line's shape."""
     row = tool_result_row(
         [
             {
@@ -587,7 +638,7 @@ def replaced_step_row(at: int, calls: Sequence[Mapping[str, Any]]) -> dict[str, 
             for call in calls
         ]
     )
-    row[REPLACED_STEP] = {"position": at + 1}
+    row[REPLACED_STEP] = {"position": position}
     return row
 
 
@@ -809,7 +860,9 @@ def step_requests(
     """:func:`paired_requests` for the stored assistant row ``rows[index]``,
     knowing which of its calls the step ran at once: the ones the tool result
     row written right after it answers, before any decision (G-387 round 13).
-    A request is never paired with an ungated call that shares its id."""
+    A request is never paired with an ungated call that shares its id. A row
+    carrying any harness mark (a start's ended row, a superseded or a 0.5.x
+    replaced-step denial) is a denial, never calls the step ran (round 14)."""
     assistant = rows[index]
     following = rows[index + 1] if index + 1 < len(rows) else None
     ran: set[int] = set()
@@ -818,7 +871,7 @@ def step_requests(
         and belongs_to(following, index)
         and following.get("type") == "tool_result"
         and not _dicts(following.get("tool_approval_responses"))
-        and ENDED_BY_START not in following
+        and not any(mark in following for mark in (ENDED_BY_START, SUPERSEDED, REPLACED_STEP))
     ):
         ran = set(call_results(_dicts(assistant.get("tool_calls")), [following]))
     return paired_requests(assistant, ran)
@@ -985,16 +1038,35 @@ def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, 
 
 
 def _fold(earlier: Mapping[str, Any], later: Mapping[str, Any]) -> dict[str, Any]:
-    results: dict[str, dict[str, Any]] = {}
+    """Two consecutive tool result rows as one (G-403).
+
+    A later row's result for the SAME call replaces an earlier one, in the
+    earlier one's position. The same call is the same call id, tool name and
+    arguments, the n-th such result of a row replacing the n-th of the earlier
+    one, never the call id alone: a provider may give two calls of one step the
+    same id, and keyed by id one call's result would replace the other's.
+    PHP main's ``ToolResultRuns`` (prism-harness#141) and the 0.5.x line
+    (prism-harness-py#75) fold the same way.
+    """
+    results: dict[tuple[str, str, str, int], dict[str, Any]] = {}
     decisions: dict[str, dict[str, Any]] = {}
 
-    for entry in [*earlier["tool_results"], *later["tool_results"]]:
-        results[entry["tool_call_id"]] = entry
+    for row in (earlier, later):
+        seen: dict[tuple[str, str, str], int] = {}
+        for entry in row["tool_results"]:
+            same = (entry["tool_call_id"], entry["tool_name"], _canonical(entry["args"]))
+            seen[same] = seen.get(same, 0) + 1
+            results[(same[0], same[1], same[2], seen[same])] = entry
 
     for decision in [*earlier["tool_approval_responses"], *later["tool_approval_responses"]]:
         decisions[decision["approval_id"]] = decision
 
     return tool_result_row(list(results.values()), list(decisions.values()))
+
+
+def _canonical(value: Any) -> str:
+    """The arguments as one canonical string: sorted keys, no whitespace."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def _decision(value: Mapping[str, Any]) -> dict[str, Any]:

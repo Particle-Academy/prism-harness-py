@@ -1,7 +1,7 @@
 {
   "suite": "harness-approval-pairing",
   "schema_version": 1,
-  "corpus_version": "0.2.0",
+  "corpus_version": "0.3.0",
   "generated_by": "Hand-written expectations (G-392), written before any language ran. Each language's runner drives its real runtime offline with a fake model and asserts the outcome equals `expected`; `result` records those measured outcomes.",
   "pins_note": "Whether each approval decision reaches exactly the call it was issued for. Tools: `echo` (gated by mode, integer arg `n`) and `free` (ungated). The fake model's first reply is the row's `calls` in order; every later reply is the text `done`. Each round decides the listed approvals, by index into the parked step's pending approvals in issue order, as one batch where the language has one, then resumes once with an empty prompt; a decision the harness refuses is swallowed and the row continues. Recorded: `approvals` (how many approvals the first step issued), `free` (times the ungated tool ran), `ran` (the sorted `n` of every echo that ran) and (0.2.0) `decided`: the decision the thread RECORDED for each approval the first step issued, in issue order, the first answer or null when none was recorded. On a step whose call ids repeat, every recorded decision is a denial whatever was decided. Rows with `supersede` (0.2.0, DECISION B) first write a row that supersedes the parked step (`assistant_tool_step`, `assistant_text`, `user`, recorded by a host, or `new_message` sent through the harness), then run the rounds, and also record `outcomes`: the first result each call of the first step ended with, in call order, or null. Rows with `later` (0.2.0, SEGMENT OWNERSHIP) record, after the park, a later step with the calls `later.calls` (each `echo` call asking an approval `apr_later_<k>`, k counting that step's echo calls, naming its call id), then ONE result row `later.result` (`id`, `name`, `args`, `result`, plus the approvals of `apr_later_<k>` for each k in `approved`); then `later.rounds` (indexes into the later step's approvals), then the rounds, then `later.resumes` empty-prompt resumes. Every outcome column is read BY SEGMENT: a result counts only for the step whose segment it sits in (the rows after that step and before the next assistant row with tool calls), matched by exact arguments, then id and tool name, then id. Such rows record `outcomes` (the first step's calls), `later_outcomes` (the later step's calls) and `refusals` (each of `later.rounds` then `rounds`).",
   "cases": [
@@ -1859,6 +1859,108 @@
           ],
           "later_outcomes": [
             "ok"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0023",
+      "title": "a new message whose turn then fails still supersedes the parked step",
+      "since": "0.3.0",
+      "notes": "G-404 (G-387 round 14). The session is sent the new message `Something else.` after the park, and the provider FAILS that turn's request (the runner's fake throws on it; the send raises and is swallowed). The new message and the replaced denials of the step's open calls are recorded in ONE write before the turn is sent, so the failed turn still leaves the step superseded: each gated call has exactly ONE result, `Tool call was not run because a later step replaced it`, and the message is recorded. The round then approves both calls: refused with `approval_not_pending`, all or nothing, and the run is resumed once anyway. Writing the denials and the message in two writes left the denials alone after the failure, the step read as parked, and the decision was accepted.",
+      "supersede": "new_message_failed",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        },
+        {
+          "id": "c2",
+          "name": "echo",
+          "args": {
+            "n": 2
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ],
+          [
+            1,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 2,
+        "free": 0,
+        "ran": [],
+        "decided": [
+          null,
+          null
+        ],
+        "outcomes": [
+          "Tool call was not run because a later step replaced it",
+          "Tool call was not run because a later step replaced it"
+        ],
+        "refusals": [
+          "approval_not_pending"
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
           ],
           "refusals": [
             "approval_not_pending"
