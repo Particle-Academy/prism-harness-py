@@ -534,7 +534,8 @@ without one. Each step's results are sent directly after it, oldest first,
 past any user, assistant text, system or other row written while its calls
 ran. There each result answers one call of the step (its own call first: id,
 tool name and arguments; then id and tool name; then id) and is sent with
-that call's ids; one that answers no call is not sent. So each call is
+that call's ids; one that answers no call is not sent. Of two results for
+one call the first stands, the one every reader counts. So each call is
 answered once, directly after its step, as every provider requires. A call
 whose start the denial that stands refused is answered "Not run: this call
 was denied before it started.". On a step a host recorded, a call that
@@ -548,7 +549,9 @@ model step: it raises `HarnessError` coded `run_not_permitted`
 waiting. The same holds for a step parked while a step's own calls ran, and
 for a row recorded under the running turn's own run id: a run id never says a
 row is the harness's. A run that parks reports only the approvals still
-pending when it returns. A tool that records a decision on its own session while it runs
+pending when it returns; when none is (a row replaced its step meanwhile), it
+is not awaiting approval: `finish_reason` and `stopped_because` are
+`replaced`, or `parked_elsewhere` when another step's approvals are pending. A tool that records a decision on its own session while it runs
 waits at most the agent's `lock_wait` and is refused with a fixed text; no
 lock error text names a session, a thread, a participant or a session name.
 

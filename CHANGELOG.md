@@ -11,6 +11,12 @@
   call first), is sent with that call's ids, and one that answers no call is
   not sent, so every request a provider is sent answers each call once, in
   that step's own result run (G-387 round 17).
+- Of two results for one call, the first stands in what a provider is sent,
+  the one every outcome reader counts; a later one is left out.
+- A turn that parked but none of whose approvals is still pending when it
+  returns (a row replaced its step meanwhile) is not awaiting approval: its
+  `finish_reason` and `stopped_because` are `replaced` (or `parked_elsewhere`
+  when another step's approvals are pending), with no pending approvals.
 - A call whose start the standing denial refused is answered "Not run: this
   call was denied before it started.".
 - A step with no stored offer the harness wrote (a host's step, an older
