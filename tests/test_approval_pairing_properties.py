@@ -1253,7 +1253,11 @@ def check(case: Case) -> list[str]:
         session = a_session(directory)
         if case.ungated_concurrent is not None:
             row = inserted_row(replace(case, insert=Insert(case.ungated_concurrent, "during", 0)))
-            ungated_during.append(lambda: session.thread().record([dict(row)]))
+
+            def record_row() -> None:
+                session.thread().record([dict(row)])
+
+            ungated_during.append(record_row)
         broken = _check(case, session, runtime, ran, expected, during)
     return broken + replayed_twice(requests) + sent_unanswered(requests)
 

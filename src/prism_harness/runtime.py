@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import math
@@ -1737,7 +1738,9 @@ class AgentRuntime:
                     # honest outcome if that write can be made; else the
                     # resolution row gives it (see the resolver).
                     _quietly(
-                        lambda: self._not_started(thread, run_id, step_position, calls, batch)
+                        functools.partial(
+                            self._not_started, thread, run_id, step_position, calls, batch
+                        )
                     )
                     raise
             else:
@@ -2187,7 +2190,9 @@ class AgentRuntime:
                 if standing is not None:
                     reason = standing.get("reason")
                     denied.append(
-                        reason if isinstance(reason, str) and reason else "User denied tool execution"
+                        reason
+                        if isinstance(reason, str) and reason
+                        else "User denied tool execution"
                     )
                 return None
             started.append(True)

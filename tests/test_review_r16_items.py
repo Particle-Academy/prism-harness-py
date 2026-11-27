@@ -138,7 +138,12 @@ def _concurrent(world: Both, action: str) -> None:
         world.queue.insert(0, world.queue.pop())  # the nested send's model step
         world.runtime.send(world.root(), "Inner message.")
         return
-    rows = {"user": [USER], "text": [TEXT], "user_text": [USER, TEXT], "system": [SYSTEM]}
+    rows: dict[str, list[dict[str, Any]]] = {
+        "user": [USER],
+        "text": [TEXT],
+        "user_text": [USER, TEXT],
+        "system": [SYSTEM],
+    }
     world.root().thread().record([dict(row) for row in rows[action]])
 
 
@@ -457,7 +462,9 @@ def _failing_started_write(monkeypatch: pytest.MonkeyPatch, writes: int = 1) -> 
     def put(self: FileSessionStore, key: str, value: Any, *args: Any, **kwargs: Any) -> Any:
         if state["left"] and key.endswith(":thread") and isinstance(value, dict):
             last = (value.get("messages") or [{}])[-1].get("message", {})
-            started = isinstance(last.get(STARTED), dict) and last[STARTED].get("approval_id") is None
+            started = (
+                isinstance(last.get(STARTED), dict) and last[STARTED].get("approval_id") is None
+            )
             if started or state["failing"]:
                 state["left"] -= 1
                 state["failing"] = True
