@@ -777,8 +777,11 @@ class AgentRuntime:
                     )
                     resolved.append(tool_result_entry(cleared, _approval_expired(call.name)))
                 elif decision is not None and decision["approved"]:
-                    called.append(call.name)
-                    resolved.append(self._run_approved(bounded, call))
+                    entry, ran = self._run_approved(bounded, call)
+                    if ran:
+                        # Only a call that was invoked is reported as called.
+                        called.append(call.name)
+                    resolved.append(entry)
                 elif decision is None:
                     resolved.append(tool_result_entry(call, "No approval response provided"))
                 else:
@@ -871,8 +874,11 @@ class AgentRuntime:
         )
 
     @classmethod
-    def _run_approved(cls, offered: Sequence[HarnessTool], call: ToolCallInput) -> dict[str, Any]:
-        """Run a call a person approved, or record why it could not run.
+    def _run_approved(
+        cls, offered: Sequence[HarnessTool], call: ToolCallInput
+    ) -> tuple[dict[str, Any], bool]:
+        """Run a call a person approved, or record why it could not run, and
+        say whether it was invoked.
 
         Recorded rather than raised. Resolution runs at the start of every
         send(), so a call that raises here, because its tool is no longer
@@ -881,14 +887,20 @@ class AgentRuntime:
         stands, but the call does not run.
         """
         if not any(tool.name == call.name for tool in offered):
-            return tool_result_entry(call, f"Not run: {call.name} is not available to this run.")
+            return (
+                tool_result_entry(call, f"Not run: {call.name} is not available to this run."),
+                False,
+            )
 
         try:
-            return cls._invoke(offered, call)
+            return cls._invoke(offered, call), True
         except HarnessError as error:
             if error.code == "call_not_authorized":
-                return tool_result_entry(
-                    call, f"Not run: this call to {call.name} is not authorized."
+                return (
+                    tool_result_entry(
+                        call, f"Not run: this call to {call.name} is not authorized."
+                    ),
+                    False,
                 )
             raise
 
