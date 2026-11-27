@@ -3,8 +3,9 @@
 The store fails once, while the resume records the results of the approved
 calls it ran. The resume fails loudly. No later resume runs the call again:
 before it runs, the harness records that the call was started, and a call
-recorded as started that has no result gets the one outcome "Tool call was
-interrupted, it may have run". Entered at the public seam; the model is
+recorded as started that has no result is answered "Tool call was
+interrupted, it may have run" in the history sent to the model, and that
+answer is never stored. Entered at the public seam; the model is
 scripted.
 """
 
@@ -15,7 +16,7 @@ from typing import Any
 import pytest
 from test_runtime import a_session, guarded_runtime, once
 
-from prism_harness import LlmToolCall, Session, record_approval
+from prism_harness import LlmRequest, LlmToolCall, Session, record_approval
 from prism_harness.thread import Thread
 
 STARTED = "Tool call was interrupted, it may have run"
@@ -31,13 +32,27 @@ def results(session: Session, value: str) -> list[str]:
     ]
 
 
+def replayed(requests: list[LlmRequest], value: str) -> list[list[str]]:
+    return [
+        [
+            e["result"]
+            for m in request.messages
+            if m["type"] == "tool_result"
+            for e in m["tool_results"]
+            if e["args"].get("value") == value
+        ]
+        for request in requests
+    ]
+
+
 @pytest.mark.parametrize("resumes", [1, 3])
 def test_a_call_whose_result_write_failed_is_never_run_again(
     resumes: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     session = a_session("guarded")
     counts: dict[str, int] = {}
-    runtime = guarded_runtime(once([LlmToolCall("p", "echo", {"value": "P"})]), counts)
+    requests: list[LlmRequest] = []
+    runtime = guarded_runtime(once([LlmToolCall("p", "echo", {"value": "P"})], requests), counts)
     approval = runtime.send(session, "go").pending_approvals[0].id
     record_approval(session, approval, True)
 
@@ -62,7 +77,9 @@ def test_a_call_whose_result_write_failed_is_never_run_again(
 
     assert failed == [True]
     assert counts == {"echo": 1}
-    assert results(session, "P") == [STARTED]
+    assert results(session, "P") == []
+    assert replayed(requests[1:], "P") == [[STARTED]] * len(requests[1:])
+    assert requests[1:]
 
 
 def test_a_started_call_in_a_replaced_step_reads_interrupted_not_replaced(
@@ -70,7 +87,8 @@ def test_a_started_call_in_a_replaced_step_reads_interrupted_not_replaced(
 ) -> None:
     session = a_session("guarded")
     counts: dict[str, int] = {}
-    runtime = guarded_runtime(once([LlmToolCall("p", "echo", {"value": "P"})]), counts)
+    requests: list[LlmRequest] = []
+    runtime = guarded_runtime(once([LlmToolCall("p", "echo", {"value": "P"})], requests), counts)
     approval = runtime.send(session, "go").pending_approvals[0].id
     record_approval(session, approval, True)
     native = Thread.record
@@ -92,4 +110,6 @@ def test_a_started_call_in_a_replaced_step_reads_interrupted_not_replaced(
     runtime.send(session, "")
 
     assert counts == {"echo": 1}
-    assert results(session, "P") == [STARTED]
+    assert results(session, "P") == []
+    assert replayed(requests[1:], "P") == [[STARTED]] * len(requests[1:])
+    assert requests[1:]
