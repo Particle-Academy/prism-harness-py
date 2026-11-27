@@ -364,6 +364,18 @@ with exactly one recorded outcome:
   the step it answers (`harness_answers_step`). A result counts only for that
   step, even when another step was recorded while a call ran, and a mark a host
   writes on its own row is ignored. Neither mark is sent to the model.
+- **A started call reads interrupted.** Just before an approved call runs, the
+  harness records that it started (`harness_started`). A started call with no
+  result, because the store failed after the tool ran or the process stopped,
+  reads `Tool call was interrupted, it may have run`. It is never run again,
+  and it may already have had its effect; a new approval is a new call.
+- **The decision is read again when the call starts.** If the decision that
+  stands for its approval is no longer an approve at that moment, the call does
+  not run and reads `Not run: this call is not the one that was approved, or it
+  is no longer open.`
+- **An empty send continues the turn's step count.** A resume counts the steps
+  the turn has taken since its user message, so a run that ended
+  `budget_exhausted` stays out of steps however many empty sends follow.
 
 ## Task lists
 
