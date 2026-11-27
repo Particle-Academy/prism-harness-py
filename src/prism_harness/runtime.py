@@ -50,6 +50,7 @@ from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     NOT_STARTED_RESULT,
     NOT_THE_APPROVED_CALL,
+    START_DENIED,
     REPEATED_CALL_ID,
     SUPERSEDED,
     SUPERSEDED_RESULT,
@@ -2158,9 +2159,9 @@ class AgentRuntime:
         thread ``position`` (G-387 round 15), in one write with the check
         that the call is still open (no outcome among the rows its step owns,
         not started already). None when it started; else, writing nothing,
-        the call's one outcome, which says why it must not run: the denial
-        that now stands (its reason, G-387 round 17), or
-        :data:`NOT_THE_APPROVED_CALL`."""
+        the call's one outcome, which says why it must not run:
+        :data:`START_DENIED` when the decision that stands is a denial
+        (G-387 round 17), else :data:`NOT_THE_APPROVED_CALL`."""
         started: list[bool] = []
         denied: list[str] = []
 
@@ -2188,12 +2189,7 @@ class AgentRuntime:
             standing = standing_decisions(rows).get(approval_id or "")
             if approval_id is not None and (standing is None or standing["approved"] is not True):
                 if standing is not None:
-                    reason = standing.get("reason")
-                    denied.append(
-                        reason
-                        if isinstance(reason, str) and reason
-                        else "User denied tool execution"
-                    )
+                    denied.append(START_DENIED)
                 return None
             started.append(True)
             return [started_row(call, approval_id or "", position)]

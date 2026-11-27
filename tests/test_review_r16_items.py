@@ -36,6 +36,7 @@ from prism_harness.events import ToolApprovalAsked
 from prism_harness.stores.file import FileSessionStore
 from prism_harness.thread_rows import (
     INTERRUPTED_RESULT,
+    START_DENIED,
     STARTED,
     SUPERSEDED_RESULT,
     acted_at,
@@ -595,8 +596,9 @@ def test_the_readers_never_read_a_stale_index_after_an_in_place_edit() -> None:
 
 def test_a_call_whose_start_a_standing_denial_refused_says_it_was_denied() -> None:
     """Item 5 (Py run21 I3): three approved calls; while c1 runs a host
-    stores a raw denial of c3. c3 never runs, and its one outcome is the
-    denial that stood (its reason), not "not the one that was approved"."""
+    stores a raw denial of c3. c3 never runs, and its one outcome says it was
+    denied before it started (the reference's text), not "not the one that
+    was approved"."""
     world = Hooked()
     _, approvals = park(
         world, ("c1", "echo", {"n": 1}), ("c2", "echo", {"n": 2}), ("c3", "echo", {"n": 3})
@@ -621,4 +623,4 @@ def test_a_call_whose_start_a_standing_denial_refused_says_it_was_denied() -> No
     world.text("Done.")
     world.fresh().runtime.send(world.root(), "")
     assert world.ran_with == [("echo", {"n": 1}), ("echo", {"n": 2})]
-    assert outcomes(world.root(), 3) == ["raw"]
+    assert outcomes(world.root(), 3) == [START_DENIED]
