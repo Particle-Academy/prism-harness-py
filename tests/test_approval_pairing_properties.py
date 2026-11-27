@@ -1824,6 +1824,12 @@ REGRESSION_SEEDS = (918, 930)
 #: earlier call. The oracle's counter credited it as a second outcome.
 COUNTER_SEEDS = (7064,)
 
+#: A seed the round-16 generator found (a RAW copy holding a new call, after
+#: a step of two identical calls): the 0.5.x replaced-step row main writes
+#: for the earlier step replayed in the later step's segment, under calls it
+#: does not answer. Pinned with every round-16 stream it draws.
+RAW_SEEDS = (958,)
+
 #: One seed per superseding kind recorded while an approved call runs
 #: (G-404, G-387 round 14): user, assistant_call, assistant_text.
 CONCURRENT_SEEDS = (950, 951, 978)
@@ -1840,6 +1846,13 @@ def test_a_supersede_while_the_approved_call_runs_obeys_the_rule(seed: int) -> N
 def test_the_seeds_that_broke_main_obey_the_rule(seed: int) -> None:
     case = generate(seed, extras=False)
     assert check(case) == [], case.describe()
+
+
+@pytest.mark.parametrize("seed", RAW_SEEDS)
+def test_the_seeds_the_raw_copies_found_obey_the_rule(seed: int) -> None:
+    case = generate(seed)
+    assert case.raw and case.forged is not None
+    assert safe_check(case) == [], case.describe()
 
 
 @pytest.mark.parametrize("seed", COUNTER_SEEDS)
