@@ -114,7 +114,7 @@ def test_a_row_between_the_park_and_the_decision_never_runs_a_same_id_call(
     kind: str, how: str
 ) -> None:
     world = Recording()
-    session, approvals = park(world, *SAME_ID)
+    _, approvals = park(world, *SAME_ID)
     insert(world.fresh().root(), kind)
 
     decide_all(world, world.fresh().root(), approvals, how)
@@ -180,7 +180,7 @@ def test_every_reader_selects_the_same_step(kind: str) -> None:
     """The decision checks, the guard, the resolver's decisions and the plan
     readers agree on the step: either the parked one, or none."""
     world = Recording()
-    session, approvals = park(world, *SAME_ID)
+    _, approvals = park(world, *SAME_ID)
     insert(world.fresh().root(), kind)
     stored = rows(world.fresh().root())
     step = requested_step(stored)
@@ -203,3 +203,62 @@ def test_every_reader_selects_the_same_step(kind: str) -> None:
         assert {call["id"] for call in calls} <= set(approvals)
         assert all(call["name"] == "echo" for call in calls)
     assert approved_calls_awaiting_result(stored, "echo", args_digest({"n": 1})) == 0
+
+
+# -- G-399: an approved call runs exactly once over repeated resumes ----------------
+
+#: Rows that are neither a user nor an assistant row: they end no step.
+TRANSPARENT = {
+    "system": INSERTED["system"],
+    "tool": {
+        "type": "tool_result",
+        "tool_results": [
+            {
+                "tool_call_id": "elsewhere",
+                "tool_name": "lookup",
+                "args": {"n": 0},
+                "result": "elsewhere",
+                "tool_call_result_id": None,
+                "artifacts": [],
+            }
+        ],
+        "tool_approval_responses": [],
+    },
+    "decision_row": {
+        "type": "tool_result",
+        "tool_results": [],
+        "tool_approval_responses": [],
+    },
+}
+
+
+@pytest.mark.parametrize("where", ["before_the_resume", "after_the_resume", "both"])
+@pytest.mark.parametrize("kind", sorted(TRANSPARENT))
+def test_an_approved_call_runs_exactly_once_over_repeated_resumes(kind: str, where: str) -> None:
+    world = Recording()
+    _, approvals = park(world, ("a", "echo", {"n": 1}))
+    record_approval(world.fresh().root(), approvals[0], True)
+
+    def put() -> None:
+        world.fresh().root().thread().record([dict(TRANSPARENT[kind])])
+
+    if where in ("before_the_resume", "both"):
+        put()
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+    for _ in range(3):
+        if where in ("after_the_resume", "both"):
+            put()
+        world.text("Again.")
+        world.fresh().runtime.send(world.root(), "")
+
+    assert world.ran_with == [("echo", {"n": 1})]
+    # And it has ONE outcome: no later resume answers it again.
+    answered = {
+        entry["result"]
+        for row in rows(world.root())
+        if row.get("type") == "tool_result"
+        for entry in row["tool_results"]
+        if entry["tool_call_id"] == "a"
+    }
+    assert answered == {"echo:1"}

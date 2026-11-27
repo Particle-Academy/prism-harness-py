@@ -64,6 +64,7 @@ from prism_harness import (
     ToolRegistry,
     record_approval,
 )
+from prism_harness.thread_rows import pending_approval_ids
 
 REPEATED = "Tool call was not run because another call in this step has the same id"
 NO_DECISION = "No approval response provided"
@@ -142,6 +143,9 @@ class Case:
     resumes: tuple[str, ...] = ("text", "text")
     #: The shape of the first send (live only).
     first: str = "text"
+    #: A row recorded between the park and the decisions (G-397): none, or an
+    #: assistant, user, system or tool row (see ``INSERTED``).
+    inserted: str = "none"
 
     def describe(self) -> str:
         return json.dumps(
@@ -149,6 +153,7 @@ class Case:
                 "seed": self.seed,
                 "path": self.path,
                 "first": self.first,
+                **({"inserted": self.inserted} if self.inserted != "none" else {}),
                 "resumes": list(self.resumes),
                 "calls": [
                     {
@@ -179,6 +184,48 @@ class Case:
                 "decision_order": list(self.decision_order),
             }
         )
+
+
+#: The rows G-397 records between the park and the decisions (``Thread.record``
+#: is public). An assistant row or a user row ends the step a decision may
+#: apply to: every decision after it is refused, and the resume closes the
+#: step's calls as undecided. A system row, or a tool result for a call that is
+#: not in the step, changes nothing.
+INSERTED: dict[str, dict[str, Any]] = {
+    "assistant": {
+        "type": "assistant",
+        "content": "An aside.",
+        "tool_calls": [],
+        "additional_content": {},
+        "tool_approval_requests": [],
+    },
+    "user": {"type": "user", "content": "Something else."},
+    "system": {"type": "system", "content": "A note."},
+    "tool": {
+        "type": "tool_result",
+        "tool_results": [
+            {
+                "tool_call_id": "elsewhere",
+                "tool_name": GATED,
+                "args": {"token": "elsewhere"},
+                "result": "elsewhere",
+                "tool_call_result_id": None,
+                "artifacts": [],
+            }
+        ],
+        "tool_approval_responses": [],
+    },
+}
+#: The insertions that end the step.
+ENDS_THE_STEP = ("assistant", "user")
+
+
+def an_insertion(seed: int) -> str:
+    """Drawn from a generator of its own, so every other draw of a seed, and
+    so every seed's case, is what it was before the insertion existed."""
+    return random.Random(f"g397:{seed}").choice(
+        ("none", "none", "assistant", "user", "system", "tool")
+    )
 
 
 def a_decision(rng: random.Random) -> tuple[str, str | None]:
@@ -238,6 +285,7 @@ def generate(seed: int) -> Case:
         # stops for a person is not a shape this release returns, so only
         # the resumes vary their shape.
         first="text",
+        inserted=an_insertion(seed),
     )
 
 
@@ -271,6 +319,10 @@ def oracle(case: Case) -> Expected:
             continue
         if repeated:
             expected.outcomes[call.token] = REPEATED
+            continue
+        if case.inserted in ENDS_THE_STEP:
+            # No decision applies once the step has ended (G-397).
+            expected.outcomes[call.token] = NO_DECISION
             continue
         if case.path == "live":
             decision, reason = call.decision, call.reason
@@ -395,6 +447,38 @@ def store_step(session: Session, case: Case) -> None:
     session.thread().record(rows)
 
 
+def insert_row(session: Session, case: Case, broken: list[str]) -> None:
+    """G-397: the case's row, recorded between the park and the decisions."""
+    if case.inserted == "none":
+        return
+    session.thread().record([json.loads(json.dumps(INSERTED[case.inserted]))])
+    if case.inserted in ENDS_THE_STEP and session.thread() is not None:
+        rows = [entry.message for entry in session.thread().messages()]
+        if pending_approval_ids(rows):
+            broken.append(f"G-397: approvals still pending after a {case.inserted} row")
+
+
+def a_decision_is_recorded(
+    session: Session,
+    case: Case,
+    approval: str,
+    approved: bool,
+    reason: str | None,
+    broken: list[str],
+) -> bool:
+    """Record one decision; after a row that ended the step it must be
+    refused (``approval_not_pending``), and nowhere else."""
+    try:
+        record_approval(session, approval, approved, reason)
+    except HarnessError as error:
+        if case.inserted in ENDS_THE_STEP and error.code == "approval_not_pending":
+            return False
+        raise
+    if case.inserted in ENDS_THE_STEP:
+        broken.append(f"G-397: a decision was recorded after a {case.inserted} row ended the step")
+    return True
+
+
 def outcomes_by_token(session: Session) -> dict[str, list[str]]:
     """Every stored result, by the token of the call it answers, as STORED (never
     the provider view, which folds results by call id). A resume row restates
@@ -469,24 +553,33 @@ def _check(
             broken.append(f"6: the first step reported tool_calls {first.tool_calls}")
         for call, p in zip(gated, pending, strict=True):
             approval_of[call.token] = p.id
+        insert_row(session, case, broken)
         for index in case.decision_order:
             call = gated[index]
             if call.decision == "none":
                 continue
             approval = approval_of[call.token]
             assert approval is not None
-            record_approval(session, approval, call.decision == "approve", call.reason)
-            decided[approval] = (call.decision, call.reason)
+            if a_decision_is_recorded(
+                session, case, approval, call.decision == "approve", call.reason, broken
+            ):
+                decided[approval] = (call.decision, call.reason)
     else:
         store_step(session, case)
+        insert_row(session, case, broken)
         for index in case.decision_order:
             request = case.requests[index]
             if request.decision == "none":
                 continue
-            record_approval(
-                session, request.approval_id, request.decision == "approve", request.reason
-            )
-            decided[request.approval_id] = (request.decision, request.reason)
+            if a_decision_is_recorded(
+                session,
+                case,
+                request.approval_id,
+                request.decision == "approve",
+                request.reason,
+                broken,
+            ):
+                decided[request.approval_id] = (request.decision, request.reason)
         for call in gated:
             own = [r.approval_id for r in case.requests if r.tool_call_id == call.id]
             approval_of[call.token] = own[0] if len(own) == 1 else None
@@ -522,6 +615,10 @@ def _check(
         broken.append(f"6: the run record says {run and run.get('tool_calls')}, ran {ran_now}")
 
     # 3. Nothing runs twice: resume again, decide everything late, resume again.
+    # G-399: a row that ends no step (system, tool) is recorded again between
+    # the resumes, so a result is never hidden from the next one.
+    if case.inserted not in ("none", *ENDS_THE_STEP):
+        insert_row(session, case, broken)
     after = len(ran)
     a_send(runtime, session, case.resumes[1], "")
     for approval in [a for a in approval_of.values() if a is not None] + [
@@ -640,6 +737,12 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
         for k in examined
     )
     assert any("structured" in k.resumes for k in examined)
+    # Every G-397 insertion, on both paths, with repeated ids and without.
+    for kind in INSERTED:
+        for path in ("live", "stored"):
+            assert any(k.inserted == kind and k.path == path for k in examined), (kind, path)
+        assert any(k.inserted == kind and e.repeated for k, e in zip(examined, expectations))
+        assert any(k.inserted == kind and not e.repeated for k, e in zip(examined, expectations))
     outcomes = {text for e in expectations for text in e.outcomes.values()}
     assert {REPEATED, NO_DECISION, DEFAULT_DENIAL} <= outcomes
 
