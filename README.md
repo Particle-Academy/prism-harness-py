@@ -321,13 +321,18 @@ What one run tree is:
   provisional until its task row is in the child's thread: every reader treats
   it as absent until then (read from the thread, never confirmed by another
   write), so a start that fails first leaves the child unbound, whether or not
-  its housekeeping undo lands. The task row ends every call still pending on
-  the child as not run; a runner start never acts on a recorded decision.
+  its housekeeping undo lands; its session mode reads as the one before it.
+  Absent never widens anything: until then the child still reads as in the
+  run tree and shared plan budget it was last confirmed in. The task row ends
+  every call still pending on the child as not run (read as ended, never as
+  approved); a runner start never acts on a recorded decision, and a decision
+  a person recorded that a resume could still act on refuses the start like
+  a pending approval does, so the host resumes it first.
   After that a stop only stops model steps. The
   start is narrowed from the ledger as the gate read it, so steps spent on a
   shared context after the read count against the child. Anything that raises
   around a child comes back as a framed `failed` result naming the exception's
-  class, never its message, and a child that stopped early is described by a
+  class (an identifier-shaped name only, never a path), never its message, and a child that stopped early is described by a
   fixed sentence per stop (`AgentResponse.stopped_code`), never by the host's
   cancel reason.
 - A decision is refused before anything is recorded only when its resume could

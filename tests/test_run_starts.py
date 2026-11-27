@@ -481,7 +481,11 @@ def test_a_resume_claiming_between_the_read_and_the_child_write_refuses_and_rele
     parked_child(world)
     approval = world.pending(world.child("worker"))[0]
     record_approval(world.child("worker"), approval, False)
-    world.fresh()
+    # The denial is resumed, so no decision waits on the child (a decided
+    # approval a resume could still act on refuses the start, G-387 round 10).
+    world.text("Noted.")
+    world.fresh().runtime.send(world.child("worker"), "")
+    requests = child_requests(world)
     original = Session.child_live_hold
     claimed: list[str] = []
 
@@ -499,7 +503,7 @@ def test_a_resume_claiming_between_the_read_and_the_child_write_refuses_and_rele
 
     assert "The [worker] subagent did not run: a turn on it is still running." in following
     assert claimed
-    assert child_requests(world) == 1
+    assert child_requests(world) == requests
     after = child_records(world)
     child_key = f"{world.child('worker').key()}:child"
     # Only the resume's own claim changed the child; the start wrote nothing.

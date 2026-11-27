@@ -102,18 +102,36 @@
   undo that puts the child's records and mode back after such a failure is
   housekeeping only, and its failure changes nothing a reader sees. The run a
   start begins is provisional the same way: until its task row, the child's
-  run state still reads as the run it is parked on, and the attempted run is
-  absent from its run history. Once the task is recorded, a later cancel or
-  time-out only stops its model steps.
+  run state still reads as the run it is parked on (or as no run, when that
+  run's state has expired: the attempt's outcome is written with its mark),
+  and the attempted run is absent from its run history. So is the session
+  mode it writes: `session.mode()` reads the mode from before the start until
+  the task row exists, and a mode the host sets afterwards reads as set.
+  Absent never widens anything: while a start is unconfirmed the child still
+  reads as in the run tree and shared plan budget it was last CONFIRMED in,
+  so a later start the host drives keeps them, and the child's turns stay
+  bounded by that tree and charged to that plan budget. Once the task is
+  recorded, a later cancel or time-out only stops its model steps.
 - A runner start acts on no decision recorded on the child, whenever it was
   recorded. Its task row ends every call still pending there, recorded as not
   run in the same write, so a re-delegation never runs a call a bare resume
-  would refuse, and no later turn acts on it either.
+  would refuse, and no later turn acts on it either. A call it ended reads as
+  ended, never as approved (a plan reading the thread sees no decision on
+  it), and the `ToolDenied` events for those calls are emitted only after the
+  task row recording them is durable.
+- A decision a person recorded that a resume could still act on (an approved
+  or denied call with no result yet, on a child whose approvals are
+  answerable) refuses a runner start exactly like a pending one
+  (`child_waiting`, `denied`, nothing written), at the start gate and again
+  under the child write's lock: a model cannot void a person's decision by
+  delegating. The host resumes the child to act on it.
 - A failed run's cleanup (undoing a start, failing the run, `RunFailed`, the
   plan and count bookkeeping) runs first and step by step, and an exception's
   attributes are read only guarded: a host exception that never ran
   `HarnessError`'s constructor, or whose `code` or `document` raises, is
-  named by its class and skips none of it. A read that raises refuses the start as `failed`, naming the
+  named by its class and skips none of it. A `BaseException` that is not an
+  `Exception` (host code stopping the process) still releases the start's and
+  the run's holds and marks the run failed, and propagates unchanged. A read that raises refuses the start as `failed`, naming the
   exception's class, with nothing written; the answerability read counts only
   its own answers (no saved binding, too deep) as unanswerable, and any other
   error refuses the start. A child stuck on an approval no decision could act
@@ -143,6 +161,11 @@
   a fixed description (`"HarnessError (model_step_failed): the run failed."`),
   never the exception's message: the harness has no content capture of its
   own, so text a provider, store, host or tool wrote is never kept or emitted.
+  A class is named only by an identifier-shaped name (ASCII letters, digits
+  and `_`): a class whose `__name__` was set to anything else (a path, a
+  dotted module path, text with spaces or line breaks) is named by its nearest
+  ancestor that has one, so no file path or line reaches a framed result, the
+  parent model, `RunFailed` or a run row.
   The exception itself still reaches the caller. A schema violation still
   records its code.
 - `RunBudget` refuses a `max_cost_usd` or `max_seconds` that is NaN, infinite

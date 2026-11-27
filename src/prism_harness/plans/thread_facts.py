@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from prism_harness.thread_rows import pending_approval_ids
+from prism_harness.thread_rows import ended_approval_ids, pending_approval_ids
 from prism_harness.tool_policy import args_digest
 
 __all__ = [
@@ -61,14 +61,17 @@ def pending_approval_calls(rows: Rows) -> list[dict[str, str]]:
 
 def approval_decisions(rows: Rows) -> dict[str, bool]:
     """Every recorded decision, by approval id: True when approved. The first
-    decision recorded for an id is the one that counts."""
+    decision recorded for an id is the one that counts. A call a runner start
+    ended as not run has no decision standing (G-387 round 10): it was never
+    acted on, and reads as ended, never as approved."""
+    ended = ended_approval_ids(rows)
     decided: dict[str, bool] = {}
     for row in rows:
         if row.get("type") != "tool_result":
             continue
         for response in _dicts(row.get("tool_approval_responses")):
             approval_id = response.get("approval_id")
-            if isinstance(approval_id, str):
+            if isinstance(approval_id, str) and approval_id not in ended:
                 decided.setdefault(approval_id, response.get("approved") is True)
     return decided
 

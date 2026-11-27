@@ -252,11 +252,13 @@ class Plans:
         except Exception as failure:  # noqa: BLE001 - the decision is recorded either way
             _report_quietly(failure)
 
-    def context(self, session: Session, prompt: str) -> str:
+    def context(self, session: Session, prompt: str, mode: str | None = None) -> str:
         """The plan context for the turn about to start. A turn with a new user
         message ends every pending approval, so the plan is reconciled as if
-        nothing were pending before it is rendered."""
-        if not self.enabled_for(session):
+        nothing were pending before it is rendered. ``mode`` is the mode the
+        run resolved (a runner start's is not the session's until its task
+        row exists)."""
+        if not self.enabled_for(session, mode):
             return ""
         try:
             plan = self.reconciled(session, superseding=prompt != "")

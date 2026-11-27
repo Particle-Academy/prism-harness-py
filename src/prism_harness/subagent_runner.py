@@ -317,7 +317,7 @@ def _framed(error: BaseException) -> tuple[str, str]:
         # Its agent's ceiling ran out while it ran: a gate on the tree, not
         # the child's failure, and only that agent stops.
         return "exhausted", CEILINGS[code]
-    return "failed", named(error, code) if code is not None else type(error).__name__
+    return "failed", named(error, code)
 
 
 def _refused(

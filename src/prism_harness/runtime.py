@@ -27,7 +27,7 @@ from prism_harness.events import (
     ToolAutoAllowed,
     ToolDenied,
 )
-from prism_harness.failures import failure_of, harness_code
+from prism_harness.failures import class_label, failure_of, harness_code
 from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.plans import budget as plan_budget
 from prism_harness.plans.refusal import PlanRefused
@@ -46,12 +46,14 @@ from prism_harness.subagents import (
 )
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
+    DELEGATION_ENDED,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
     carried_agent_spend,
+    decided_unresolved_ids,
     first_decisions,
     paused_approval_row,
     pending_approval_ids,
@@ -733,7 +735,10 @@ class AgentRuntime:
                     harness_agent=session.agent,
                 )
             )
-        except Exception:
+        except BaseException:
+            # Every exception, a BaseException included (G-387 round 10):
+            # releasing the start's holds does not depend on what was raised,
+            # and the exception still propagates.
             if started is not None:
                 # The run could not begin: the child is put back as it was,
                 # and the start's tree hold released. Housekeeping: the
@@ -747,7 +752,7 @@ class AgentRuntime:
             # The plan context (G-360), computed once per run and never stored:
             # a system prompt contribution, not a message. A turn with a new
             # user message reads the plan as if nothing were pending.
-            plan_context = self._plans.context(session, prompt)
+            plan_context = self._plans.context(session, prompt, mode.name)
             system_prompt = (
                 mode.system_prompt
                 if plan_context == ""
@@ -987,6 +992,18 @@ class AgentRuntime:
             _quietly(lambda: self._settle_child(session, run_id))
             _quietly(lambda: self._trees.finished(session, run_id))
             raise
+        except BaseException as error:
+            # Not an Exception (G-387 round 10): host code stopping the
+            # process. What does not depend on the exception still runs (the
+            # start's holds and the run's own holds released, the run marked
+            # failed by class), and it propagates unchanged.
+            if started is not None:
+                self._undo_start(session, member, run_id, started)
+            failure = _failure(error)
+            _quietly(lambda: session.fail_run(run_id, failure))
+            _quietly(lambda: self._settle_child(session, run_id))
+            _quietly(lambda: self._trees.finished(session, run_id))
+            raise
         finally:
             if turn_token is not None:
                 _TURN_RUN.reset(turn_token)
@@ -1030,7 +1047,7 @@ class AgentRuntime:
         first = _allowance(facts, False)
         now, ttl = self._plans.now(), self.lock_ttl(session)
         pending = "none"
-        if pending_approval_ids(stored):
+        if _awaiting(stored):
             pending = "answerable" if _decidable(session, stored) else "unanswerable"
         if self._plans._ledger_for(session, prompt, context, "runner", mode.name) is not None:
             # Only the plan's own step run under a runner context routes to a
@@ -1072,7 +1089,7 @@ class AgentRuntime:
             # gate's answerability rule, so an approval a person can answer,
             # parked since the gate read, refuses the start.
             rows = [entry.message for entry in session.thread().messages()]
-            if pending_approval_ids(rows) and _decidable(session, rows):
+            if _awaiting(rows) and _decidable(session, rows):
                 raise StartRefused("child_waiting", "denied")
 
         # (a) the tree hold: refused (nothing stored) when a race since the
@@ -1101,7 +1118,7 @@ class AgentRuntime:
             if harness_code(error) == CHILD_TURN_LIVE:
                 raise StartRefused("child_busy", "denied") from None
             raise
-        except Exception:
+        except BaseException:
             self._trees.release_start(session, member, run_id)
             raise
         return {
@@ -1879,7 +1896,15 @@ class AgentRuntime:
 
 #: What a call still pending on a child is answered with when a runner start
 #: gives the child a new task (G-387 round 9).
-_DELEGATION_ENDED = "Not run: the subagent was given a new task before this call was resumed."
+_DELEGATION_ENDED = DELEGATION_ENDED
+
+
+def _awaiting(rows: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether the session waits on a person's approval a resume would act
+    on: one still undecided, or one decided whose call has no result yet
+    (G-387 round 10). Either refuses a runner start while it is answerable,
+    so a delegation never voids a decision a person recorded."""
+    return bool(pending_approval_ids(rows)) or bool(decided_unresolved_ids(rows))
 
 
 def _text_of(error: BaseException) -> str:
@@ -1888,7 +1913,7 @@ def _text_of(error: BaseException) -> str:
     try:
         return str(error)
     except Exception:  # noqa: BLE001 - an unreadable message names its class
-        return type(error).__name__
+        return class_label(error)
 
 
 def _quietly(step: Callable[[], object]) -> None:
@@ -1916,7 +1941,7 @@ def _failure(error: BaseException) -> str:
     try:
         return failure_of(error)
     except Exception:  # noqa: BLE001 - never fails the cleanup it is part of
-        return f"{type(error).__name__}: the run failed."
+        return f"{class_label(error)}: the run failed."
 
 
 def _allowance(facts: Mapping[str, Any], forged: bool) -> dict[str, Any]:

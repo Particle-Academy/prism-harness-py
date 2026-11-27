@@ -178,6 +178,74 @@ def pending_approval_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     return []
 
 
+def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The approval ids the run paused at the transcript tail asked for that
+    a person has DECIDED and whose call has no result yet: decisions a
+    resume would still act on (G-387 round 10).
+
+    The same scope as :func:`pending_approval_ids`, newest first: a user
+    turn, or an assistant step that asked nothing, ends it.
+    """
+    decided: set[str] = set()
+    finished: set[str] = set()
+    for row in reversed(rows):
+        kind = row.get("type")
+        if kind == "tool_result":
+            for result in _dicts(row.get("tool_results")):
+                if isinstance(result.get("tool_call_id"), str):
+                    finished.add(result["tool_call_id"])
+            if "tool_results" not in row and isinstance(row.get("tool_call_id"), str):
+                finished.add(row["tool_call_id"])  # 0.1.0: one row per call
+            for response in _dicts(row.get("tool_approval_responses")):
+                if isinstance(response.get("approval_id"), str):
+                    decided.add(response["approval_id"])
+            continue
+        if kind == "tool_approval_response":
+            if isinstance(row.get("approval_id"), str):
+                decided.add(row["approval_id"])
+            continue
+        if kind == "user":
+            return []
+        if kind != "assistant":
+            continue
+        found: list[str] = []
+        for request in _dicts(row.get("tool_approval_requests")):
+            approval_id = request.get("approval_id")
+            if (
+                isinstance(approval_id, str)
+                and approval_id in decided
+                and request.get("tool_call_id") not in finished
+            ):
+                found.append(approval_id)
+        return list(dict.fromkeys(found))
+    return []
+
+
+def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
+    """The approval ids whose call a runner start ended, recorded as not run
+    (G-387 round 10): never approved, whatever decision was recorded."""
+    ended_calls = {
+        result["tool_call_id"]
+        for row in rows
+        if row.get("type") == "tool_result"
+        for result in _dicts(row.get("tool_results"))
+        if isinstance(result.get("tool_call_id"), str) and result.get("result") == DELEGATION_ENDED
+    }
+    return {
+        request["approval_id"]
+        for row in rows
+        if row.get("type") == "assistant"
+        for request in _dicts(row.get("tool_approval_requests"))
+        if isinstance(request.get("approval_id"), str)
+        and request.get("tool_call_id") in ended_calls
+    }
+
+
+#: What a call still pending on a child is answered with when a runner start
+#: gives the child a new task (G-387 round 9).
+DELEGATION_ENDED = "Not run: the subagent was given a new task before this call was resumed."
+
+
 def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], bool] | None:
     """Stored approval authority, separate from the provider replay view."""
     # Which decision counts is read from the stored rows, first one standing;

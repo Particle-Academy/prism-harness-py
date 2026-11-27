@@ -141,10 +141,10 @@ def fail_tools_for_the_child(monkeypatch: pytest.MonkeyPatch) -> None:
 def fail_plan_context_for_the_child(monkeypatch: pytest.MonkeyPatch) -> None:
     original = Plans.context
 
-    def failing(self: Plans, session: Session, prompt: str) -> str:
+    def failing(self: Plans, session: Session, prompt: str, *args: Any) -> str:
         if is_child(session):
             raise OSError("SECRET plan store down")
-        return original(self, session, prompt)
+        return original(self, session, prompt, *args)
 
     monkeypatch.setattr(Plans, "context", failing)
 
