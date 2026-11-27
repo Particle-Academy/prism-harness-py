@@ -14,7 +14,6 @@ is what the thread recorded for each approval, read from the stored rows.
 from __future__ import annotations
 
 import contextlib
-
 import json
 import socket
 from collections.abc import Iterator
