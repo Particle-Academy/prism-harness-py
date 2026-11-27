@@ -318,49 +318,6 @@ def step_answers(
     return entries, decisions
 
 
-def paired_results(
-    assistant: Mapping[str, Any], entries: Sequence[Mapping[str, Any]]
-) -> dict[int, dict[str, Any]]:
-    """Each stored result of one turn, by the index of the call it answers (G-392).
-
-    Paired by position, never through a map keyed by call id: a result takes
-    the first call, in call order, with its id and tool name and no result yet,
-    preferring one whose arguments match. So a result for an ungated call never
-    stands for a gated call that shares its id. An entry identical to one
-    already paired is the same result restated by a later row, and pairs with
-    nothing.
-
-    A result whose tool name matches no such call (written without one, or by
-    another writer) still ends the first unanswered call with its id, so a
-    finished call never reads as unanswered and can never run again. With a
-    repeated id the step runs none of its gated calls whichever call that is.
-    """
-    calls = _dicts(assistant.get("tool_calls"))
-    paired: dict[int, dict[str, Any]] = {}
-
-    for entry in entries:
-        if any(dict(entry) == done for done in paired.values()):
-            continue
-        candidates = [
-            i
-            for i, call in enumerate(calls)
-            if i not in paired
-            and _text(call.get("id")) == _text(entry.get("tool_call_id"))
-            and _text(call.get("name")) == _text(entry.get("tool_name"))
-        ]
-        exact = [i for i in candidates if calls[i].get("arguments") == entry.get("args")]
-        same_id = [
-            i
-            for i, call in enumerate(calls)
-            if i not in paired and _text(call.get("id")) == _text(entry.get("tool_call_id"))
-        ]
-        chosen = exact or candidates or same_id
-        if chosen:
-            paired[chosen[0]] = dict(entry)
-
-    return paired
-
-
 #: The result each gated call of an earlier parked step gets once a later
 #: step with tool calls follows it (G-392), identical in every language.
 REPLACED_BY_LATER_STEP = "Tool call was not run because a later step replaced it"
@@ -379,22 +336,14 @@ def is_replaced_row(row: Mapping[str, Any]) -> bool:
     return row.get("type") == "tool_result" and isinstance(row.get(REPLACED_STEP), dict)
 
 
-def replaced_steps(
+def _thread_steps(
     messages: Sequence[tuple[int, Mapping[str, Any]]],
-    needs_approval: Callable[[str], bool],
-) -> list[tuple[int, list[dict[str, Any]]]]:
-    """The gated calls with no result of their own of every SUPERSEDED
-    tool-calling step, by the thread position of the step's assistant row
-    (G-392, G-397).
-
-    A step is superseded once a user row or any assistant row (an answer in
-    text, or a later step with tool calls) is recorded after it. Only a step
-    that is not is resolved, so a decision for a superseded one never runs
-    anything, whenever it was made. Each such call gets one result saying a
-    later step replaced it, so no gated call is left without an outcome. A
-    step's results are the tool result rows after it up to the next step with
-    tool calls, and the rows written for it under ``harness_replaced_step``.
-    """
+) -> tuple[list[tuple[int, dict[str, Any], list[dict[str, Any]]]], int]:
+    """Every tool-calling step, by the thread position of its assistant row,
+    with the results stored in its SEGMENT (the tool result rows after it, up
+    to the next step with tool calls, and the rows written for it under
+    ``harness_replaced_step``), and how many steps from the first are
+    superseded (G-392, G-397, G-399)."""
     view: list[dict[str, Any]] = []
     steps: list[tuple[int, dict[str, Any], list[dict[str, Any]]]] = []
     superseded = 0
@@ -426,14 +375,132 @@ def replaced_steps(
         else:
             view.append(normalised)
 
+    return [
+        (position, assistant, [*entries, *written.get(position, [])])
+        for position, assistant, entries in steps
+    ], superseded
+
+
+def _paired(
+    steps: Sequence[tuple[int, dict[str, Any], list[dict[str, Any]]]],
+) -> list[dict[int, dict[str, Any]]]:
+    """Each stored result paired with the ONE call it answers, by step and
+    call index (G-392, G-397).
+
+    Paired by position, never through a map keyed by call id, so every gated
+    call ends with exactly one outcome:
+
+    1. a result ends the first call of its own step, in call order, with its
+       id, tool name and arguments and no result yet;
+    2. else the first such call of ANOTHER step: a call that already has its
+       own result anywhere is done, and never gets a replaced-step denial;
+    3. else, within its own step, the first unanswered call with its id and
+       tool name, and then with its id alone (written without a name, or by
+       another writer), so a finished call never reads as unanswered and can
+       never run again. It never ends another step's call.
+
+    An entry identical to one already paired is the same result restated by a
+    later row, and pairs with nothing.
+    """
+
+    def same(call: Mapping[str, Any], entry: Mapping[str, Any], exact: int) -> bool:
+        return (
+            _text(call.get("id")) == _text(entry.get("tool_call_id"))
+            and (exact < 1 or _text(call.get("name")) == _text(entry.get("tool_name")))
+            and (exact < 2 or call.get("arguments") == entry.get("args"))
+        )
+
+    calls = [_dicts(assistant.get("tool_calls")) for _, assistant, _ in steps]
+    paired: list[dict[int, dict[str, Any]]] = [{} for _ in steps]
+    left: list[list[dict[str, Any]]] = [[] for _ in steps]
+
+    def restated(entry: Mapping[str, Any]) -> bool:
+        return any(dict(entry) == done for results in paired for done in results.values())
+
+    def first(step: int, entry: Mapping[str, Any], exact: int) -> int | None:
+        return next(
+            (
+                i
+                for i, call in enumerate(calls[step])
+                if i not in paired[step] and same(call, entry, exact)
+            ),
+            None,
+        )
+
+    for step, (_, _, entries) in enumerate(steps):
+        for entry in entries:
+            if restated(entry):
+                continue
+            index = first(step, entry, 2)
+            if index is None:
+                left[step].append(dict(entry))
+            else:
+                paired[step][index] = dict(entry)
+
+    for step in range(len(steps)):
+        remaining: list[dict[str, Any]] = []
+        for entry in left[step]:
+            other = next(
+                (
+                    (other, index)
+                    for other in range(len(steps))
+                    if other != step
+                    for index in [first(other, entry, 2)]
+                    if index is not None
+                ),
+                None,
+            )
+            if other is None:
+                remaining.append(entry)
+            else:
+                paired[other[0]][other[1]] = entry
+        left[step] = remaining
+
+    for step in range(len(steps)):
+        for entry in left[step]:
+            if restated(entry):
+                continue
+            index = first(step, entry, 1)
+            if index is None:
+                index = first(step, entry, 0)
+            if index is not None:
+                paired[step][index] = entry
+
+    return paired
+
+
+def last_step_results(
+    messages: Sequence[tuple[int, Mapping[str, Any]]],
+) -> dict[int, dict[str, Any]]:
+    """The results of the last tool-calling step, by call index (G-392)."""
+    steps, _ = _thread_steps(messages)
+    return _paired(steps)[-1] if steps else {}
+
+
+def replaced_steps(
+    messages: Sequence[tuple[int, Mapping[str, Any]]],
+    needs_approval: Callable[[str], bool],
+) -> list[tuple[int, list[dict[str, Any]]]]:
+    """The gated calls with no result of their own of every SUPERSEDED
+    tool-calling step, by the thread position of the step's assistant row
+    (G-392, G-397).
+
+    A step is superseded once a user row or any assistant row (an answer in
+    text, or a later step with tool calls) is recorded after it. Only a step
+    that is not is resolved, so a decision for a superseded one never runs
+    anything, whenever it was made. Each such call gets one result saying a
+    later step replaced it, so no gated call is left without an outcome. A
+    call that has its own result anywhere gets none.
+    """
+    steps, superseded = _thread_steps(messages)
+    paired = _paired(steps)
     replaced: list[tuple[int, list[dict[str, Any]]]] = []
-    for position, assistant, entries in steps[:superseded]:
-        results = paired_results(assistant, [*entries, *written.get(position, [])])
+    for step, (position, assistant, _) in enumerate(steps[:superseded]):
         requested = {index for _, index in paired_requests(assistant) if index is not None}
         calls = [
             call
             for index, call in enumerate(assistant["tool_calls"])
-            if index not in results and (index in requested or needs_approval(call["name"]))
+            if index not in paired[step] and (index in requested or needs_approval(call["name"]))
         ]
         if calls:
             replaced.append((position, calls))

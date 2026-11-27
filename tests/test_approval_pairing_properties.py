@@ -171,6 +171,23 @@ class Insert:
 
 
 @dataclass(frozen=True)
+class Later:
+    """A LATER step with tool calls a host records after the park (G-392, G-397).
+
+    One call under ``later``, recorded at ``when``; beside an inserted row
+    recorded at the same moment, ``order`` says which comes first, so a forged
+    result lands in the later step's segment (``before_insert``) or in the
+    parked step's (``after_insert``).
+    """
+
+    when: str  # before_decision | after_decision
+    order: str  # before_insert | after_insert
+    gated: bool
+    #: The step call whose id the later call reuses, or None for its own id.
+    reuses: int | None
+
+
+@dataclass(frozen=True)
 class Case:
     seed: int
     path: str  # live | stored
@@ -186,6 +203,8 @@ class Case:
     first: str = "text"
     #: A row a host records while the approval is pending, or None.
     insert: Insert | None = None
+    #: A later step with tool calls a host records after the park, or None.
+    later: Later | None = None
     #: Stored only: an EARLIER parked step the case's step followed. Each of its
     #: gated calls is asked about under ``old_<token>`` and decided by its own
     #: ``decision``; none of them may ever run.
@@ -241,6 +260,18 @@ class Case:
                 ),
                 **(
                     {
+                        "later": {
+                            "when": self.later.when,
+                            "order": self.later.order,
+                            "tool": GATED if self.later.gated else UNGATED,
+                            "reuses": self.later.reuses,
+                        }
+                    }
+                    if self.later is not None
+                    else {}
+                ),
+                **(
+                    {
                         "earlier": [
                             {
                                 "id": c.id,
@@ -274,6 +305,37 @@ def insertion(seed: int, calls: list[Call]) -> Insert | None:
     when = rng.choice(("before_decision", "after_decision"))
     call = rng.choice(open_calls) if kind == "tool_result" else rng.randrange(len(calls))
     return Insert(kind, when, call)
+
+
+def later_step(seed: int, calls: list[Call], insert: Insert | None) -> Later | None:
+    """The later step, from a stream of its own (the other draws are unchanged)."""
+    rng = random.Random(seed ^ 0x392392)
+    if rng.random() >= 0.4:
+        return None
+    when = insert.when if insert is not None else rng.choice(("before_decision", "after_decision"))
+    return Later(
+        when=when,
+        order=rng.choice(("before_insert", "after_insert")),
+        gated=rng.random() < 0.5,
+        reuses=rng.randrange(len(calls)) if rng.random() < 0.6 else None,
+    )
+
+
+def later_row(case: Case) -> dict[str, Any]:
+    assert case.later is not None
+    reuses = case.later.reuses
+    return {
+        "type": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": case.calls[reuses].id if reuses is not None else "later",
+                "name": GATED if case.later.gated else UNGATED,
+                "arguments": {"token": "later"},
+            }
+        ],
+        "tool_approval_requests": [],
+    }
 
 
 def inserted_row(case: Case) -> dict[str, Any]:
@@ -384,7 +446,8 @@ def generate(seed: int) -> Case:
         decision_order=tuple(decidable),
         resumes=resumes,
         first=rng.choice(("text", "structured")),
-        insert=insertion(seed, calls),
+        insert=(insert := insertion(seed, calls)),
+        later=later_step(seed, calls, insert),
         earlier=tuple(earlier),
         spent=path == "live" and rng.random() < 0.8,
     )
@@ -420,7 +483,18 @@ def oracle(case: Case) -> Expected:
     # open gated call gets one replaced-step denial, and nothing runs, whatever
     # was decided before or after (G-397). A forged result is its call's only
     # outcome. Any other row changes nothing (G-399).
-    superseded = case.insert is not None and case.insert.kind in SUPERSEDES
+    superseded = (case.insert is not None and case.insert.kind in SUPERSEDES) or (
+        case.later is not None
+    )
+    # The later step is itself superseded by a superseding row recorded after
+    # it; otherwise it is the step a resume resolves, and nobody decided it.
+    if case.later is not None and case.later.gated:
+        after_it = (
+            case.insert is not None
+            and case.insert.kind in SUPERSEDES
+            and case.later.order == "before_insert"
+        )
+        expected.outcomes["later"] = REPLACED_BY_LATER_STEP if after_it else NO_DECISION
     forged = (
         case.insert.call if case.insert is not None and case.insert.kind == "tool_result" else -1
     )
@@ -578,8 +652,16 @@ def store_step(session: Session, case: Case) -> None:
 
 
 def insert_between(session: Session, case: Case, when: str) -> None:
+    rows: list[dict[str, Any]] = []
     if case.insert is not None and case.insert.when == when:
-        session.thread().record([inserted_row(case)])
+        rows.append(inserted_row(case))
+    if case.later is not None and case.later.when == when:
+        if case.later.order == "before_insert":
+            rows.insert(0, later_row(case))
+        else:
+            rows.append(later_row(case))
+    if rows:
+        session.thread().record(rows)
 
 
 def outcomes_by_token(session: Session) -> dict[str, list[str]]:
@@ -735,6 +817,13 @@ def _check(
 
     # 5 and 6. Every gated call has exactly one outcome, and the thread says what ran.
     stored = outcomes_by_token(session)
+    if case.later is not None and case.later.gated:
+        later = set(stored.get("later", []))
+        if later != {expected.outcomes["later"]} or counts.get("later"):
+            broken.append(
+                f"1/5: the later step's call ran {counts.get('later', 0)}x and is recorded as "
+                f"{sorted(later)}, the rule says once {expected.outcomes['later']!r}"
+            )
     for call in [c for c in case.earlier if c.gated]:
         recorded = stored.get(call.token, [])
         if recorded != [expected.outcomes[call.token]] or counts.get(call.token):
@@ -772,7 +861,13 @@ def without_call(case: Case, index: int) -> Case:
             if insert.call == index
             else replace(insert, call=insert.call - (insert.call > index))
         )
-    case = replace(case, insert=insert)
+    later = case.later
+    if later is not None and later.reuses is not None:
+        later = replace(
+            later,
+            reuses=None if later.reuses == index else later.reuses - (later.reuses > index),
+        )
+    case = replace(case, insert=insert, later=later)
     if case.path == "live":
         gated_before = [i for i, c in enumerate(case.calls) if c.gated]
         order = case.decision_order
@@ -894,7 +989,7 @@ def test_every_generated_step_obeys_the_approval_pairing_rule() -> None:
 
 def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     # A property that never generates the hard case passes vacuously.
-    examined = [generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + 300)]
+    examined = [generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + 1000)]
     expectations = [oracle(case) for case in examined]
     assert any(e.repeated and any(c.gated for c in k.calls) for k, e in zip(examined, expectations))
     assert any(not e.repeated and e.runs for e in expectations)
@@ -915,6 +1010,30 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
                 k.insert is not None and k.insert.kind == kind and k.insert.when == when
                 for k in examined
             ), (kind, when)
+    # A later step with every inserted kind, at both times and in both orders,
+    # and a forged result in the later step's segment and in the parked one's.
+    for kind in set(INSERT_KINDS):
+        for when in ("before_decision", "after_decision"):
+            for order in ("before_insert", "after_insert"):
+                assert any(
+                    k.insert is not None
+                    and k.later is not None
+                    and k.insert.kind == kind
+                    and k.insert.when == when
+                    and k.later.order == order
+                    for k in examined
+                ), (kind, when, order)
+    for order in ("before_insert", "after_insert"):
+        for gated_later in (True, False):
+            assert any(
+                k.insert is not None
+                and k.insert.kind == "tool_result"
+                and k.later is not None
+                and k.later.order == order
+                and k.later.gated == gated_later
+                for k in examined
+            ), (order, gated_later)
+    assert any(k.later is not None and k.insert is None for k in examined)
     assert any(any(c.gated and not c.prior for c in k.earlier) for k in examined)
     assert any(len({r.approval_id for r in k.requests}) != len(k.requests) for k in examined)
     # The shape that ran an approved call again (G-399): a row that does not
