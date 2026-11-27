@@ -38,6 +38,7 @@ library's ``random.Random``, seeded per example.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import random
@@ -218,6 +219,10 @@ class Case:
     #: The run has no step left after the step that parked (live only), so a
     #: resume ends without another model step.
     spent: bool = False
+    #: A row written WHILE the first approved call runs (``user``, or
+    #: ``tool_step``: a step with an ungated call reusing that call's id), or
+    #: None. It must change no call's outcome.
+    during: str | None = None
     #: After the first resume, a later row in the SAME segment holds a result
     #: under this call's id and tool with OTHER arguments (index of the call,
     #: or None). Every call already has its own result by then, so the stray
@@ -300,6 +305,7 @@ class Case:
                 ),
                 **({"spent": True} if self.spent else {}),
                 **({"stray": self.stray} if self.stray is not None else {}),
+                **({"during": self.during} if self.during is not None else {}),
                 **({"string_arguments": True} if self.string_arguments else {}),
             }
         )
@@ -313,7 +319,11 @@ def insertion(seed: int, calls: list[Call]) -> Insert | None:
         return None
     kind = rng.choice(INSERT_KINDS)
     # A forged result names a gated call that has none yet.
-    open_calls = [i for i, c in enumerate(calls) if c.gated and not c.prior]
+    open_calls = [
+        i
+        for i, c in enumerate(calls)
+        if c.gated and not c.prior and sum(d.token == c.token for d in calls) == 1
+    ]
     if kind == "tool_result" and not open_calls:
         kind = "system"
     when = rng.choice(("before_decision", "after_decision"))
@@ -359,6 +369,19 @@ def stray_result(seed: int, calls: list[Call]) -> int | None:
     if not gated or rng.random() >= 0.3:
         return None
     return rng.choice(gated)
+
+
+def during_row(case: Case, token: str) -> dict[str, Any]:
+    """The row written while the call with ``token`` runs."""
+    if case.during == "user":
+        return {"type": "user", "content": "Something else, meanwhile."}
+    running = next(c for c in case.calls if c.token == token)
+    return {
+        "type": "assistant",
+        "content": "",
+        "tool_calls": [{"id": running.id, "name": UNGATED, "arguments": {"token": "during"}}],
+        "tool_approval_requests": [],
+    }
 
 
 def stray_row(case: Case) -> dict[str, Any]:
@@ -439,6 +462,21 @@ def generate(seed: int) -> Case:
             )
         )
 
+    # An IDENTICAL duplicate (same id, tool and arguments) of a gated call,
+    # from a stream of its own: one tool asked twice with the same arguments.
+    duplicates = random.Random(seed ^ 0x777777)
+    open_gated = [c for c in calls if c.gated and not c.prior]
+    if open_gated and duplicates.random() < 0.2:
+        original = duplicates.choice(open_gated)
+        decision, reason = a_decision(duplicates)
+        calls.append(
+            replace(
+                original,
+                decision=decision if path == "live" else "none",
+                reason=reason if path == "live" else None,
+            )
+        )
+
     requests: list[Request] = []
     if path == "stored":
         counter = 0
@@ -499,7 +537,7 @@ def generate(seed: int) -> Case:
                 )
             )
     if earlier:
-        current = [c for c in calls if c.gated]
+        current = [c for c in calls if c.gated and sum(d.token == c.token for d in calls) == 1]
         if current and rng.random() < 0.4:
             # A TWIN: the same id and arguments as a call of the current step,
             # so only the segment a result sits in says which call it answers.
@@ -533,6 +571,11 @@ def generate(seed: int) -> Case:
         first=rng.choice(("text", "structured")),
         insert=(insert := insertion(seed, calls)),
         stray=stray_result(seed, calls),
+        during=(
+            random.Random(seed ^ 0x404404).choice(("user", "tool_step"))
+            if random.Random(seed ^ 0x404405).random() < 0.25
+            else None
+        ),
         later=later_step(seed, calls, insert),
         earlier=tuple(earlier),
         string_arguments=path == "stored" and rng.random() < 0.3,
@@ -645,6 +688,8 @@ class TokenTool:
     def __init__(self, name: str, ran: list[tuple[str, str]]) -> None:
         self._name = name
         self._ran = ran
+        #: Called with the call's token while it runs, before it returns.
+        self.during: Callable[[str], None] | None = None
 
     @property
     def name(self) -> str:
@@ -653,6 +698,8 @@ class TokenTool:
     def handle(self, args: dict[str, Any]) -> Any:
         token = str(args.get("token", ""))
         self._ran.append((self._name, token))
+        if self.during is not None:
+            self.during(token)
         return f"{self._name}:{token}"
 
 
@@ -811,6 +858,45 @@ def outcomes_by_token(session: Session) -> dict[str, list[str]]:
     return found
 
 
+def _entries(session: Session) -> list[list[tuple[str, str]]]:
+    """Each tool result row's results as (token, text), row by row."""
+    rows: list[list[tuple[str, str]]] = []
+    for entry in session.thread().messages():
+        row = entry.message
+        if row.get("type") != "tool_result":
+            continue
+        found: list[tuple[str, str]] = []
+        for result in row.get("tool_results", []):
+            args = result.get("args")
+            if isinstance(args, str):
+                args = json.loads(args)
+            token = str((args or {}).get("token", ""))
+            text = str(result.get("result"))
+            for kind in ("prior:", "forged:"):
+                if text.startswith(kind):
+                    token = text[len(kind) :]
+            found.append((token, text))
+        rows.append(found)
+    return rows
+
+
+def recorded_for(session: Session, tokens: set[str]) -> int:
+    """How many results are stored for calls with these tokens."""
+    return sum(1 for row in _entries(session) for token, _ in row if token in tokens)
+
+
+def most_per_row(session: Session) -> dict[tuple[str, str], int]:
+    """The most results any one row holds, per (token, outcome)."""
+    most: dict[tuple[str, str], int] = {}
+    for row in _entries(session):
+        counts: dict[tuple[str, str], int] = {}
+        for key in row:
+            counts[key] = counts.get(key, 0) + 1
+        for key, n in counts.items():
+            most[key] = max(most.get(key, 0), n)
+    return most
+
+
 def late(session: Session, approval: str) -> None:
     """Approve once the step is settled. Refusing the decision is as good as
     ignoring it; running the call is not."""
@@ -825,7 +911,8 @@ def check(case: Case) -> list[str]:
     """Run one case and return every invariant it breaks."""
     expected = oracle(case)
     ran: list[tuple[str, str]] = []
-    tools = ToolRegistry().register(TokenTool(GATED, ran)).register(TokenTool(UNGATED, ran))
+    gated_tool = TokenTool(GATED, ran)
+    tools = ToolRegistry().register(gated_tool).register(TokenTool(UNGATED, ran))
     requests: list[LlmRequest] = []
     runtime = AgentRuntime(
         client=a_model(case, requests), modes=SPENT if case.spent else MODES, tools=tools
@@ -833,21 +920,43 @@ def check(case: Case) -> list[str]:
     with tempfile.TemporaryDirectory(
         prefix="prism-harness-pairing-", ignore_cleanup_errors=True
     ) as directory:
-        return _check(case, a_session(directory), runtime, ran, expected) + replayed_twice(requests)
+        session = a_session(directory)
+        fired: list[str] = []
+
+        def during(token: str) -> None:
+            # Once, while the first approved call runs (G-392, G-404). The
+            # host writes it (no run id); a tool-call step could equally be
+            # another run's.
+            if case.during is not None and not fired:
+                fired.append(token)
+                session.thread().record([during_row(case, token)])
+
+        gated_tool.during = during
+        return _check(case, session, runtime, ran, expected) + replayed_twice(requests)
 
 
 def replayed_twice(requests: list[LlmRequest]) -> list[str]:
     """Replay invariant: no result occurrence (call id, tool, arguments and
-    text) is sent to the model twice, within a step's segment, in any request.
-    The text is part of the key because the view reads arguments stored as a
-    JSON string as none, so two calls' results can share the rest."""
+    text) is sent to the model more often, within a step's segment, than the
+    step has calls with that id, tool and arguments, in any request. The text
+    is part of the key because the view reads arguments stored as a JSON string
+    as none, so two calls' results can share the rest."""
     broken: list[str] = []
     for number, request in enumerate(requests):
         seen: dict[tuple[int, str, str, str, str], int] = {}
+        calls: dict[tuple[int, str, str, str], int] = {}
         segment = 0
         for message in request.messages:
             if message.get("type") == "assistant" and message.get("tool_calls"):
                 segment += 1
+                for call in message["tool_calls"]:
+                    same = (
+                        segment,
+                        str(call.get("id")),
+                        str(call.get("name")),
+                        json.dumps(call.get("arguments"), sort_keys=True),
+                    )
+                    calls[same] = calls.get(same, 0) + 1
             if message.get("type") != "tool_result":
                 continue
             for entry in message.get("tool_results", []):
@@ -859,7 +968,7 @@ def replayed_twice(requests: list[LlmRequest]) -> list[str]:
                     str(entry.get("result")),
                 )
                 seen[key] = seen.get(key, 0) + 1
-        twice = sorted(key for key, n in seen.items() if n > 1)
+        twice = sorted(key for key, n in seen.items() if n > max(1, calls.get(key[:4], 0)))
         if twice:
             broken.append(f"replay: request {number} sends {twice} more than once")
     return broken
@@ -960,6 +1069,7 @@ def _check(
         broken.append(f"6: the run record says {run and run.get('tool_calls')}, ran {ran_now}")
 
     # 3. Nothing runs twice: resume again, decide everything late, resume again.
+    settled = recorded_for(session, {c.token for c in gated})
     if case.stray is not None:
         session.thread().record([stray_row(case)])
     after = len(ran)
@@ -981,6 +1091,27 @@ def _check(
         broken.append(f"3: {twice} ran more than once")
 
     # 5 and 6. Every gated call has exactly one outcome, and the thread says what ran.
+    # Once the first resume has settled the step, no further result for its
+    # gated calls is written, by any later resume or decision.
+    final = recorded_for(session, {c.token for c in gated})
+    if final != settled:
+        broken.append(f"5: results written after the step settled: {final - settled} more")
+    # COUNTED per call: the most results one row holds for a token and an
+    # outcome is the number of calls with that token (a restating row repeats
+    # them, never adds to them).
+    per_row = most_per_row(session)
+    for token in {c.token for c in gated}:
+        calls_with = sum(1 for c in gated if c.token == token)
+        twin = any(c.token == token and c.gated for c in case.earlier)
+        counted = {
+            text: n
+            for (t, text), n in per_row.items()
+            if t == token and text not in expected.extras.get(token, set())
+        }
+        if not twin and sum(counted.values()) != calls_with:
+            broken.append(
+                f"5: {token} ({calls_with} call(s)) is recorded as {counted}, one outcome each"
+            )
     stored = outcomes_by_token(session)
     current_tokens = {c.token for c in case.calls}
     if case.later is not None and case.later.gated:
@@ -1124,7 +1255,13 @@ def seeds() -> list[int]:
     if replay is not None:
         return [replay]
     assert base is not None and count is not None
-    return [base + i for i in range(count)]
+    return seeds_for(base, count)
+
+
+def seeds_for(base: int, count: int) -> list[int]:
+    """The run's seeds: ``count`` from ``base``, then every shape's seed."""
+    run = [base + i for i in range(count)]
+    return run + sorted(set(shape_seeds().values()) - set(run))
 
 
 @pytest.mark.parametrize("value", ["0", "-3", "", " ", "1.5", "ten", "0x10", "١"])
@@ -1142,7 +1279,8 @@ def test_a_property_setting_that_is_set_must_be_a_whole_number_of_at_least_one(
 def test_unset_property_settings_use_the_fast_fixed_set(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("PRISM_PROPERTY_EXAMPLES", "PRISM_PROPERTY_SEED", "PRISM_PROPERTY_BASE_SEED"):
         monkeypatch.delenv(name, raising=False)
-    assert seeds() == [DEFAULT_BASE_SEED + i for i in range(DEFAULT_EXAMPLES)]
+    assert seeds() == seeds_for(DEFAULT_BASE_SEED, DEFAULT_EXAMPLES)
+    assert seeds()[:DEFAULT_EXAMPLES] == [DEFAULT_BASE_SEED + i for i in range(DEFAULT_EXAMPLES)]
     monkeypatch.setenv("PRISM_PROPERTY_SEED", "929")
     assert seeds() == [929]
 
@@ -1165,104 +1303,155 @@ def test_every_generated_step_obeys_the_approval_pairing_rule() -> None:
             )
 
 
-def test_the_generator_reaches_every_branch_of_the_rule() -> None:
-    # A property that never generates the hard case passes vacuously.
-    examined = [generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + 1000)]
-    expectations = [oracle(case) for case in examined]
-    assert any(e.repeated and any(c.gated for c in k.calls) for k, e in zip(examined, expectations))
-    assert any(not e.repeated and e.runs for e in expectations)
-    assert any(c.id == "" for k in examined for c in k.calls)
-    assert any(len({r.tool_call_id for r in k.requests}) != len(k.requests) for k in examined)
-    assert any(k.path == "stored" and any(c.gated and c.prior for c in k.calls) for k in examined)
-    assert any(
-        k.path == "stored"
-        and any(c.gated and not any(r.tool_call_id == c.id for r in k.requests) for c in k.calls)
-        for k in examined
+Shape = Callable[[Case, Expected], bool]
+
+
+def _inserted(k: Case, e: Expected, *, kind: str, when: str) -> bool:
+    return k.insert is not None and k.insert.kind == kind and k.insert.when == when
+
+
+def _inserted_with_later(k: Case, e: Expected, *, kind: str, when: str, order: str) -> bool:
+    return _inserted(k, e, kind=kind, when=when) and k.later is not None and k.later.order == order
+
+
+def _forged_with_later(k: Case, e: Expected, *, order: str, gated_later: bool) -> bool:
+    return (
+        k.insert is not None
+        and k.insert.kind == "tool_result"
+        and k.later is not None
+        and k.later.order == order
+        and k.later.gated == gated_later
     )
-    assert any("structured" in k.resumes for k in examined)
-    assert any(k.path == "live" and k.first == "structured" for k in examined)
-    # Every inserted kind, before and after the decision (as prism-harness-ts).
-    for kind in set(INSERT_KINDS):
-        for when in ("before_decision", "after_decision"):
-            assert any(
-                k.insert is not None and k.insert.kind == kind and k.insert.when == when
-                for k in examined
-            ), (kind, when)
-    # A later step with every inserted kind, at both times and in both orders,
-    # and a forged result in the later step's segment and in the parked one's.
-    for kind in set(INSERT_KINDS):
-        for when in ("before_decision", "after_decision"):
-            for order in ("before_insert", "after_insert"):
-                assert any(
-                    k.insert is not None
-                    and k.later is not None
-                    and k.insert.kind == kind
-                    and k.insert.when == when
-                    and k.later.order == order
-                    for k in examined
-                ), (kind, when, order)
-    for order in ("before_insert", "after_insert"):
-        for gated_later in (True, False):
-            assert any(
-                k.insert is not None
-                and k.insert.kind == "tool_result"
-                and k.later is not None
-                and k.later.order == order
-                and k.later.gated == gated_later
-                for k in examined
-            ), (order, gated_later)
-    assert any(k.later is not None and k.insert is None for k in examined)
-    # A result stored with other arguments (lossy), beside an earlier call
-    # those arguments name; and a recorded result in a later step's segment,
-    # crediting the later call or none.
-    assert any(any(c.lossy for c in k.calls) for k in examined)
-    assert any(any(c.lossy for c in k.calls) and k.string_arguments for k in examined)
-    for credited in (True, False):
-        assert any(
-            k.insert is not None
-            and k.insert.kind == "tool_result"
-            and k.later is not None
-            and k.later.order == "before_insert"
-            and oracle(k).later_credited == credited
-            for k in examined
-        ), credited
-    # A stray later result in a step with repeated ids (G-392, replay).
-    assert any(k.stray is not None and oracle(k).repeated for k in examined)
-    assert any(k.stray is not None and oracle(k).runs for k in examined)
-    # String-stored arguments, and ids (and arguments) reused across steps.
-    assert any(k.string_arguments and k.earlier for k in examined)
-    for prior in (True, False):
-        for strings in (True, False):
-            assert any(
-                k.string_arguments == strings
-                and any(
-                    c.prior == prior and c.token in {d.token for d in k.calls} for c in k.earlier
-                )
-                for k in examined
-            ), (prior, strings)
-    assert any(
-        any(
+
+
+def _forged_in_later_segment(k: Case, e: Expected, *, credited: bool) -> bool:
+    return (
+        k.insert is not None
+        and k.insert.kind == "tool_result"
+        and k.later is not None
+        and k.later.order == "before_insert"
+        and e.later_credited == credited
+    )
+
+
+def _twin_across_steps(k: Case, e: Expected, *, prior: bool, strings: bool) -> bool:
+    return k.string_arguments == strings and any(
+        c.prior == prior and c.token in {d.token for d in k.calls} for c in k.earlier
+    )
+
+
+def _shapes() -> dict[str, Shape]:
+    """Every shape the property claims to reach. The normal CI run includes,
+    beside its fixed seeds, the first seed that reaches each one, so each is
+    RUN on every push, not only proven reachable."""
+    shapes: dict[str, Shape] = {
+        "repeated id, gated": lambda k, e: e.repeated and any(c.gated for c in k.calls),
+        "distinct ids, a call runs": lambda k, e: not e.repeated and bool(e.runs),
+        "empty id": lambda k, e: any(c.id == "" for c in k.calls),
+        "two requests name one call": lambda k, e: (
+            len({r.tool_call_id for r in k.requests}) != len(k.requests)
+        ),
+        "repeated approval id": lambda k, e: (
+            len({r.approval_id for r in k.requests}) != len(k.requests)
+        ),
+        "stored prior result": lambda k, e: (
+            k.path == "stored" and any(c.gated and c.prior for c in k.calls)
+        ),
+        "missing request": lambda k, e: (
+            k.path == "stored"
+            and any(
+                c.gated and not any(r.tool_call_id == c.id for r in k.requests) for c in k.calls
+            )
+        ),
+        "structured resume": lambda k, e: "structured" in k.resumes,
+        "structured first step": lambda k, e: k.path == "live" and k.first == "structured",
+        "identical duplicate calls": lambda k, e: any(
+            c.gated and sum(d.token == c.token for d in k.calls) > 1 for c in k.calls
+        ),
+        "identical duplicates, steps spent": lambda k, e: (
+            k.spent
+            and any(c.gated and sum(d.token == c.token for d in k.calls) > 1 for c in k.calls)
+        ),
+        "user row while a call runs": lambda k, e: k.during == "user" and bool(e.runs),
+        "outcome: denied with the default reason": lambda k, e: (
+            DEFAULT_DENIAL in e.outcomes.values()
+        ),
+        "outcome: no decision": lambda k, e: NO_DECISION in e.outcomes.values(),
+        "outcome: repeated id": lambda k, e: REPEATED in e.outcomes.values(),
+        "outcome: replaced": lambda k, e: REPLACED_BY_LATER_STEP in e.outcomes.values(),
+        "outcome: forged result": lambda k, e: any(
+            text.startswith("forged:") for text in e.outcomes.values()
+        ),
+        # The step written while the call runs reuses the running call's id.
+        "tool step while a call runs": lambda k, e: k.during == "tool_step" and bool(e.runs),
+        "later step, no insert": lambda k, e: k.later is not None and k.insert is None,
+        "lossy result arguments": lambda k, e: any(c.lossy for c in k.calls),
+        "lossy, string arguments": lambda k, e: (
+            any(c.lossy for c in k.calls) and k.string_arguments
+        ),
+        "stray result, repeated": lambda k, e: k.stray is not None and e.repeated,
+        "stray result, runs": lambda k, e: k.stray is not None and bool(e.runs),
+        "string arguments, earlier step": lambda k, e: k.string_arguments and bool(k.earlier),
+        "earlier id reused, other args": lambda k, e: any(
             c.id in {d.id for d in k.calls} and c.token not in {d.token for d in k.calls}
             for c in k.earlier
+        ),
+        "earlier open gated call": lambda k, e: any(c.gated and not c.prior for c in k.earlier),
+        "G-399: note after decision, no step left": lambda k, e: (
+            k.spent
+            and k.insert is not None
+            and k.insert.kind in ("system", "tool_empty")
+            and k.insert.when == "after_decision"
+            and bool(e.runs)
+        ),
+    }
+    for kind in sorted(set(INSERT_KINDS)):
+        for when in ("before_decision", "after_decision"):
+            shapes[f"insert {kind} {when}"] = functools.partial(_inserted, kind=kind, when=when)
+            for order in ("before_insert", "after_insert"):
+                shapes[f"later step + insert {kind} {when} {order}"] = functools.partial(
+                    _inserted_with_later, kind=kind, when=when, order=order
+                )
+    for order in ("before_insert", "after_insert"):
+        for gated_later in (True, False):
+            shapes[f"forged result, later {order}, gated={gated_later}"] = functools.partial(
+                _forged_with_later, order=order, gated_later=gated_later
+            )
+    for credited in (True, False):
+        shapes[f"forged in later segment, credited={credited}"] = functools.partial(
+            _forged_in_later_segment, credited=credited
         )
-        for k in examined
-    )
-    assert any(any(c.gated and not c.prior for c in k.earlier) for k in examined)
-    assert any(len({r.approval_id for r in k.requests}) != len(k.requests) for k in examined)
-    # The shape that ran an approved call again (G-399): a row that does not
-    # supersede, recorded after the decision, and no model step after the
-    # resume. Reached by the FIXED set the normal test run uses.
-    fast = [
-        generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + DEFAULT_EXAMPLES)
-    ]
-    assert any(
-        k.spent
-        and k.insert is not None
-        and k.insert.kind in ("system", "tool_empty")
-        and k.insert.when == "after_decision"
-        and oracle(k).runs
-        for k in fast
-    )
-    outcomes = {text for e in expectations for text in e.outcomes.values()}
+    for prior in (True, False):
+        for strings in (True, False):
+            shapes[f"twin across steps, prior={prior}, strings={strings}"] = functools.partial(
+                _twin_across_steps, prior=prior, strings=strings
+            )
+    return shapes
+
+
+@functools.lru_cache(maxsize=1)
+def shape_seeds() -> dict[str, int]:
+    """The first seed from the default base that reaches each shape."""
+    found: dict[str, int] = {}
+    shapes = _shapes()
+    for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + 20000):
+        case = generate(seed)
+        expected = oracle(case)
+        for name, reaches in shapes.items():
+            if name not in found and reaches(case, expected):
+                found[name] = seed
+        if len(found) == len(shapes):
+            break
+    return found
+
+
+def test_the_ci_set_runs_every_shape_the_property_claims() -> None:
+    # A property that never generates the hard case passes vacuously, and
+    # one only the long run reaches is not checked on every push.
+    missing = sorted(set(_shapes()) - set(shape_seeds()))
+    assert not missing, missing
+    ci = set(seeds_for(DEFAULT_BASE_SEED, DEFAULT_EXAMPLES))
+    assert set(shape_seeds().values()) <= ci
+    outcomes = {text for seed in sorted(ci) for text in oracle(generate(seed)).outcomes.values()}
     assert {REPEATED, NO_DECISION, DEFAULT_DENIAL, REPLACED_BY_LATER_STEP} <= outcomes
     assert any(text.startswith("forged:") for text in outcomes)
