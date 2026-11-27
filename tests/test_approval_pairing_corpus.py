@@ -32,11 +32,15 @@ from prism_harness import (
     ModeRegistry,
     Participant,
     PrismHarness,
+    Session,
     ToolCallInput,
     ToolRegistry,
     assistant_row,
     record_approval,
+    tool_result_entry,
+    tool_result_row,
 )
+from prism_harness.thread_rows import ARGUMENTS_AS_SENT
 
 CORPUS = json.loads(
     (Path(__file__).parent / "fixtures" / "harness-approval-pairing.json").read_text(
@@ -131,18 +135,74 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
         session.thread().record([{"type": "user", "content": "A later message."}], parked.run_id)
     elif supersede == "new_message":
         runtime.send(session, "Something else.")
+    # SEGMENT OWNERSHIP (0.2.0, G-387 round 13b): a later step a host records
+    # after the park, each echo call asking its own approval
+    # (``apr_later_<k>``, k counting the step's echo calls), then ONE result
+    # row a host records right after it.
+    later = row.get("later")
+    later_ids: list[str] = []
+    if later is not None:
+        requests: list[dict[str, Any]] = []
+        for call in later["calls"]:
+            if call["name"] == "echo":
+                approval_id = f"apr_later_{len(later_ids)}"
+                later_ids.append(approval_id)
+                requests.append(
+                    {
+                        "approval_id": approval_id,
+                        "tool_call_id": call["id"],
+                        "arguments_format": ARGUMENTS_AS_SENT,
+                    }
+                )
+        session.thread().record(
+            [
+                assistant_row(
+                    "",
+                    [
+                        ToolCallInput(call["id"], call["name"], call["args"])
+                        for call in later["calls"]
+                    ],
+                    approval_requests=requests,
+                )
+            ]
+        )
+        result = later["result"]
+        session.thread().record(
+            [
+                tool_result_row(
+                    [
+                        tool_result_entry(
+                            ToolCallInput(result["id"], result["name"], result["args"]),
+                            result["result"],
+                        )
+                    ],
+                    [
+                        {"approval_id": later_ids[k], "approved": True, "reason": None}
+                        for k in result["approved"]
+                    ],
+                )
+            ]
+        )
+    # The later step's rounds first, while its approvals are pending, then the
+    # row's rounds on the first step's approvals.
+    rounds: list[tuple[list[Any], list[str]]] = [
+        *((round_, later_ids) for round_ in (later or {}).get("rounds", [])),
+        *((round_, [approval.id for approval in pending]) for round_ in row["rounds"]),
+    ]
     refusals: list[str | None] = []
-    for round_ in row["rounds"]:
+    for round_, ids in rounds:
         refused: str | None = None
         for index, approved in round_:
             try:
-                record_approval(session, pending[index].id, approved)
+                record_approval(session, ids[index], approved)
             except HarnessError as error:
                 # A decision the harness refuses is swallowed; the round still resumes.
                 if error.code != "approval_not_pending":
                     raise
                 refused = refused or str(error.code)
         refusals.append(refused)
+        runtime.send(session, "")
+    for _ in range((later or {}).get("resumes", 0)):
         runtime.send(session, "")
 
     # What the thread RECORDED for each approval the first step issued, in
@@ -159,25 +219,65 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
         "ran": sorted(ran),
         "decided": [recorded.get(approval.id) for approval in pending],
     }
-    if "supersede" in row:
-        # The result each call of the first step ended with, in call order:
-        # its first result, or None.
-        first: dict[str, str] = {}
-        after = False
-        for entry in session.thread().messages():
-            message = entry.message
-            if message.get("type") == "assistant" and message.get("tool_calls") and not after:
-                after = True
-                continue
-            if after and message.get("type") == "tool_result":
-                for result in message.get("tool_results", []):
-                    first.setdefault(result["tool_call_id"], result["result"])
-        outcome["outcomes"] = [first.get(call["id"]) for call in row["calls"]]
-        # The code each round of decisions was refused with, or None. Python
-        # records decisions one by one (it has no batch call): a round is
-        # refused when any of its decisions is.
+    if "supersede" in row or later is not None:
+        # The result each call of a step ended with, in call order: its first
+        # result IN ITS STEP'S SEGMENT (the rows after the step and before the
+        # next assistant row with tool calls), or None (G-387 round 13b).
+        found = segments(session)
+        outcome["outcomes"] = segment_outcomes(row["calls"], found[0] if found else [])
+        if later is not None:
+            outcome["later_outcomes"] = segment_outcomes(
+                later["calls"], found[1] if len(found) > 1 else []
+            )
+        # The code each round of decisions was refused with, or None, the
+        # later step's rounds first. Python records decisions one by one (it
+        # has no batch call): a round is refused when any of its decisions is.
         outcome["refusals"] = refusals
     return outcome
+
+
+def segments(session: Session) -> list[list[dict[str, Any]]]:
+    """The tool result entries of each step's segment, oldest first: one list
+    per assistant row with tool calls, in thread order."""
+    found: list[list[dict[str, Any]]] = []
+    for entry in session.thread().messages():
+        message = entry.message
+        if message.get("type") == "assistant" and message.get("tool_calls"):
+            found.append([])
+        elif found and message.get("type") == "tool_result":
+            found[-1].extend(message.get("tool_results", []))
+    return found
+
+
+def segment_outcomes(
+    calls: list[dict[str, Any]], entries: list[dict[str, Any]]
+) -> list[str | None]:
+    """The first result each call got in its segment, in call order, or None.
+    An entry is a call's by exact arguments, then id and tool name, then id:
+    the first call so matched with no result yet; an entry whose match
+    already has one is a repeat, and an entry that matches no call counts for
+    nothing (the PHP reference's reading)."""
+    first: list[str | None] = [None] * len(calls)
+    for entry in entries:
+        args = entry.get("args") if isinstance(entry.get("args"), dict) else {}
+        for level in (3, 2, 1):
+            matched = [at for at, call in enumerate(calls) if _matches(call, entry, args, level)]
+            if not matched:
+                continue
+            open_ = [at for at in matched if first[at] is None]
+            if open_:
+                first[open_[0]] = str(entry["result"])
+            break
+    return first
+
+
+def _matches(call: dict[str, Any], entry: dict[str, Any], args: Any, level: int) -> bool:
+    """Level 3: id, tool name and arguments; 2: id and tool name; 1: id."""
+    return (
+        call["id"] == entry["tool_call_id"]
+        and (level < 2 or call["name"] == entry["tool_name"])
+        and (level < 3 or call["args"] == args)
+    )
 
 
 def test_has_rows() -> None:
