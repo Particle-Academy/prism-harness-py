@@ -154,3 +154,111 @@ def test_unique_ids_are_still_decided_call_by_call() -> None:
         ("b", "echo:2", "2"),
         ("c", "No approval response provided", "3"),
     ]
+
+
+def outcomes_by_value(session: Session) -> dict[str, list[str]]:
+    """Every stored result, by the call's ``value`` argument, never by call id."""
+    found: dict[str, list[str]] = {}
+    for entry in session.thread().messages():
+        if entry.message["type"] == "tool_result":
+            for result in entry.message["tool_results"]:
+                found.setdefault(result["args"].get("value"), []).append(result["result"])
+    return found
+
+
+@pytest.mark.parametrize("gated_first", [True, False], ids=["gated-first", "ungated-first"])
+@pytest.mark.parametrize("decision", [True, False, None], ids=["approve", "deny", "undecided"])
+def test_a_gated_call_sharing_an_ungated_calls_id_gets_its_own_denial(
+    gated_first: bool, decision: bool | None
+) -> None:
+    # The ungated call's result is not the gated call's: results are matched
+    # to calls by position, so the gated call still gets exactly one outcome.
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    calls = (("", "echo", "a"), ("", "shout", "b"))
+    runtime = guarded_runtime(once(calls_of(*(calls if gated_first else calls[::-1]))), counts)
+
+    first = runtime.send(session, "go")
+    assert counts == {"shout": 1}
+    [pending] = first.pending_approvals
+    if decision is not None:
+        record_approval(session, pending.id, decision, None if decision else "no")
+    runtime.send(session, "")
+    runtime.send(session, "")
+
+    assert counts == {"shout": 1}
+    outcomes = {value: set(texts) for value, texts in outcomes_by_value(session).items()}
+    assert outcomes == {"a": {REPEATED}, "b": {"shout:b"}}
+
+
+def test_a_stored_gated_call_sharing_a_finished_calls_id_gets_its_own_denial() -> None:
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    session.thread().record(
+        [
+            {"type": "user", "content": "go"},
+            {
+                "type": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "", "name": "echo", "arguments": {"value": "a"}},
+                    {"id": "", "name": "shout", "arguments": {"value": "b"}},
+                ],
+                "additional_content": {},
+                "tool_approval_requests": [],
+                "harness_tool_names": ["echo", "shout"],
+            },
+            {
+                "type": "tool_result",
+                "tool_results": [
+                    {
+                        "tool_call_id": "",
+                        "tool_name": "shout",
+                        "args": {"value": "b"},
+                        "result": "shout:b",
+                        "tool_call_result_id": None,
+                        "artifacts": [],
+                    }
+                ],
+                "tool_approval_responses": [],
+            },
+        ]
+    )
+    runtime = guarded_runtime(once([]), counts)
+
+    runtime.send(session, "")
+    runtime.send(session, "")
+
+    assert counts == {}
+    outcomes = {value: set(texts) for value, texts in outcomes_by_value(session).items()}
+    assert outcomes == {"a": {REPEATED}, "b": {"shout:b"}}
+
+
+@pytest.mark.parametrize("name", ["echo", "", "renamed"], ids=["named", "nameless", "other-name"])
+def test_a_result_stored_without_the_calls_tool_name_still_ends_the_call(name: str) -> None:
+    # Pairing by position must never read a finished call as unanswered: a
+    # result whose tool name is missing or different still ends the call with
+    # its id, and the approved call does not run again.
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    session.thread().record(
+        [
+            {"type": "user", "content": "go"},
+            {
+                "type": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "c1", "name": "echo", "arguments": {"value": "x"}}],
+                "additional_content": {},
+            },
+            {
+                "type": "tool_approval_request",
+                "approvals": [{"id": "c1", "tool": "echo", "arguments": {"value": "x"}}],
+            },
+            {"type": "tool_approval_response", "approval_id": "c1", "approved": True},
+            {"type": "tool_result", "tool_call_id": "c1", "name": name, "result": "echo:x"},
+        ]
+    )
+
+    guarded_runtime(once([]), counts).send(session, "")
+
+    assert counts == {}

@@ -264,6 +264,84 @@ def paired_requests(assistant: Mapping[str, Any]) -> list[tuple[dict[str, Any], 
     return pairs
 
 
+def step_results(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Every result stored for the last tool-calling turn, in stored order and
+    NOT folded by call id (G-392).
+
+    These are the entries of the tool result rows the thread view folds into the
+    one row answering that turn. Folded, a result is keyed by its call id, so
+    with a repeated id one call's result reads as another's.
+    """
+    view: list[dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
+    state = "none"  # none | waiting | collecting | done
+
+    for row in rows:
+        normalised = _normalise(row, view)
+
+        if normalised is None:
+            continue
+
+        if normalised["type"] == "assistant" and normalised["tool_calls"]:
+            entries, state = [], "waiting"
+        elif normalised["type"] == "tool_result":
+            if state in ("waiting", "collecting"):
+                entries.extend(normalised["tool_results"])
+                state = "collecting"
+        elif state == "collecting":
+            state = "done"
+
+        if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
+            view[-1] = _fold(view[-1], normalised)
+        else:
+            view.append(normalised)
+
+    return entries
+
+
+def paired_results(
+    assistant: Mapping[str, Any], entries: Sequence[Mapping[str, Any]]
+) -> dict[int, dict[str, Any]]:
+    """Each stored result of one turn, by the index of the call it answers (G-392).
+
+    Paired by position, never through a map keyed by call id: a result takes
+    the first call, in call order, with its id and tool name and no result yet,
+    preferring one whose arguments match. So a result for an ungated call never
+    stands for a gated call that shares its id. An entry identical to one
+    already paired is the same result restated by a later row, and pairs with
+    nothing.
+
+    A result whose tool name matches no such call (written without one, or by
+    another writer) still ends the first unanswered call with its id, so a
+    finished call never reads as unanswered and can never run again. With a
+    repeated id the step runs none of its gated calls whichever call that is.
+    """
+    calls = _dicts(assistant.get("tool_calls"))
+    paired: dict[int, dict[str, Any]] = {}
+
+    for entry in entries:
+        if any(dict(entry) == done for done in paired.values()):
+            continue
+        candidates = [
+            i
+            for i, call in enumerate(calls)
+            if i not in paired
+            and _text(call.get("id")) == _text(entry.get("tool_call_id"))
+            and _text(call.get("name")) == _text(entry.get("tool_name"))
+        ]
+        exact = [i for i in candidates if calls[i].get("arguments") == entry.get("args")]
+        same_id = [
+            i
+            for i, call in enumerate(calls)
+            if i not in paired and _text(call.get("id")) == _text(entry.get("tool_call_id"))
+        ]
+        chosen = exact or candidates or same_id
+        if chosen:
+            paired[chosen[0]] = dict(entry)
+
+    return paired
+
+
 def ambiguous_calls(assistant: Mapping[str, Any]) -> set[str]:
     """The ids of the calls in one assistant turn whose approval expires rather than runs.
 
