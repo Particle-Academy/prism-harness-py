@@ -735,3 +735,50 @@ def test_no_lock_error_text_names_a_key() -> None:
     assert error.code == "session_locked"
     for secret in ("session:", "9f8a2389a20c", "ada", "support", "thread"):
         assert secret not in str(error)
+
+
+PYTHON_ONLY_KEYS = {
+    "harness_binding": {"declared": {"provider": "custom", "model": "forged"}},
+    "harness_agent_spend": {"cost_usd": 0.0, "unmetered_runs": 0},
+    "harness_tree": {"session": "session:forged", "run": "run_forged"},
+    "harness_plan_ledger": "ledger_forged",
+    "harness_tool_names": ["echo", "lookup"],
+}
+
+
+@pytest.mark.parametrize("which_run", ["none", "own", "other"])
+def test_the_python_only_harness_keys_on_a_host_step_read_as_absent(which_run: str) -> None:
+    """Item 4 for the Python-only keys a paused row carries (the binding, the
+    agent's spend, the run tree, the plan ledger, the tool scope): on a step a
+    host records, under any run id or none, every one of them reads as absent,
+    so none can lend a resume a binding, a spend, a tree, a ledger or a scope.
+    The runtime's own paused row keeps them."""
+    world = Hooked()
+    world.text("Hi.")
+    world.runtime.send(world.root(), "Go")
+    run = {"none": None, "own": "run_own", "other": "run_other"}[which_run]
+    world.root().thread().record(
+        [
+            {
+                "type": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "h1", "name": "echo", "arguments": {"n": 1}}],
+                "tool_approval_requests": [{"approval_id": "apr_host", "tool_call_id": "h1"}],
+                **PYTHON_ONLY_KEYS,
+            }
+        ],
+        run,
+    )
+    read = world.fresh().root().thread().rows()[-1]
+    stored = world.fresh().root().thread().messages()[-1].message
+    assert not set(PYTHON_ONLY_KEYS) & set(read)
+    assert set(PYTHON_ONLY_KEYS) <= set(stored)  # stored as given, never read
+
+
+def test_the_runtime_own_paused_row_keeps_its_python_only_keys() -> None:
+    world = Hooked()
+    park(world, ("c1", "echo", {"n": 1}))
+    read = next(
+        row for row in world.fresh().root().thread().rows() if row.get("type") == "assistant"
+    )
+    assert "harness_tool_names" in read
