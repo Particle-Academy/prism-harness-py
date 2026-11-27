@@ -222,6 +222,22 @@ def thread_view(
     return view
 
 
+def is_decided(rows: Sequence[Mapping[str, Any]], approval_id: str) -> bool:
+    """Whether the thread already holds a decision for ``approval_id`` (G-401)."""
+    view: list[dict[str, Any]] = []
+    for row in rows:
+        normalised = _normalise(row, view)
+        if normalised is None:
+            continue
+        if normalised["type"] == "tool_result" and any(
+            decision["approval_id"] == approval_id
+            for decision in normalised["tool_approval_responses"]
+        ):
+            return True
+        view.append(normalised)
+    return False
+
+
 def approval_run_steps(
     rows: Sequence[Mapping[str, Any]], stored: Sequence[StoredRow] | None = None
 ) -> int | None:

@@ -1512,6 +1512,26 @@ def _twin_across_steps(k: Case, e: Expected, *, prior: bool, strings: bool) -> b
     )
 
 
+def _second_decision(k: Case, e: Expected, *, path: str, failure: bool) -> bool:
+    """A second decision that, if it counted wrongly, would run a denied call."""
+    return (
+        k.path == path
+        and k.second
+        and k.second_after_failure == failure
+        and not e.repeated
+        and k.insert is None
+        and k.later is None
+        and (
+            any(c.gated and c.decision == "deny" for c in k.calls)
+            or any(r.decision == "deny" for r in k.requests)
+        )
+    )
+
+
+def _second_direct(k: Case, e: Expected, *, direct: bool) -> bool:
+    return k.second and k.second_direct == direct
+
+
 def _shapes() -> dict[str, Shape]:
     """Every shape the property claims to reach. The normal CI run includes,
     beside its fixed seeds, the first seed that reaches each one, so each is
@@ -1609,6 +1629,15 @@ def _shapes() -> dict[str, Shape]:
     for credited in (True, False):
         shapes[f"forged in later segment, credited={credited}"] = functools.partial(
             _forged_in_later_segment, credited=credited
+        )
+    for path in ("live", "stored"):
+        for failure in (False, True):
+            shapes[f"second decision (G-401), {path}, after a failed turn={failure}"] = (
+                functools.partial(_second_decision, path=path, failure=failure)
+            )
+    for direct in (True, False):
+        shapes[f"second decision (G-401), written directly={direct}"] = functools.partial(
+            _second_direct, direct=direct
         )
     for prior in (True, False):
         for strings in (True, False):
