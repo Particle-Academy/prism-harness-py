@@ -48,6 +48,7 @@ from prism_harness import (
     RunBudget,
     RunContext,
     Session,
+    StructuredAgentResponse,
     SubagentRunner,
     record_approval,
 )
@@ -498,3 +499,21 @@ def test_a_start_whose_task_row_is_written_hands_its_tree_hold_over() -> None:
         )
     assert world.runtime._trees.members == {}
     assert "Child answer." in start(world, "direct", "Again.")
+
+
+# -- a structured send whose first step parks ---------------------------------------
+
+
+def test_a_structured_send_whose_first_step_parks_returns_the_structured_shape() -> None:
+    world = World()
+    say(world, ("a", "echo", {"n": 1}))
+    response = world.runtime.send_structured(
+        world.root(),
+        "Go",
+        {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
+    )
+
+    assert isinstance(response, StructuredAgentResponse)
+    assert response.finish_reason == "awaiting_approval"
+    assert [pending.tool for pending in response.pending_approvals] == ["echo"]
+    assert response.structured is None

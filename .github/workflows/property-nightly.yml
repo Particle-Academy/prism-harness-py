@@ -1,0 +1,55 @@
+name: Property tests (long set)
+
+# The long run of the approval pairing property tests (G-392 QC). The fast,
+# fixed-seed set runs in Tests on every push and pull request; this runs only
+# the property file, with many more examples and a base seed taken from the
+# run, so each run explores new cases and logs the seed to replay them
+# (PRISM_PROPERTY_SEED=<seed> replays one).
+#
+# `schedule` fires only from the default branch, so this copy runs every
+# supported line that carries the property file as a matrix ref; a release
+# line joins the matrix when the file is on it, and keeps a dispatch-only
+# copy of this workflow.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      examples:
+        description: Examples per property
+        required: false
+        default: '5000'
+
+permissions:
+  contents: read
+
+jobs:
+  property:
+    name: property / ${{ matrix.ref }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [main]
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - name: Property tests
+        shell: bash
+        env:
+          PRISM_PROPERTY_EXAMPLES: ${{ inputs.examples || '5000' }}
+          PRISM_PROPERTY_BASE_SEED: ${{ github.run_id }}
+          PYTHONIOENCODING: utf-8
+        run: |
+          echo "PRISM_PROPERTY_BASE_SEED=$PRISM_PROPERTY_BASE_SEED PRISM_PROPERTY_EXAMPLES=$PRISM_PROPERTY_EXAMPLES"
+          python -m pytest tests/test_approval_pairing_properties.py -v
