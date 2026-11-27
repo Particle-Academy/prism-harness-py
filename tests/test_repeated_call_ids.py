@@ -290,7 +290,7 @@ def test_a_start_ends_each_call_with_its_own_approval_id(
 
     stored = rows(world.fresh().child("worker"))
     marked = [row[ENDED_BY_START] for row in stored if ENDED_BY_START in row]
-    assert marked == [approvals]
+    assert marked == [{"approval_ids": approvals}]
     assert ended_approval_ids(stored) == set(approvals)
     assert world.ran_with == []
     for approval in approvals:
@@ -304,5 +304,7 @@ def test_a_start_ends_unique_calls_with_their_own_approval_ids() -> None:
     start_again(world)
 
     stored = rows(world.fresh().child("worker"))
-    assert [row[ENDED_BY_START] for row in stored if ENDED_BY_START in row] == [approvals]
+    assert [row[ENDED_BY_START] for row in stored if ENDED_BY_START in row] == [
+        {"approval_ids": approvals}
+    ]
     assert world.ran_with == []
