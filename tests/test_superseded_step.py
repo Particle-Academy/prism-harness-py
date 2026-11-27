@@ -5,7 +5,7 @@ A parked step is SUPERSEDED by any later assistant row with tool calls, or by
 an assistant text row or a user row recorded OUTSIDE the runs that own it (the
 run that recorded it, and every run that recorded one of its results): no run
 id, or another run. Each of its calls with no result then gets ONE denial,
-"Not run: a later step replaced it.", on a tool result row marked
+"Tool call was not run because a later step replaced it", on a tool result row marked
 ``harness_superseded``; nothing of it runs, and a later decision is refused.
 The harness's own rows in the runs resolving it never supersede, and a host
 that hands the step's own run id to the public ``Thread.record`` gains

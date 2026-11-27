@@ -2202,8 +2202,9 @@ def record_approval(
     every decision recorded by then and refuses any pending call still without
     one. With several pending, record them all first. A new message instead,
     or any row that supersedes the paused step (a later step with tool calls,
-    or an assistant or user row recorded outside the harness's run), denies
-    its open calls, "Not run: a later step replaced it.", whatever was
+    or an assistant or user row recorded outside the runs that own the
+    step), denies
+    its open calls, "Tool call was not run because a later step replaced it", whatever was
     decided.
 
     ``approval_id`` is :attr:`PendingApproval.id`, not the tool call id.

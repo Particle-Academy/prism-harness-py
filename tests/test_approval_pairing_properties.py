@@ -67,9 +67,9 @@ from prism_harness import (
 )
 
 REPEATED = "Tool call was not run because another call in this step has the same id"
-#: Main's text for a replaced (superseded) step's call: the PHP reference's
-#: (DECISION B, G-387 round 13), the same in every language on main.
-REPLACED_BY_LATER_STEP = "Not run: a later step replaced it."
+#: The text a replaced (superseded) step's call is given: the release lines'
+#: (DECISION B, G-387 round 13), the same in every language and line.
+REPLACED_BY_LATER_STEP = "Tool call was not run because a later step replaced it"
 NO_DECISION = "No approval response provided"
 DEFAULT_DENIAL = "User denied tool execution"
 

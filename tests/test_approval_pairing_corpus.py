@@ -127,7 +127,9 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
         session.thread().record([{"type": "user", "content": "A later message."}])
     elif supersede == "new_message":
         runtime.send(session, "Something else.")
+    refusals: list[str | None] = []
     for round_ in row["rounds"]:
+        refused: str | None = None
         for index, approved in round_:
             try:
                 record_approval(session, pending[index].id, approved)
@@ -135,6 +137,8 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
                 # A decision the harness refuses is swallowed; the round still resumes.
                 if error.code != "approval_not_pending":
                     raise
+                refused = refused or str(error.code)
+        refusals.append(refused)
         runtime.send(session, "")
 
     # What the thread RECORDED for each approval the first step issued, in
@@ -165,6 +169,10 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
                 for result in message.get("tool_results", []):
                     first.setdefault(result["tool_call_id"], result["result"])
         outcome["outcomes"] = [first.get(call["id"]) for call in row["calls"]]
+        # The code each round of decisions was refused with, or None. Python
+        # records decisions one by one (it has no batch call): a round is
+        # refused when any of its decisions is.
+        outcome["refusals"] = refusals
     return outcome
 
 

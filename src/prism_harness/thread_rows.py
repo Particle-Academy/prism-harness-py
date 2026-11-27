@@ -353,7 +353,7 @@ SUPERSEDED = "harness_superseded"
 
 #: The result each open gated call of a superseded step is given: the PHP
 #: reference's text, the same in every language.
-SUPERSEDED_RESULT = "Not run: a later step replaced it."
+SUPERSEDED_RESULT = "Tool call was not run because a later step replaced it"
 
 
 def superseding_denials(

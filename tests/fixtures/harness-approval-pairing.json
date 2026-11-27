@@ -970,7 +970,7 @@
       "id": "apr-0016",
       "title": "a later assistant step with tool calls supersedes the parked step",
       "since": "0.2.0",
-      "notes": "DECISION B (G-387 round 13). A host records an assistant row with a tool call (`later`, `free`, no arguments) after the park. Each gated call of the parked step with no result gets exactly ONE result, `Not run: a later step replaced it.`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused (no decision recorded), and the run is resumed once anyway.",
+      "notes": "DECISION B (G-387 round 13). A host records an assistant row with a tool call (`later`, `free`, no arguments) after the park. Each gated call of the parked step with no result gets exactly ONE result, `Tool call was not run because a later step replaced it`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused with `approval_not_pending`, all or nothing (no decision recorded; `refusals` pins the code), and the run is resumed once anyway.",
       "supersede": "assistant_tool_step",
       "calls": [
         {
@@ -1009,8 +1009,11 @@
           null
         ],
         "outcomes": [
-          "Not run: a later step replaced it.",
-          "Not run: a later step replaced it."
+          "Tool call was not run because a later step replaced it",
+          "Tool call was not run because a later step replaced it"
+        ],
+        "refusals": [
+          "approval_not_pending"
         ]
       },
       "result": {
@@ -1023,8 +1026,11 @@
             null
           ],
           "outcomes": [
-            "Not run: a later step replaced it.",
-            "Not run: a later step replaced it."
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
           ]
         },
         "ts": null,
@@ -1036,7 +1042,7 @@
       "id": "apr-0017",
       "title": "a later assistant text row recorded outside the run supersedes the parked step",
       "since": "0.2.0",
-      "notes": "DECISION B (G-387 round 13). A host records an assistant text row `A later answer.` after the park (outside the run that owns the step). Each gated call of the parked step with no result gets exactly ONE result, `Not run: a later step replaced it.`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused (no decision recorded), and the run is resumed once anyway.",
+      "notes": "DECISION B (G-387 round 13). A host records an assistant text row `A later answer.` after the park (outside the run that owns the step). Each gated call of the parked step with no result gets exactly ONE result, `Tool call was not run because a later step replaced it`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused with `approval_not_pending`, all or nothing (no decision recorded; `refusals` pins the code), and the run is resumed once anyway.",
       "supersede": "assistant_text",
       "calls": [
         {
@@ -1075,8 +1081,11 @@
           null
         ],
         "outcomes": [
-          "Not run: a later step replaced it.",
-          "Not run: a later step replaced it."
+          "Tool call was not run because a later step replaced it",
+          "Tool call was not run because a later step replaced it"
+        ],
+        "refusals": [
+          "approval_not_pending"
         ]
       },
       "result": {
@@ -1089,8 +1098,11 @@
             null
           ],
           "outcomes": [
-            "Not run: a later step replaced it.",
-            "Not run: a later step replaced it."
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
           ]
         },
         "ts": null,
@@ -1102,7 +1114,7 @@
       "id": "apr-0018",
       "title": "a later user row recorded outside the run supersedes the parked step",
       "since": "0.2.0",
-      "notes": "DECISION B (G-387 round 13). A host records a user row `A later message.` after the park (outside the run that owns the step). Each gated call of the parked step with no result gets exactly ONE result, `Not run: a later step replaced it.`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused (no decision recorded), and the run is resumed once anyway.",
+      "notes": "DECISION B (G-387 round 13). A host records a user row `A later message.` after the park (outside the run that owns the step). Each gated call of the parked step with no result gets exactly ONE result, `Tool call was not run because a later step replaced it`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused with `approval_not_pending`, all or nothing (no decision recorded; `refusals` pins the code), and the run is resumed once anyway.",
       "supersede": "user",
       "calls": [
         {
@@ -1141,8 +1153,11 @@
           null
         ],
         "outcomes": [
-          "Not run: a later step replaced it.",
-          "Not run: a later step replaced it."
+          "Tool call was not run because a later step replaced it",
+          "Tool call was not run because a later step replaced it"
+        ],
+        "refusals": [
+          "approval_not_pending"
         ]
       },
       "result": {
@@ -1155,8 +1170,11 @@
             null
           ],
           "outcomes": [
-            "Not run: a later step replaced it.",
-            "Not run: a later step replaced it."
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
           ]
         },
         "ts": null,
@@ -1168,7 +1186,7 @@
       "id": "apr-0019",
       "title": "a new message supersedes the parked step",
       "since": "0.2.0",
-      "notes": "DECISION B (G-387 round 13). The session is sent the new message `Something else.` after the park, through the harness. Each gated call of the parked step with no result gets exactly ONE result, `Not run: a later step replaced it.`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused (no decision recorded), and the run is resumed once anyway.",
+      "notes": "DECISION B (G-387 round 13). The session is sent the new message `Something else.` after the park, through the harness. Each gated call of the parked step with no result gets exactly ONE result, `Tool call was not run because a later step replaced it`, in a row the harness marks `harness_superseded: {approval_ids: [...]}` (call order) after `tool_approval_responses`; nothing from the step runs. The round then approves both calls, AFTER the superseding row: refused with `approval_not_pending`, all or nothing (no decision recorded; `refusals` pins the code), and the run is resumed once anyway.",
       "supersede": "new_message",
       "calls": [
         {
@@ -1207,8 +1225,11 @@
           null
         ],
         "outcomes": [
-          "Not run: a later step replaced it.",
-          "Not run: a later step replaced it."
+          "Tool call was not run because a later step replaced it",
+          "Tool call was not run because a later step replaced it"
+        ],
+        "refusals": [
+          "approval_not_pending"
         ]
       },
       "result": {
@@ -1221,8 +1242,11 @@
             null
           ],
           "outcomes": [
-            "Not run: a later step replaced it.",
-            "Not run: a later step replaced it."
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
           ]
         },
         "ts": null,
