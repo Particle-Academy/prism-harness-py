@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.4 (unreleased)
+## 0.5.4
 
 Security fixes on the 0.5 line. Each tool call is now decided only by its own approval, and every approval-gated call ends with exactly one recorded outcome.
 
