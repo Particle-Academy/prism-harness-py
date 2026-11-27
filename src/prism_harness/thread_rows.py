@@ -20,6 +20,7 @@ from prism_harness.tool_arguments import usable_arguments
 
 __all__ = [
     "ENDED_BY_START",
+    "REPEATED_CALL_ID",
     "ToolCallInput",
     "assistant_row",
     "thread_view",
@@ -424,6 +425,55 @@ def carried_agent_spend(value: object) -> tuple[float, int]:
         ):
             return float(cost), unmetered
     return 0.0, 1
+
+
+#: The result every gated call of a step with a repeated call id is given
+#: (G-392), identical in every language.
+REPEATED_CALL_ID = "Tool call was not run because another call in this step has the same id"
+
+
+def repeats_call_ids(assistant: Mapping[str, Any]) -> bool:
+    """Whether a tool call id repeats among one step's calls (an empty or
+    missing id counts), or a ``tool_call_id`` among its approval requests
+    (G-392).
+
+    Such a step cannot say which decision answers which call, so none of its
+    gated calls runs.
+    """
+    ids = [_text(call.get("id")) for call in _dicts(assistant.get("tool_calls"))]
+    asked = [
+        _text(request.get("tool_call_id"))
+        for request in _dicts(assistant.get("tool_approval_requests"))
+    ]
+    return len(set(ids)) != len(ids) or len(set(asked)) != len(asked)
+
+
+def paired_requests(assistant: Mapping[str, Any]) -> list[tuple[dict[str, Any], int | None]]:
+    """Each approval request of one step with the index of the call it was
+    issued for, or None (G-392).
+
+    Paired by position: a request takes the first call, in call order, that
+    has its ``tool_call_id`` and no request yet. The harness issues requests
+    in call order, so with repeated ids every call still gets its own request,
+    never the last one issued under that id.
+    """
+    calls = _dicts(assistant.get("tool_calls"))
+    taken: set[int] = set()
+    pairs: list[tuple[dict[str, Any], int | None]] = []
+    for request in _dicts(assistant.get("tool_approval_requests")):
+        wanted = _text(request.get("tool_call_id"))
+        index = next(
+            (
+                i
+                for i, call in enumerate(calls)
+                if i not in taken and _text(call.get("id")) == wanted
+            ),
+            None,
+        )
+        if index is not None:
+            taken.add(index)
+        pairs.append((request, index))
+    return pairs
 
 
 def ambiguous_calls(assistant: Mapping[str, Any]) -> set[str]:
