@@ -203,6 +203,9 @@ class Case:
     first: str = "text"
     #: A row a host records while the approval is pending, or None.
     insert: Insert | None = None
+    #: Stored only: arguments stored as JSON strings, as the PHP reference
+    #: writes them, for the calls and for the results already present.
+    string_arguments: bool = False
     #: A later step with tool calls a host records after the park, or None.
     later: Later | None = None
     #: Stored only: an EARLIER parked step the case's step followed. Each of its
@@ -287,6 +290,7 @@ class Case:
                     else {}
                 ),
                 **({"spent": True} if self.spent else {}),
+                **({"string_arguments": True} if self.string_arguments else {}),
             }
         )
 
@@ -430,6 +434,22 @@ def generate(seed: int) -> Case:
                     prior=not gated or rng.random() < 0.25,
                 )
             )
+        current = [c for c in calls if c.gated]
+        if current and rng.random() < 0.4:
+            # A TWIN: the same id and arguments as a call of the current step,
+            # so only the segment a result sits in says which call it answers.
+            twin = rng.choice(current)
+            decision, reason = a_decision(rng)
+            earlier.append(
+                Call(
+                    id=twin.id,
+                    gated=True,
+                    token=twin.token,
+                    decision=decision,
+                    reason=reason,
+                    prior=rng.random() < 0.6,
+                )
+            )
 
     decidable = (
         [i for i, c in enumerate([c for c in calls if c.gated])]
@@ -449,6 +469,7 @@ def generate(seed: int) -> Case:
         insert=(insert := insertion(seed, calls)),
         later=later_step(seed, calls, insert),
         earlier=tuple(earlier),
+        string_arguments=path == "stored" and rng.random() < 0.3,
         spent=path == "live" and rng.random() < 0.8,
     )
 
@@ -501,11 +522,11 @@ def oracle(case: Case) -> Expected:
 
     # A later step replaced the earlier one: its gated calls never run, and
     # each one with no result gets one denial.
+    current = {c.token for c in case.calls}
     for call in case.earlier:
         if call.gated:
-            expected.outcomes[call.token] = (
-                f"prior:{call.token}" if call.prior else REPLACED_BY_LATER_STEP
-            )
+            key = f"{call.token}#earlier" if call.token in current else call.token
+            expected.outcomes[key] = f"prior:{call.token}" if call.prior else REPLACED_BY_LATER_STEP
 
     for index, call in enumerate(case.calls):
         if not call.gated:
@@ -593,8 +614,15 @@ def a_send(runtime: AgentRuntime, session: Session, shape: str, prompt: str) -> 
     return runtime.send(session, prompt)
 
 
-def stored_rows(calls: tuple[Call, ...], requests: list[tuple[str, str]]) -> list[dict[str, Any]]:
+def stored_rows(
+    calls: tuple[Call, ...], requests: list[tuple[str, str]], strings: bool = False
+) -> list[dict[str, Any]]:
     """One step as another writer left it: the assistant row and its results."""
+
+    def arguments(call: Call) -> Any:
+        value = {"token": call.token}
+        return json.dumps(value) if strings else value
+
     rows: list[dict[str, Any]] = [
         {
             "type": "assistant",
@@ -603,7 +631,7 @@ def stored_rows(calls: tuple[Call, ...], requests: list[tuple[str, str]]) -> lis
                 {
                     "id": c.id,
                     "name": GATED if c.gated else UNGATED,
-                    "arguments": {"token": c.token},
+                    "arguments": arguments(c),
                     "result_id": None,
                     "reasoning_id": None,
                     "reasoning_summary": None,
@@ -627,7 +655,7 @@ def stored_rows(calls: tuple[Call, ...], requests: list[tuple[str, str]]) -> lis
                     {
                         "tool_call_id": c.id,
                         "tool_name": GATED if c.gated else UNGATED,
-                        "args": {"token": c.token},
+                        "args": arguments(c),
                         "result": f"prior:{c.token}",
                         "tool_call_result_id": None,
                         "artifacts": [],
@@ -645,9 +673,15 @@ def store_step(session: Session, case: Case) -> None:
     rows: list[dict[str, Any]] = [{"type": "user", "content": "go"}]
     if case.earlier:
         rows += stored_rows(
-            case.earlier, [(f"old_{c.token}", c.id) for c in case.earlier if c.gated]
+            case.earlier,
+            [(f"old_{c.token}", c.id) for c in case.earlier if c.gated],
+            case.string_arguments,
         )
-    rows += stored_rows(case.calls, [(r.approval_id, r.tool_call_id) for r in case.requests])
+    rows += stored_rows(
+        case.calls,
+        [(r.approval_id, r.tool_call_id) for r in case.requests],
+        case.string_arguments,
+    )
     session.thread().record(rows)
 
 
@@ -675,7 +709,10 @@ def outcomes_by_token(session: Session) -> dict[str, list[str]]:
         if row.get("type") != "tool_result":
             continue
         for result in row.get("tool_results", []):
-            token = str((result.get("args") or {}).get("token", ""))
+            args = result.get("args")
+            if isinstance(args, str):
+                args = json.loads(args)
+            token = str((args or {}).get("token", ""))
             found.setdefault(token, []).append(str(result.get("result")))
     return found
 
@@ -817,6 +854,7 @@ def _check(
 
     # 5 and 6. Every gated call has exactly one outcome, and the thread says what ran.
     stored = outcomes_by_token(session)
+    current_tokens = {c.token for c in case.calls}
     if case.later is not None and case.later.gated:
         later = set(stored.get("later", []))
         if later != {expected.outcomes["later"]} or counts.get("later"):
@@ -824,7 +862,8 @@ def _check(
                 f"1/5: the later step's call ran {counts.get('later', 0)}x and is recorded as "
                 f"{sorted(later)}, the rule says once {expected.outcomes['later']!r}"
             )
-    for call in [c for c in case.earlier if c.gated]:
+    twins = {c.token: c for c in case.earlier if c.gated and c.token in current_tokens}
+    for call in [c for c in case.earlier if c.gated and c.token not in twins]:
         recorded = stored.get(call.token, [])
         if recorded != [expected.outcomes[call.token]] or counts.get(call.token):
             broken.append(
@@ -833,6 +872,15 @@ def _check(
             )
     for call in gated:
         texts = set(stored.get(call.token, []))
+        if call.token in twins:
+            # Two calls share this token, one per step: each has its own outcome.
+            wanted = {expected.outcomes[call.token], expected.outcomes[f"{call.token}#earlier"]}
+            if texts != wanted:
+                broken.append(
+                    f"5: {call.token} and its earlier twin are recorded as {sorted(texts)}, "
+                    f"the rule says {sorted(wanted)}"
+                )
+            texts = {expected.outcomes[call.token]} if texts == wanted else texts
         if len(texts) != 1:
             broken.append(f"5: {call.token} has {len(texts)} recorded outcomes {sorted(texts)}")
             continue
@@ -1034,6 +1082,24 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
                 for k in examined
             ), (order, gated_later)
     assert any(k.later is not None and k.insert is None for k in examined)
+    # String-stored arguments, and ids (and arguments) reused across steps.
+    assert any(k.string_arguments and k.earlier for k in examined)
+    for prior in (True, False):
+        for strings in (True, False):
+            assert any(
+                k.string_arguments == strings
+                and any(
+                    c.prior == prior and c.token in {d.token for d in k.calls} for c in k.earlier
+                )
+                for k in examined
+            ), (prior, strings)
+    assert any(
+        any(
+            c.id in {d.id for d in k.calls} and c.token not in {d.token for d in k.calls}
+            for c in k.earlier
+        )
+        for k in examined
+    )
     assert any(any(c.gated and not c.prior for c in k.earlier) for k in examined)
     assert any(len({r.approval_id for r in k.requests}) != len(k.requests) for k in examined)
     # The shape that ran an approved call again (G-399): a row that does not
