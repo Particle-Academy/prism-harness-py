@@ -368,7 +368,7 @@ def _thread_steps(
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             steps.append((position, normalised, []))
         elif normalised["type"] == "tool_result" and steps:
-            steps[-1][2].extend(normalised["tool_results"])
+            steps[-1][2].extend(_parsed_arguments(row, normalised["tool_results"]))
 
         if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
             view[-1] = _fold(view[-1], normalised)
@@ -379,6 +379,24 @@ def _thread_steps(
         (position, assistant, [*entries, *written.get(position, [])])
         for position, assistant, entries in steps
     ], superseded
+
+
+def _parsed_arguments(
+    row: Mapping[str, Any], entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The entries with each result's arguments PARSED as a call's are (G-392).
+
+    Another writer may store a result's arguments as a JSON string; the view
+    reads those as none, while a call's stored as a string are parsed. Compared
+    in two different forms, a result would never match its own call.
+    """
+    raw = _dicts(row.get("tool_results"))
+    if len(raw) != len(entries):
+        return entries
+    return [
+        {**entry, "args": usable_arguments(stored.get("args")) or {}}
+        for entry, stored in zip(entries, raw, strict=True)
+    ]
 
 
 def _paired(
@@ -399,8 +417,8 @@ def _paired(
        another writer), so a finished call never reads as unanswered and can
        never run again. It never ends another step's call.
 
-    An entry identical to one already paired is the same result restated by a
-    later row, and pairs with nothing.
+    An entry identical to one already paired in its OWN step is the same
+    result restated by a later row, and pairs with nothing.
     """
 
     def same(call: Mapping[str, Any], entry: Mapping[str, Any], exact: int) -> bool:
@@ -414,8 +432,10 @@ def _paired(
     paired: list[dict[int, dict[str, Any]]] = [{} for _ in steps]
     left: list[list[dict[str, Any]]] = [[] for _ in steps]
 
-    def restated(entry: Mapping[str, Any]) -> bool:
-        return any(dict(entry) == done for results in paired for done in results.values())
+    def restated(step: int, entry: Mapping[str, Any]) -> bool:
+        # A resume row restates ITS OWN step's results; an identical result in
+        # another step is that step's own, never a restatement.
+        return any(dict(entry) == done for done in paired[step].values())
 
     def first(step: int, entry: Mapping[str, Any], exact: int) -> int | None:
         return next(
@@ -429,7 +449,7 @@ def _paired(
 
     for step, (_, _, entries) in enumerate(steps):
         for entry in entries:
-            if restated(entry):
+            if restated(step, entry):
                 continue
             index = first(step, entry, 2)
             if index is None:
@@ -458,7 +478,7 @@ def _paired(
 
     for step in range(len(steps)):
         for entry in left[step]:
-            if restated(entry):
+            if restated(step, entry):
                 continue
             index = first(step, entry, 1)
             if index is None:
