@@ -231,6 +231,10 @@ class Case:
     #: ``tool_step``: a step with an ungated call reusing that call's id), or
     #: None. It must change no call's outcome.
     during: str | None = None
+    #: Which call's run the ``during`` row is written in: the first approved
+    #: call (``gated``), or the step's first ungated call as the step is taken
+    #: (``ungated``, live only), which then replaces the step being taken.
+    during_on: str = "gated"
     #: A host's COPY of the paused step that keeps its approval requests and
     #: holds NEW calls under the gated calls' ids (``mixed``: after a call that
     #: is not an object; ``new-only``), recorded at ``copy_when``, or None. An
@@ -319,7 +323,11 @@ class Case:
                 ),
                 **({"spent": True} if self.spent else {}),
                 **({"stray": self.stray} if self.stray is not None else {}),
-                **({"during": self.during} if self.during is not None else {}),
+                **(
+                    {"during": self.during, "during_on": self.during_on}
+                    if self.during is not None
+                    else {}
+                ),
                 **(
                     {"copy": self.copy, "copy_when": self.copy_when}
                     if self.copy is not None
@@ -634,6 +642,13 @@ def generate(seed: int) -> Case:
             if random.Random(seed ^ 0x404405).random() < 0.25
             else None
         ),
+        during_on=(
+            "ungated"
+            if path == "live"
+            and any(not c.gated for c in calls)
+            and random.Random(seed ^ 0x412412).random() < 0.4
+            else "gated"
+        ),
         later=later_step(seed, calls, insert),
         second=(second := random.Random(seed ^ 0x401401).random() < 0.35),
         second_after_failure=second and random.Random(seed ^ 0x401402).random() < 0.5,
@@ -659,6 +674,17 @@ class Expected:
     #: The later step's call was ended by a result in its segment.
     later_credited: bool = False
     repeated: bool = False
+
+
+def during_ungated(case: Case) -> bool:
+    """Whether a row is written while the step's ungated call runs, as the
+    step is taken: it replaces that step (G-412)."""
+    return (
+        case.during is not None
+        and case.during_on == "ungated"
+        and case.path == "live"
+        and any(not c.gated for c in case.calls)
+    )
 
 
 def copied(case: Case) -> bool:
@@ -718,6 +744,7 @@ def oracle(case: Case) -> Expected:
         (case.insert is not None and case.insert.kind in SUPERSEDES)
         or case.later is not None
         or copied(case)
+        or during_ungated(case)
     )
     if copied(case):
         # The copy's calls have no request of their own: the requests it
@@ -750,6 +777,12 @@ def oracle(case: Case) -> Expected:
         expected.extras[token] = {f"forged:{token}"}
         later_id = case.calls[case.later.reuses].id if case.later.reuses is not None else "later"
         expected.later_credited = later_id == case.calls[forged].id
+        forged = -1
+    elif forged >= 0 and during_ungated(case) and case.during == "tool_step":
+        # The step written while the ungated call ran is a later step: the
+        # forged result lands in ITS segment, never the parked call's.
+        token = case.calls[forged].token
+        expected.extras[token] = {f"forged:{token}"}
         forged = -1
 
     # A later step replaced the earlier one: its gated calls never run, and
@@ -802,7 +835,7 @@ class TokenTool:
         self._name = name
         self._ran = ran
         #: Called with the call's token while it runs, before it returns.
-        self.during: Callable[[str], None] | None = None
+        self.during: Callable[[str, str], None] | None = None
 
     @property
     def name(self) -> str:
@@ -812,7 +845,7 @@ class TokenTool:
         token = str(args.get("token", ""))
         self._ran.append((self._name, token))
         if self.during is not None:
-            self.during(token)
+            self.during(self._name, token)
         return f"{self._name}:{token}"
 
 
@@ -1027,7 +1060,8 @@ def check(case: Case) -> list[str]:
     expected = oracle(case)
     ran: list[tuple[str, str]] = []
     gated_tool = TokenTool(GATED, ran)
-    tools = ToolRegistry().register(gated_tool).register(TokenTool(UNGATED, ran))
+    ungated_tool = TokenTool(UNGATED, ran)
+    tools = ToolRegistry().register(gated_tool).register(ungated_tool)
     requests: list[LlmRequest] = []
     runtime = AgentRuntime(
         client=a_model(case, requests), modes=SPENT if case.spent else MODES, tools=tools
@@ -1038,16 +1072,22 @@ def check(case: Case) -> list[str]:
         session = a_session(directory)
         fired: list[str] = []
 
-        def during(token: str) -> None:
-            # Once, while the first approved call runs (G-392, G-404). The
-            # host writes it (no run id); a tool-call step could equally be
-            # another run's.
-            if case.during is not None and not fired:
+        def during(name: str, token: str) -> None:
+            # Once, while the first approved (or, ``during_on`` ungated, the
+            # first ungated) call runs (G-392, G-404, G-412). The host writes
+            # it (no run id); a tool-call step could equally be another run's.
+            wanted = GATED if case.during_on == "gated" or not during_ungated(case) else UNGATED
+            if case.during is not None and not fired and name == wanted:
                 fired.append(token)
                 session.thread().record([during_row(case, token)])
 
         gated_tool.during = during
-        broken = _check(case, session, runtime, ran, expected) + replayed_twice(requests)
+        ungated_tool.during = during
+        broken = (
+            _check(case, session, runtime, ran, expected)
+            + replayed_twice(requests)
+            + answered_right_after(requests)
+        )
         # The step budget holds across every send of the case, empty resumes
         # included: within one turn (since its user row) the model is never
         # asked more often than max_steps.
@@ -1063,6 +1103,42 @@ def check(case: Case) -> list[str]:
                     f"budget: request {number} is step {taken + 1} of a turn, max_steps is {limit}"
                 )
         return broken
+
+
+#: The tokens of ungated calls only a host's own step holds, which nobody runs
+#: and so nobody answers: a host step's malformed history is its own.
+HOST_ONLY = ("later", "inserted", "during")
+
+
+def answered_right_after(requests: list[LlmRequest]) -> list[str]:
+    """Replay invariant (G-412): every request answers each step's tool calls
+    in the turn right after the step, as providers require."""
+    broken: list[str] = []
+    for number, request in enumerate(requests):
+        messages = request.messages
+        for index, message in enumerate(messages):
+            if message.get("type") != "assistant" or not message.get("tool_calls"):
+                continue
+            after = messages[index + 1] if index + 1 < len(messages) else {}
+            answered = (
+                {str(e.get("tool_call_id")) for e in after.get("tool_results", [])}
+                if after.get("type") == "tool_result"
+                else set()
+            )
+            missing = [
+                str(call.get("id"))
+                for call in message["tool_calls"]
+                if str(call.get("id")) not in answered
+                and not (
+                    call.get("name") == UNGATED
+                    and str((call.get("arguments") or {}).get("token", "")) in HOST_ONLY
+                )
+            ]
+            if missing:
+                broken.append(
+                    f"replay: request {number} leaves {missing} unanswered right after their step"
+                )
+    return broken
 
 
 def replayed_twice(requests: list[LlmRequest]) -> list[str]:
@@ -1613,6 +1689,12 @@ def _shapes() -> dict[str, Shape]:
         ),
         "outcome: forged result": lambda k, e: any(
             text.startswith("forged:") for text in e.outcomes.values()
+        ),
+        "a row while an ungated call runs (G-412), user": lambda k, e: (
+            during_ungated(k) and k.during == "user"
+        ),
+        "a row while an ungated call runs (G-412), tool step": lambda k, e: (
+            during_ungated(k) and k.during == "tool_step"
         ),
         # The step written while the call runs reuses the running call's id.
         "tool step while a call runs": lambda k, e: k.during == "tool_step" and bool(e.runs),
