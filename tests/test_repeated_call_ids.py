@@ -232,3 +232,33 @@ def test_a_stored_gated_call_sharing_a_finished_calls_id_gets_its_own_denial() -
     assert counts == {}
     outcomes = {value: set(texts) for value, texts in outcomes_by_value(session).items()}
     assert outcomes == {"a": {REPEATED}, "b": {"shout:b"}}
+
+
+@pytest.mark.parametrize("name", ["echo", "", "renamed"], ids=["named", "nameless", "other-name"])
+def test_a_result_stored_without_the_calls_tool_name_still_ends_the_call(name: str) -> None:
+    # Pairing by position must never read a finished call as unanswered: a
+    # result whose tool name is missing or different still ends the call with
+    # its id, and the approved call does not run again.
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    session.thread().record(
+        [
+            {"type": "user", "content": "go"},
+            {
+                "type": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "c1", "name": "echo", "arguments": {"value": "x"}}],
+                "additional_content": {},
+            },
+            {
+                "type": "tool_approval_request",
+                "approvals": [{"id": "c1", "tool": "echo", "arguments": {"value": "x"}}],
+            },
+            {"type": "tool_approval_response", "approval_id": "c1", "approved": True},
+            {"type": "tool_result", "tool_call_id": "c1", "name": name, "result": "echo:x"},
+        ]
+    )
+
+    guarded_runtime(once([]), counts).send(session, "")
+
+    assert counts == {}

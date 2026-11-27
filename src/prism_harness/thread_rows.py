@@ -310,6 +310,11 @@ def paired_results(
     stands for a gated call that shares its id. An entry identical to one
     already paired is the same result restated by a later row, and pairs with
     nothing.
+
+    A result whose tool name matches no such call (written without one, or by
+    another writer) still ends the first unanswered call with its id, so a
+    finished call never reads as unanswered and can never run again. With a
+    repeated id the step runs none of its gated calls whichever call that is.
     """
     calls = _dicts(assistant.get("tool_calls"))
     paired: dict[int, dict[str, Any]] = {}
@@ -325,8 +330,14 @@ def paired_results(
             and _text(call.get("name")) == _text(entry.get("tool_name"))
         ]
         exact = [i for i in candidates if calls[i].get("arguments") == entry.get("args")]
-        if exact or candidates:
-            paired[(exact or candidates)[0]] = dict(entry)
+        same_id = [
+            i
+            for i, call in enumerate(calls)
+            if i not in paired and _text(call.get("id")) == _text(entry.get("tool_call_id"))
+        ]
+        chosen = exact or candidates or same_id
+        if chosen:
+            paired[chosen[0]] = dict(entry)
 
     return paired
 
