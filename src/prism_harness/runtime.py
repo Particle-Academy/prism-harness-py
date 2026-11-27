@@ -2080,11 +2080,14 @@ class AgentRuntime:
                     # so it does not run; one recorded after it leaves the
                     # call answered-in-progress, and its result below pairs to
                     # it wherever it lands.
-                    if not self._start_call(thread, run_id, position, row, approval_id, index):
-                        # Not the call the person was shown, or no longer
-                        # open: never run, and this its one outcome unless
-                        # it has one already (left out below).
-                        resolved.append((index, tool_result_entry(call, NOT_THE_APPROVED_CALL)))
+                    refused = self._start_call(thread, run_id, position, row, approval_id, index)
+                    if refused is not None:
+                        # Not the call the person was shown, no longer open,
+                        # or denied since: never run, and this its one
+                        # outcome unless it has one already (left out below).
+                        if refused != NOT_THE_APPROVED_CALL:
+                            self._tool_decision(ToolDenied, live, run_id, call, declared, "person")
+                        resolved.append((index, tool_result_entry(call, refused)))
                         continue
                     self._tool_decision(ToolApproved, live, run_id, call, declared, "person")
                     called.append(call.name)
@@ -2147,13 +2150,16 @@ class AgentRuntime:
         call: Mapping[str, Any],
         approval_id: str | None,
         index: int,
-    ) -> bool:
+    ) -> str | None:
         """Record the started row for the call at ``index`` of the step at
         thread ``position`` (G-387 round 15), in one write with the check
         that the call is still open (no outcome among the rows its step owns,
-        not started already). False, writing nothing, when it is not: it
-        must not run."""
+        not started already). None when it started; else, writing nothing,
+        the call's one outcome, which says why it must not run: the denial
+        that now stands (its reason, G-387 round 17), or
+        :data:`NOT_THE_APPROVED_CALL`."""
         started: list[bool] = []
+        denied: list[str] = []
 
         def row_for(
             rows: list[dict[str, Any]], positions: list[int]
@@ -2178,12 +2184,19 @@ class AgentRuntime:
             # in the same write as the started row, so it never runs.
             standing = standing_decisions(rows).get(approval_id or "")
             if approval_id is not None and (standing is None or standing["approved"] is not True):
+                if standing is not None:
+                    reason = standing.get("reason")
+                    denied.append(
+                        reason if isinstance(reason, str) and reason else "User denied tool execution"
+                    )
                 return None
             started.append(True)
             return [started_row(call, approval_id or "", position)]
 
         _record_in_run(thread, [], run_id, row_for)
-        return bool(started)
+        if started:
+            return None
+        return denied[0] if denied else NOT_THE_APPROVED_CALL
 
     @staticmethod
     def _unresolved(
@@ -2665,7 +2678,7 @@ def _record_decision(
 
     def write(live: Session) -> None:
         rows = live.thread().rows()
-        # ANY DENY IS FINAL (G-401, the recommended rule): a deny for an
+        # ANY DENY IS FINAL (G-401, decided by the owner: denial wins): a deny for an
         # approval already approved but not yet acted on is recorded and
         # revokes it; anything else for an answered id is refused.
         revoking = (
