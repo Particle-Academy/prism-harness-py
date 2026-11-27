@@ -210,6 +210,11 @@ class Case:
     #: Stored only: arguments stored as JSON strings, as the PHP reference
     #: writes them, for the calls and for the results already present.
     string_arguments: bool = False
+    #: A SECOND decision, the opposite of the first, for the first approval
+    #: decided (G-401); with ``second_after_failure``, recorded after a turn
+    #: that failed before acting on any decision. The first decision stands.
+    second: bool = False
+    second_after_failure: bool = False
     #: A later step with tool calls a host records after the park, or None.
     later: Later | None = None
     #: Stored only: an EARLIER parked step the case's step followed. Each of its
@@ -318,6 +323,15 @@ class Case:
                     else {}
                 ),
                 **({"string_arguments": True} if self.string_arguments else {}),
+                **(
+                    {
+                        "second_decision": "after-failed-turn"
+                        if self.second_after_failure
+                        else "batch"
+                    }
+                    if self.second
+                    else {}
+                ),
             }
         )
 
@@ -617,6 +631,8 @@ def generate(seed: int) -> Case:
             else None
         ),
         later=later_step(seed, calls, insert),
+        second=(second := random.Random(seed ^ 0x401401).random() < 0.35),
+        second_after_failure=second and random.Random(seed ^ 0x401402).random() < 0.5,
         earlier=tuple(earlier),
         string_arguments=path == "stored" and rng.random() < 0.3,
         spent=path == "live" and rng.random() < 0.8,
@@ -1093,7 +1109,7 @@ def _check(
             approval = approval_of[call.token]
             assert approval is not None
             record_approval(session, approval, call.decision == "approve", call.reason)
-            decided[approval] = (call.decision, call.reason)
+            decided.setdefault(approval, (call.decision, call.reason))
     else:
         store_step(session, case)
         for old in case.earlier:
@@ -1107,11 +1123,24 @@ def _check(
             record_approval(
                 session, request.approval_id, request.decision == "approve", request.reason
             )
-            decided[request.approval_id] = (request.decision, request.reason)
+            decided.setdefault(request.approval_id, (request.decision, request.reason))
         for call in gated:
             own = [r.approval_id for r in case.requests if r.tool_call_id == call.id]
             approval_of[call.token] = own[0] if len(own) == 1 else None
 
+    if case.second and decided:
+        # The opposite of the first decision recorded, for the same approval.
+        # The first stands; the second records nothing (G-401).
+        approval, (verdict, _) = next(iter(decided.items()))
+        if case.second_after_failure:
+            try:
+                runtime.send(session, "", ["not-a-tool"])
+            except HarnessError as error:
+                if error.code != "tool_not_available":
+                    raise
+            else:
+                broken.append("G-401: a turn asking for an unknown tool did not fail")
+        record_approval(session, approval, verdict != "approve", "second")
     insert_between(session, case, "after_decision")
     before = len(ran)
     resumed = a_send(runtime, session, case.resumes[0], "")
