@@ -1992,13 +1992,15 @@ def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, 
 def _fold(earlier: Mapping[str, Any], later: Mapping[str, Any]) -> dict[str, Any]:
     """Two consecutive tool result rows as one (G-403).
 
-    A later row's result for the SAME call replaces an earlier one, in the
-    earlier one's position. The same call is the same call id, tool name and
-    arguments, the n-th such result of a row replacing the n-th of the earlier
-    one, never the call id alone: a provider may give two calls of one step the
-    same id, and keyed by id one call's result would replace the other's.
-    PHP main's ``ToolResultRuns`` (prism-harness#141) and the 0.5.x line
-    (prism-harness-py#75) fold the same way.
+    Of a result for the SAME call in both, the EARLIER one stands, in its
+    position, and the later one is left out (G-387 round 17, decision 7: what
+    is sent is the result every outcome reader counts, the first). The same
+    call is the same call id, tool name and arguments, the n-th such result
+    of a row against the n-th of the earlier one, never the call id alone: a
+    provider may give two calls of one step the same id. A later decision for
+    an approval still replaces an earlier one (each is then replaced by the
+    one that stood, :func:`_as_decided`). The PHP reference's
+    ``ToolResultRuns`` folds the same way.
     """
     results: dict[tuple[str, str, str, int], dict[str, Any]] = {}
     decisions: dict[str, dict[str, Any]] = {}
@@ -2008,7 +2010,7 @@ def _fold(earlier: Mapping[str, Any], later: Mapping[str, Any]) -> dict[str, Any
         for entry in row["tool_results"]:
             same = (entry["tool_call_id"], entry["tool_name"], _canonical(entry["args"]))
             seen[same] = seen.get(same, 0) + 1
-            results[(same[0], same[1], same[2], seen[same])] = entry
+            results.setdefault((same[0], same[1], same[2], seen[same]), entry)
 
     for decision in [*earlier["tool_approval_responses"], *later["tool_approval_responses"]]:
         decisions[decision["approval_id"]] = decision
