@@ -4,6 +4,8 @@
 
 Security fixes on the 0.5 line. Each tool call is now decided only by its own approval, and gets exactly one outcome.
 
+BREAKING CHANGE: a security fix that fails closed. Approval-gated calls that could run before are now denied when their step repeats a call id, a request call id or an approval id. They are also denied when their paused step has been replaced by a later step with tool calls, or by a user or assistant message your application records while the approval is pending. A decision recorded for such a step runs nothing.
+
 ### Fixed
 
 - If a resumed run's pending step holds two tool calls with the same call id (an empty id counts), none of the step's approval-gated calls run, whatever was decided. The same applies when two approval requests name the same call id, or share one approval id. Each of those calls gets its own result, `Tool call was not run because another call in this step has the same id`, and no later decision or resume runs it. When the ids in a step are distinct, each call is decided on its own approval, as before.
