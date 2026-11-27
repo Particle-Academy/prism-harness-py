@@ -666,11 +666,15 @@ def a_session(directory: str) -> Session:
     return session
 
 
-def a_model(case: Case) -> Callable[[LlmRequest], LlmResponse]:
+def a_model(
+    case: Case, requests: list[LlmRequest] | None = None
+) -> Callable[[LlmRequest], LlmResponse]:
     """Asks for the case's calls once (live), then only ever answers."""
     state = {"asked": case.path == "stored"}
 
     def client(request: LlmRequest) -> LlmResponse:
+        if requests is not None:
+            requests.append(request)
         if not state["asked"]:
             state["asked"] = True
             return LlmResponse(
@@ -822,11 +826,43 @@ def check(case: Case) -> list[str]:
     expected = oracle(case)
     ran: list[tuple[str, str]] = []
     tools = ToolRegistry().register(TokenTool(GATED, ran)).register(TokenTool(UNGATED, ran))
-    runtime = AgentRuntime(client=a_model(case), modes=SPENT if case.spent else MODES, tools=tools)
+    requests: list[LlmRequest] = []
+    runtime = AgentRuntime(
+        client=a_model(case, requests), modes=SPENT if case.spent else MODES, tools=tools
+    )
     with tempfile.TemporaryDirectory(
         prefix="prism-harness-pairing-", ignore_cleanup_errors=True
     ) as directory:
-        return _check(case, a_session(directory), runtime, ran, expected)
+        return _check(case, a_session(directory), runtime, ran, expected) + replayed_twice(requests)
+
+
+def replayed_twice(requests: list[LlmRequest]) -> list[str]:
+    """Replay invariant: no result occurrence (call id, tool, arguments and
+    text) is sent to the model twice, within a step's segment, in any request.
+    The text is part of the key because the view reads arguments stored as a
+    JSON string as none, so two calls' results can share the rest."""
+    broken: list[str] = []
+    for number, request in enumerate(requests):
+        seen: dict[tuple[int, str, str, str, str], int] = {}
+        segment = 0
+        for message in request.messages:
+            if message.get("type") == "assistant" and message.get("tool_calls"):
+                segment += 1
+            if message.get("type") != "tool_result":
+                continue
+            for entry in message.get("tool_results", []):
+                key = (
+                    segment,
+                    str(entry.get("tool_call_id")),
+                    str(entry.get("tool_name")),
+                    json.dumps(entry.get("args"), sort_keys=True),
+                    str(entry.get("result")),
+                )
+                seen[key] = seen.get(key, 0) + 1
+        twice = sorted(key for key, n in seen.items() if n > 1)
+        if twice:
+            broken.append(f"replay: request {number} sends {twice} more than once")
+    return broken
 
 
 def _check(
