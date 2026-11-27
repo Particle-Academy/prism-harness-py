@@ -19,6 +19,7 @@ BREAKING CHANGE: a security fix that fails closed. Approval-gated calls that cou
 - Every result row the harness writes for a step (ungated results, a failed step's refusals, a resolution) names the step it answers as `harness_answers_step: {"position": N}`, recorded only through the harness's own path, so a step with tool calls recorded while an approved call runs never takes that call's result, and the call that ran is never recorded as replaced. A mark on a row your application records is ignored. `ThreadMessage.harness` says whether the harness recorded a row.
 - A user or assistant message replaces a paused step only when it is recorded outside the runs that own the step; the runtime's own answer after a resume never does.
 - An approved call refused because its tool is not available to the run, or because it is not authorized, is no longer listed in the run's `tool_calls`.
+- An assistant message your application records without tool calls sends no provider-native tool item to the model: Anthropic content blocks of a `*tool_use` type and OpenAI output items of a `*_call` type are left out of the history sent; the rest of its `additional_content` is sent as stored.
 - `send_structured` returns a `StructuredAgentResponse` with `structured` `None` when the run stops for an approval or runs out of steps, instead of failing with an `AssertionError`. Check `finish_reason` before reading `structured`.
 
 ### Upgrading
