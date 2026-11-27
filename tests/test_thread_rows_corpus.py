@@ -21,12 +21,19 @@ from prism_harness import (
     thread_view,
     tool_result_row,
 )
+from prism_harness.plans.thread_facts import approval_decisions
 from prism_harness.thread_rows import (
+    answering_step,
     bound_step,
+    call_results,
     ended_approval_ids,
+    new_results,
+    owned_rows,
     paired_requests,
+    pending_approval_ids,
     placed_view,
     started_row,
+    step_calls,
 )
 
 CORPUS: dict[str, Any] = json.loads(
@@ -34,7 +41,7 @@ CORPUS: dict[str, Any] = json.loads(
 )
 
 
-def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
+def rows_for(case: dict[str, Any]) -> list[Any]:
     """The same conversion prism-parity's recorder makes."""
     if case.get("read") == "approval_states":
         # Which approvals read ended by a runner start (G-387 round 13), read
@@ -43,6 +50,29 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
         ended = ended_approval_ids(case["stored"])
         return [
             {"approval_id": approval, "ended_by_start": approval in ended}
+            for approval in case["approvals"]
+        ]
+
+    if case.get("read") == "call_outcomes":
+        # 0.6.0 (G-387 round 16): whether each call of the step at 1-based
+        # ``step`` has an outcome among the rows it owns, paired as every
+        # reader pairs results.
+        at = case["step"] - 1
+        answered = call_results(step_calls(case["stored"][at]), owned_rows(case["stored"], at))
+        return [index in answered for index in range(len(step_calls(case["stored"][at])))]
+
+    if case.get("read") == "approval_reads":
+        # 0.6.0: what each approval reads: pending, and the decision that
+        # stands (true, false, or none).
+        stored = case["stored"]
+        pending = pending_approval_ids(stored)
+        decided = approval_decisions(stored)
+        return [
+            {
+                "approval_id": approval,
+                "pending": approval in pending,
+                "decision": decided.get(approval),
+            }
             for approval in case["approvals"]
         ]
 
@@ -56,6 +86,17 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
         return placed_view(case["place"])
 
     spec = case["input"]
+
+    if spec["write"] == "answer":
+        # 0.6.0: the answer row the resolver writes for the step at
+        # ``position``: only the results the step does not hold yet, the
+        # decisions, and the step's mark when a result is kept.
+        stored = spec["stored"]
+        at = spec["position"] - 1
+        row = tool_result_row(new_results(stored, at, spec["results"]), spec["decisions"])
+        if not row["tool_results"] and not row["tool_approval_responses"]:
+            return []
+        return [answering_step(row, spec["position"]) if row["tool_results"] else row]
 
     if spec["write"] == "started":
         # The write-ahead row the resolver records before it runs a call.
@@ -139,7 +180,7 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def test_is_the_whole_suite_not_a_subset_someone_trimmed_to_green() -> None:
-    assert len(CORPUS["cases"]) == 24
+    assert len(CORPUS["cases"]) == 35
 
 
 @pytest.mark.parametrize("case", CORPUS["cases"], ids=lambda case: case["id"])

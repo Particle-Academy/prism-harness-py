@@ -173,6 +173,36 @@ def record(row: dict[str, Any], directory: Path) -> dict[str, Any]:
         session.thread().record([copy])
         if supersede == "altered_copy_after_approval":
             runtime.send(session, "")
+    elif supersede == "host_result":
+        # 0.5.0 (G-387 round 16): a host records a result for the first echo
+        # call right after the park: its call has an outcome, so its approval
+        # is no longer pending and a decision on it is refused.
+        first = next(call for call in row["calls"] if call["name"] == "echo")
+        session.thread().record(
+            [
+                tool_result_row(
+                    [tool_result_entry(ToolCallInput(first["id"], "echo", first["args"]), "host")]
+                )
+            ]
+        )
+    elif supersede == "denial_after_run":
+        # 0.5.0 (G-387 round 16): every pending approval approved, one resume
+        # (the calls run), then a host's raw denial of each: recorded after
+        # the call ran, it is not the decision that stood.
+        for approval in pending:
+            record_approval(session, approval.id, True)
+        runtime.send(session, "")
+        session.thread().record(
+            [
+                tool_result_row(
+                    [],
+                    [
+                        {"approval_id": approval.id, "approved": False, "reason": "Too late."}
+                        for approval in pending
+                    ],
+                )
+            ]
+        )
     # SEGMENT OWNERSHIP (0.2.0, G-387 round 13b): a later step a host records
     # after the park, each echo call asking its own approval
     # (``apr_later_<k>``, k counting the step's echo calls), then ONE result

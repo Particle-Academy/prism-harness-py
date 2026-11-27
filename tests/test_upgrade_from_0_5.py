@@ -148,7 +148,9 @@ def test_main_resumes_a_0_5_x_thread_with_one_outcome_per_gated_call(name: str) 
     # No call is denied twice: one replaced-step row per call, in all.
     assert sum(texts.count(SUPERSEDED_RESULT) for texts in found.values()) == 2
     assert world.ran == []
-    rows = [entry.message for entry in load_again(world).thread().messages()]
+    # Read as every reader takes the rows (G-387 round 16): the harness's own
+    # marks count only on rows read with its flag.
+    rows = load_again(world).thread().rows()
     assert all(approval_decisions(rows).get(approval) is not True for approval in approvals)
 
 

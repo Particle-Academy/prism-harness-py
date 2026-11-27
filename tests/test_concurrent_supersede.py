@@ -465,6 +465,8 @@ def test_a_tool_recording_on_its_own_session_mid_run_succeeds_without_a_stall(ho
     # No lock error, and no internal key, ever reaches a stored row.
     assert "Could not acquire the lock" not in str(stored)
     assert world.root().thread().key not in str(stored)
+    # The SESSION key too (G-387 round 16): it is the one a lock error names.
+    assert world.root().key() not in str(stored)
 
 
 # -- W2 / W1: the replaced denial and the superseding row are one write -----------

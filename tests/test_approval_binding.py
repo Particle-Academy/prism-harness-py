@@ -91,8 +91,14 @@ def test_a_host_step_gets_its_binding_computed_never_taken_as_given() -> None:
             },
         ]
     )
-    (request,) = rows(world.root())[1]["tool_approval_requests"]
+    # Stored computed, never as given; and read as absent on a row the
+    # harness did not write (G-387 round 16): it binds its own call by
+    # position, which is the same call.
+    stored = [entry.message for entry in world.root().thread().messages()]
+    (request,) = stored[1]["tool_approval_requests"]
     assert request[CALL_BINDING] == {"tool_name": "echo", "args_digest": binding_digest({"n": 1})}
+    (read,) = rows(world.root())[1]["tool_approval_requests"]
+    assert CALL_BINDING not in read
 
 
 @pytest.mark.parametrize("field", ["arguments", "name"])

@@ -101,7 +101,9 @@ class EchoWorld(World):
 
 
 def rows_of(world: World) -> list[dict[str, Any]]:
-    return [entry.message for entry in world.fresh().child("worker").thread().messages()]
+    """The child's rows as every reader takes them (G-387 round 16: a mark
+    counts only on a row read with the harness's own flag)."""
+    return world.fresh().child("worker").thread().rows()
 
 
 def resume_child(world: World, approval: str) -> Any:

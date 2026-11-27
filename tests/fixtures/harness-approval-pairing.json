@@ -1,7 +1,7 @@
 {
   "suite": "harness-approval-pairing",
   "schema_version": 1,
-  "corpus_version": "0.4.0",
+  "corpus_version": "0.5.0",
   "generated_by": "Hand-written expectations (G-392), written before any language ran. Each language's runner drives its real runtime offline with a fake model and asserts the outcome equals `expected`; `result` records those measured outcomes.",
   "pins_note": "Whether each approval decision reaches exactly the call it was issued for. Tools: `echo` (gated by mode, integer arg `n`) and `free` (ungated). The fake model's first reply is the row's `calls` in order; every later reply is the text `done`. Each round decides the listed approvals, by index into the parked step's pending approvals in issue order, as one batch where the language has one, then resumes once with an empty prompt; a decision the harness refuses is swallowed and the row continues. Recorded: `approvals` (how many approvals the first step issued), `free` (times the ungated tool ran), `ran` (the sorted `n` of every echo that ran) and (0.2.0) `decided`: the decision the thread RECORDED for each approval the first step issued, in issue order, the first answer or null when none was recorded. On a step whose call ids repeat, every recorded decision is a denial whatever was decided. Rows with `supersede` (0.2.0, DECISION B) first write a row that supersedes the parked step (`assistant_tool_step`, `assistant_text`, `user`, recorded by a host, or `new_message` sent through the harness), then run the rounds, and also record `outcomes`: the first result each call of the first step ended with, in call order, or null. Rows with `later` (0.2.0, SEGMENT OWNERSHIP) record, after the park, a later step with the calls `later.calls` (each `echo` call asking an approval `apr_later_<k>`, k counting that step's echo calls, naming its call id), then ONE result row `later.result` (`id`, `name`, `args`, `result`, plus the approvals of `apr_later_<k>` for each k in `approved`); then `later.rounds` (indexes into the later step's approvals), then the rounds, then `later.resumes` empty-prompt resumes. Every outcome column is read BY SEGMENT: a result counts only for the step whose segment it sits in (the rows after that step and before the next assistant row with tool calls), matched by exact arguments, then id and tool name, then id. Such rows record `outcomes` (the first step's calls), `later_outcomes` (the later step's calls) and `refusals` (each of `later.rounds` then `rounds`).",
   "cases": [
@@ -1626,7 +1626,7 @@
       "id": "apr-0021",
       "title": "a result recorded after a later step, with an earlier same-id call's arguments, answers the later call",
       "since": "0.2.0",
-      "notes": "SEGMENT OWNERSHIP (G-387 round 13b). A result counts only for the calls of the step whose segment it sits in: the rows after that step's assistant row and before the next assistant row with tool calls. Within a segment it is matched to a call by exact arguments, then id and tool name, then id. After the park on `c1` (`echo` {n: 1}) a host records a later step whose one call has the SAME id and tool, `c1` (`echo` {n: 2}), with an approval request `apr_later_0` naming `c1`; the earlier step's open call gets ONE `Tool call was not run because a later step replaced it`, recorded before the later step. Then a host records one result row right after the later step: `c1` / `echo` with the arguments {n: 1}, which are the EARLIER call's and not the later call's. The row carries no decision. It sits in the later step's segment, so it answers the later call (by id and tool name), never the earlier one: the earlier call keeps its one replaced denial, and the later call is done without running. The later round approves `apr_later_0` (recorded: the approval is still pending; the resume runs nothing, because its call already has a result); then the row's round approves the earlier approval (refused, `approval_not_pending`: its step was replaced); two more resumes follow. Nothing runs.",
+      "notes": "SEGMENT OWNERSHIP (G-387 round 13b). A result counts only for the calls of the step whose segment it sits in: the rows after that step's assistant row and before the next assistant row with tool calls. Within a segment it is matched to a call by exact arguments, then id and tool name, then id. After the park on `c1` (`echo` {n: 1}) a host records a later step whose one call has the SAME id and tool, `c1` (`echo` {n: 2}), with an approval request `apr_later_0` naming `c1`; the earlier step's open call gets ONE `Tool call was not run because a later step replaced it`, recorded before the later step. Then a host records one result row right after the later step: `c1` / `echo` with the arguments {n: 1}, which are the EARLIER call's and not the later call's. The row carries no decision. It sits in the later step's segment, so it answers the later call (by id and tool name), never the earlier one: the earlier call keeps its one replaced denial, and the later call is done without running. The later round approves `apr_later_0`: refused, `approval_not_pending`, because its call already has an outcome (0.5.0, G-387 round 16: an approval whose call has an outcome is never pending; it was recorded and never acted on before); then the row's round approves the earlier approval (refused, `approval_not_pending`: its step was replaced); two more resumes follow. Nothing runs.",
       "calls": [
         {
           "id": "c1",
@@ -1687,7 +1687,7 @@
           "forged"
         ],
         "refusals": [
-          null,
+          "approval_not_pending",
           "approval_not_pending"
         ]
       },
@@ -1706,7 +1706,7 @@
             "forged"
           ],
           "refusals": [
-            null,
+            "approval_not_pending",
             "approval_not_pending"
           ]
         },
@@ -1724,7 +1724,7 @@
             "forged"
           ],
           "refusals": [
-            null,
+            "approval_not_pending",
             "approval_not_pending"
           ]
         },
@@ -1742,7 +1742,7 @@
             "forged"
           ],
           "refusals": [
-            null,
+            "approval_not_pending",
             "approval_not_pending"
           ]
         }
@@ -2114,6 +2114,165 @@
           ],
           "outcomes": [
             "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": []
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0026",
+      "title": "a decision on an approval whose call already has a result is refused",
+      "since": "0.5.0",
+      "notes": "G-387 round 16 (item 2). After the park a host records a result row for the gated call (`host`), before any decision. The call has an outcome, so its approval is no longer pending: the round approving it is refused `approval_not_pending` (all or nothing), nothing runs, and the call keeps its one outcome, the host's result. A reader that counts an approval as answered only by a decision accepts it and never acts on it.",
+      "supersede": "host_result",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        }
+      ],
+      "rounds": [
+        [
+          [
+            0,
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "approvals": 1,
+        "free": 0,
+        "ran": [],
+        "decided": [
+          null
+        ],
+        "outcomes": [
+          "host"
+        ],
+        "refusals": [
+          "approval_not_pending"
+        ]
+      },
+      "result": {
+        "php": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null
+          ],
+          "outcomes": [
+            "host"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "ts": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null
+          ],
+          "outcomes": [
+            "host"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null
+          ],
+          "outcomes": [
+            "host"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        }
+      },
+      "agrees": true
+    },
+    {
+      "id": "apr-0027",
+      "title": "a denial recorded after the approved call ran is not the decision that stood",
+      "since": "0.5.0",
+      "notes": "G-387 round 16 (item 1). Every pending approval is recorded approved and one resume runs the call (`ok`). A host then records a decision row denying it. A decision counts only while its call has no outcome (no result, no started row) before it, so the denial never stood: the call ran once, and every reader (the recorded decision here) still says approved.",
+      "supersede": "denial_after_run",
+      "calls": [
+        {
+          "id": "c1",
+          "name": "echo",
+          "args": {
+            "n": 1
+          }
+        }
+      ],
+      "rounds": [],
+      "expected": {
+        "approvals": 1,
+        "free": 0,
+        "ran": [
+          1
+        ],
+        "decided": [
+          true
+        ],
+        "outcomes": [
+          "ok"
+        ],
+        "refusals": []
+      },
+      "result": {
+        "php": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [
+            1
+          ],
+          "decided": [
+            true
+          ],
+          "outcomes": [
+            "ok"
+          ],
+          "refusals": []
+        },
+        "ts": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [
+            1
+          ],
+          "decided": [
+            true
+          ],
+          "outcomes": [
+            "ok"
+          ],
+          "refusals": []
+        },
+        "py": {
+          "approvals": 1,
+          "free": 0,
+          "ran": [
+            1
+          ],
+          "decided": [
+            true
+          ],
+          "outcomes": [
+            "ok"
           ],
           "refusals": []
         }

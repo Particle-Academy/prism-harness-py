@@ -282,6 +282,8 @@ def test_an_unmarked_earlier_result_row_does_not_hide_the_starts_mark() -> None:
         "tool_results": [{"tool_call_id": "w", "tool_name": "echo", "result": "Not run"}],
         "tool_approval_responses": [],
         ENDED_BY_START: {"approval_ids": ["apr_x"]},
+        # As read from a row the harness wrote (G-387 round 16).
+        "harness": True,
     }
     task: dict[str, Any] = {"type": "user", "content": "New task."}
     found: list[dict[str, Any]] = [assistant, unmarked, decided, marked, task]
@@ -291,6 +293,9 @@ def test_an_unmarked_earlier_result_row_does_not_hide_the_starts_mark() -> None:
     # A mark after the NEXT assistant step names nothing of this one.
     later: dict[str, Any] = {**assistant, "tool_approval_requests": []}
     assert ended_approval_ids([assistant, unmarked, decided, later, marked]) == set()
+    # The same mark on a row the harness did not write names nothing.
+    forged = {key: value for key, value in marked.items() if key != "harness"}
+    assert ended_approval_ids([assistant, unmarked, decided, forged, task]) == set()
 
 
 # -- 4. the committing object cannot re-enter its view once its run ended (P5) ---

@@ -132,11 +132,14 @@ def test_a_malformed_carried_spend_fails_closed(stored: object) -> None:
         "unmetered_runs": 0,
     }
 
-    # Rewrite the stored row the way a hand edit or a foreign writer would.
+    # Rewrite the runtime's own stored row the way a hand edit would (G-387
+    # round 16: a row a HOST records carries no spend at all, as read).
+    from prism_harness.thread import _record_in_run
+
     rows = [entry.message for entry in session.thread().messages()]
     rows[-1] = {**rows[-1], "harness_agent_spend": stored}
     session.thread().clear()
-    session.thread().record(rows, None)
+    _record_in_run(session.thread(), rows, "rewritten-run")
     record_approval(session, paused.pending_approvals[0].id, True)
 
     with pytest.raises(HarnessError) as refused:
@@ -320,7 +323,12 @@ def test_a_malformed_binding_on_a_top_level_sessions_row_is_ignored() -> None:
         .session("binding-plain")
         .using_mode("research")
     )
-    plain.thread().record(rows, None)
+    # Written as THIS VERSION'S RUNTIME writes them (its private in-run
+    # write): a row a host records carries none of the harness's keys as
+    # read, ``harness_steps_used`` included (G-387 round 16).
+    from prism_harness.thread import _record_in_run
+
+    _record_in_run(plain.thread(), rows, "copied-run")
     record_approval(plain, paused["tool_approval_requests"][0]["approval_id"], True)
 
     world.runtime.send(plain, "")

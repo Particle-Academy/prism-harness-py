@@ -283,6 +283,27 @@
   reads its replaced step. New rows are numbered after the highest position.
 - The runtime's own in-run recording is private and scoped to the one record
   call it makes; nothing else recorded meanwhile counts as inside the run.
+- Only rows the harness wrote carry its marks: every `harness_*` mark on a
+  row a host records (any run id or none) reads as absent, for every reader,
+  and the denial a host's superseding row makes the harness write is the
+  harness's own. That includes the keys a paused row carries (the binding,
+  the agent's spend, the run tree, the plan ledger and the tool scope). Readers take `thread().rows()`, which carries that.
+- A decision counts only while its call has neither started nor got an
+  outcome, and the replay shows the decision that stood when the call was
+  resolved; a call starts only while its approval still stands.
+- A call that already has an outcome keeps no approval pending.
+- A step's calls that need nobody get a started row before they run, so one
+  whose result was never recorded reads "Tool call was interrupted, it may
+  have run"; every call of a step no longer waiting on a person is sent to the
+  model with a result.
+- A resume stops before its next model step (`run_not_permitted`,
+  `parked_elsewhere`) once a newer step another writer parked on its session
+  waits on approval.
+- A decision a tool records on its own session waits only the configured
+  `lock_wait`, and no lock error text names a session or thread key, a
+  participant or a session name.
+- Reading a long thread is linear: one index per read, and a resume reads the
+  thread a bounded number of times.
 
 ### Parity
 
@@ -290,6 +311,10 @@
   `RunBudgets.allowance`; all twelve rows agree with the reference.
 - harness-plans 0.1.10: the `start_gate` op (hpl-0084..hpl-0089) runs
   `RunStarts.gate`; all six rows agree with the reference.
+- harness-thread-rows 0.6.0 (35 rows: thr-0009 now replays the decision that
+  stood; the new `answer` write and `call_outcomes` / `approval_reads` reads)
+  and harness-approval-pairing 0.5.0 (27 rows; apr-0021 now refuses the late
+  decision): every row agrees with the reference.
 
 ## 0.6.0
 

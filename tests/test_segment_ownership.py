@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 from test_repeated_call_ids import Recording, park, rows, say
 
-from prism_harness import record_approval
+from prism_harness import HarnessError, record_approval
 from prism_harness.plans.thread_facts import approval_decisions
 from prism_harness.thread_rows import (
     REPLACED_STEP,
@@ -174,8 +174,11 @@ def test_a_lossy_result_before_the_decision_still_answers_the_newest_call() -> N
     [new] = [pending.id for pending in parked.pending_approvals]
 
     world.fresh().root().thread().record([lossy_result("echo:2 (another writer)")])
-    # The call has a result, so the decision is recorded and acts on nothing.
-    record_approval(world.fresh().root(), new, True)
+    # The call has a result, so its approval is no longer pending (G-387
+    # round 16): the decision is refused, and nothing runs.
+    with pytest.raises(HarnessError) as refused:
+        record_approval(world.fresh().root(), new, True)
+    assert refused.value.code == "approval_not_pending"
     for _ in range(3):
         resume(world)
 

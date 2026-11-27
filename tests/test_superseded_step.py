@@ -113,7 +113,15 @@ def test_a_host_recorded_row_supersedes_the_parked_step(kind: str, run: str, ste
     stored = rows(world.fresh().root())
     marked = [row for row in stored if SUPERSEDED in row]
     assert [row[SUPERSEDED] for row in marked] == [{"approval_ids": approvals}]
-    assert list(marked[0]) == ["type", "tool_results", "tool_approval_responses", SUPERSEDED]
+    # As read: the harness's own flag beside the stored keys (G-387 round
+    # 16), set on the denial the harness wrote for the host's row.
+    assert list(marked[0]) == [
+        "type",
+        "tool_results",
+        "tool_approval_responses",
+        SUPERSEDED,
+        "harness",
+    ]
     # Placed right before the row that superseded the step.
     at = stored.index(marked[0])
     assert stored[at + 1]["type"] == SUPERSEDING[kind]["type"]
@@ -176,15 +184,21 @@ def test_a_host_row_carrying_the_steps_own_run_id_supersedes_it(kind: str, step:
     assert outcomes_of(world.root(), 2) == [SUPERSEDED_RESULT]
 
 
-@pytest.mark.parametrize(("run", "supersedes"), [("r0", False), ("r1", False), ("r2", True)])
-def test_the_runtime_own_row_is_inside_only_in_an_owning_run(run: str, supersedes: bool) -> None:
+@pytest.mark.parametrize("writer", ["runtime", "host"])
+@pytest.mark.parametrize(("run", "owns"), [("r0", True), ("r1", True), ("r2", False)])
+def test_the_runtime_own_row_is_inside_only_in_an_owning_run(
+    run: str, owns: bool, writer: str
+) -> None:
     """The runtime's own recording (the private _record_in_run) is inside
     when its run owns the step (it recorded the step, r0, or one of its
-    results, r1)."""
+    results, r1). Only rows the HARNESS wrote make a run an owner (G-387
+    round 16): a step and a result a host recorded under those run ids make
+    no run one, so the runtime's row supersedes."""
     from prism_harness.thread import _record_in_run
 
     world = Recording()
-    session = _stored_step(world, [("apr_a", "a"), ("apr_b", "b")], "a")
+    session = _stored_step(world, [("apr_a", "a"), ("apr_b", "b")], "a", writer == "runtime")
+    supersedes = not (owns and writer == "runtime")
 
     _record_in_run(session.thread(), [{"type": "user", "content": "Later."}], run)
 
@@ -239,10 +253,14 @@ def test_a_new_message_supersedes_the_parked_step(decided: bool) -> None:
 # -- the release lines' rules (G-387 round 13) ----------------------------------------
 
 
-def _stored_step(world: Recording, requests: list[tuple[str, str]], prior: str | None) -> Session:
+def _stored_step(
+    world: Recording, requests: list[tuple[str, str]], prior: str | None, runtime: bool = False
+) -> Session:
     """A step as another writer left it: echo calls a (n=1) and b (n=2), the
     requests given, and (optionally) a result for one call recorded under the
-    run ``r1``."""
+    run ``r1``. ``runtime``: both written as the runtime writes its own rows
+    (its private in-run write), else through the public ``record``."""
+    from prism_harness.thread import _record_in_run
     from prism_harness.thread_rows import (
         ToolCallInput,
         assistant_row,
@@ -262,10 +280,17 @@ def _stored_step(world: Recording, requests: list[tuple[str, str]], prior: str |
         ],
     )
     step["harness_tool_names"] = ["echo", "lookup"]
-    session.thread().record([{"type": "user", "content": "go"}, step], "r0")
+    if runtime:
+        _record_in_run(session.thread(), [{"type": "user", "content": "go"}, step], "r0")
+    else:
+        session.thread().record([{"type": "user", "content": "go"}, step], "r0")
     if prior is not None:
         call = calls[0] if prior == "a" else calls[1]
-        session.thread().record([tool_result_row([tool_result_entry(call, "prior")])], "r1")
+        row = tool_result_row([tool_result_entry(call, "prior")])
+        if runtime:
+            _record_in_run(session.thread(), [row], "r1")
+        else:
+            session.thread().record([row], "r1")
     return session
 
 

@@ -244,6 +244,18 @@ class Case:
     #: The index of a call the step holds an IDENTICAL DUPLICATE of, as its
     #: last call (same id, tool and token; G-387 round 15), or None.
     duplicate: int | None = None
+    #: A HOST row carrying a harness mark (one of :data:`FORGED_MARKS`),
+    #: recorded before the decisions, and the run id it is recorded under
+    #: (``none``, ``own``: the parked step's own run, ``other``), or None
+    #: (G-387 round 16). Only rows the harness wrote carry its marks, and a
+    #: run id is never a trust signal, so it changes nothing.
+    forged: tuple[str, str] | None = None
+    #: The run id every inserted host row is recorded under (``none``,
+    #: ``own`` or ``other``): a caller-passed run id is always OUTSIDE.
+    insert_run: str = "none"
+    #: A copy variant written RAW, straight to the store as an older writer
+    #: would (no binding computed, no denial written at the write).
+    raw: bool = False
 
     def describe(self) -> str:
         return json.dumps(
@@ -323,6 +335,9 @@ class Case:
                 **({"concurrent": self.concurrent} if self.concurrent is not None else {}),
                 **({"new_message": True} if self.new_message else {}),
                 **({"duplicate": self.duplicate} if self.duplicate is not None else {}),
+                **({"forged": list(self.forged)} if self.forged is not None else {}),
+                **({"insert_run": self.insert_run} if self.insert_run != "none" else {}),
+                **({"raw": True} if self.raw else {}),
             }
         )
 
@@ -585,7 +600,25 @@ def generate(seed: int, extras: bool = True) -> Case:
     )
     if not extras:
         return base
-    return duplicated(seed, replace(base, insert=copy_variant(seed, base.insert)))
+    return forged_rows(
+        seed, duplicated(seed, replace(base, insert=copy_variant(seed, base.insert)))
+    )
+
+
+#: The harness marks a host row may carry (G-387 round 16): none of them is
+#: honoured on a row the harness did not write.
+FORGED_MARKS = ("ended", "superseded", "started", "answers", "replaced")
+RUNS = ("none", "own", "other")
+
+
+def forged_rows(seed: int, case: Case) -> Case:
+    """The forged-mark row, the inserted rows' run id and the raw copy, each
+    from a stream of its own (every other draw of a seed unchanged)."""
+    rng = random.Random(seed ^ 0xF0F387)
+    forged = (rng.choice(FORGED_MARKS), rng.choice(RUNS)) if rng.random() < 0.35 else None
+    insert_run = rng.choice(RUNS)
+    raw = case.insert is not None and case.insert.variant is not None and rng.random() < 0.5
+    return replace(case, forged=forged, insert_run=insert_run, raw=raw)
 
 
 def forgeries(case: Case) -> Case:
@@ -912,18 +945,95 @@ def forged_row(call: Call) -> dict[str, Any]:
     }
 
 
+def parked_step(session: Session) -> tuple[int, dict[str, Any], str | None]:
+    """The stored parked step: its position, its message and its run id."""
+    entry = next(
+        entry
+        for entry in reversed(session.thread().messages())
+        if entry.message.get("type") == "assistant"
+        and isinstance(entry.message.get("tool_calls"), list)
+        and entry.message["tool_calls"]
+        and all(isinstance(c, dict) for c in entry.message["tool_calls"])
+    )
+    return entry.position, entry.message, entry.run_id
+
+
+def run_named(session: Session, which: str) -> str | None:
+    if which == "none":
+        return None
+    if which == "other":
+        return "run_other"
+    return parked_step(session)[2] or "run_parked"
+
+
+def forged_mark_row(session: Session, mark: str) -> dict[str, Any]:
+    """A host row carrying the harness mark ``mark`` for the parked step."""
+    position, step, _ = parked_step(session)
+    approvals = [
+        r["approval_id"]
+        for r in step.get("tool_approval_requests") or []
+        if isinstance(r, dict) and isinstance(r.get("approval_id"), str)
+    ]
+    first = step["tool_calls"][0]
+    row: dict[str, Any] = {"type": "tool_result", "tool_results": [], "tool_approval_responses": []}
+    if mark == "ended":
+        row["harness_ended_by_start"] = {"approval_ids": approvals}
+    elif mark == "superseded":
+        row["harness_superseded"] = {"approval_ids": approvals}
+    elif mark == "started":
+        row["harness_started"] = {
+            "tool_call_id": first.get("id"),
+            "tool_name": first.get("name"),
+            "approval_id": approvals[0] if approvals else "",
+        }
+        row["harness_answers_step"] = {"position": position}
+    elif mark == "answers":
+        row["harness_answers_step"] = {"position": position}
+    else:
+        row["harness_replaced_step"] = {"position": position}
+    row["harness"] = True  # never trusted from a message
+    return row
+
+
+def raw_append(session: Session, rows: list[dict[str, Any]], run_id: str | None) -> None:
+    """``rows`` written straight to the store, as an older writer would."""
+    store = session.thread()._store
+    key = session.thread().key
+    document = store.get(key) or {}
+    entries = list(document.get("messages") or [])
+    last = max([0, *(e.get("position", 0) for e in entries if isinstance(e, dict))])
+    for offset, row in enumerate(rows):
+        entries.append(
+            {
+                "position": last + offset + 1,
+                "message": row,
+                "run_id": run_id,
+                "recorded_at": "2026-01-01T00:00:00+00:00",
+            }
+        )
+    store.put(key, {**document, "messages": entries})
+
+
 def insert_between(session: Session, case: Case, when: str) -> None:
+    if when == "before_decision" and case.forged is not None:
+        mark, which = case.forged
+        session.thread().record([forged_mark_row(session, mark)], run_named(session, which))
     if case.insert is not None and case.insert.when == when:
+        run = run_named(session, case.insert_run)
         if case.insert.variant is not None:
-            for row in copied_step(session, case.insert):
-                session.thread().record([row])
+            copies = copied_step(session, case.insert)
+            if case.raw:
+                raw_append(session, copies, run)
+                return
+            for row in copies:
+                session.thread().record([row], run)
             return
-        session.thread().record([inserted_row(case)])
+        session.thread().record([inserted_row(case)], run)
         if case.later_forged is not None:
             # In the LATER segment: after the later step. It names a call of
             # the replaced step, so it belongs to no call of the step it is
             # recorded in, and the replaced call keeps its one denial.
-            session.thread().record([forged_row(case.calls[case.later_forged])])
+            session.thread().record([forged_row(case.calls[case.later_forged])], run)
 
 
 def outcomes_by_call(session: Session) -> dict[tuple[str, int], list[str]]:
@@ -1001,7 +1111,13 @@ def outcomes_by_call(session: Session) -> dict[tuple[str, int], list[str]]:
             text = str(result.get("result"))
             again = [i for i in candidates if text in found.get((tag(step), i), [])]
             still = [i for i in candidates if (tag(step), i) not in found]
-            match = (again or still or candidates)[0]
+            if not again and not still:
+                # Every call it could answer already holds an outcome: it
+                # answers nothing new (the harness reader's own rule; seed
+                # 7064 credited a second result to a call that had one).
+                taken.add(candidates[0])
+                continue
+            match = (again or still)[0]
             taken.add(match)
             texts = found.setdefault((tag(step), match), [])
             if str(result.get("result")) not in texts:
@@ -1038,10 +1154,16 @@ def decide(
     approved: bool,
     reason: str | None,
     broken: list[str],
+    answered: bool = False,
 ) -> bool:
     """Record one decision. After a row that superseded the step it must be
     refused, ``approval_not_pending``; a repeated approval id is answered
-    once (the second answer is refused the same way)."""
+    once (the second answer is refused the same way). ``answered``: a call
+    that carries the request's call id already has an outcome (a prior, a
+    forged or a lossy result), so the request may be refused the same way
+    (G-387 round 16: a call with an outcome keeps no approval pending). A
+    refusal the rule did not call for still shows: the outcome it decides
+    differs from the oracle's."""
     superseded = (
         case.insert is not None
         and case.insert.kind in SUPERSEDES
@@ -1051,13 +1173,31 @@ def decide(
         record_approval(session, approval, approved, reason)
     except HarnessError as error:
         if error.code == "approval_not_pending" and (
-            superseded or [r.approval_id for r in case.requests].count(approval) > 1
+            superseded or answered or [r.approval_id for r in case.requests].count(approval) > 1
         ):
             return False
         raise
     if superseded and case.insert is not None:
         broken.append(f"G-397: a decision was recorded after a {case.insert.kind} row")
     return True
+
+
+def answered_before_decision(case: Case, call_id: str) -> bool:
+    """Whether a call of the case step carrying ``call_id`` has an outcome
+    before the decisions are recorded: a prior result, the lossy result's
+    target, or a forged result inserted before the decision."""
+    lossy = cross_target(case)
+    forged = (
+        case.insert.call
+        if case.insert is not None
+        and case.insert.kind == "tool_result"
+        and case.insert.when == "before_decision"
+        else None
+    )
+    return any(
+        call.id == call_id and (call.prior or index == lossy or index == forged)
+        for index, call in enumerate(case.calls)
+    )
 
 
 def check(case: Case) -> list[str]:
@@ -1174,7 +1314,15 @@ def _check(
                 continue
             approval = approval_of[index]
             assert approval is not None
-            if decide(session, case, approval, call.decision == "approve", call.reason, broken):
+            if decide(
+                session,
+                case,
+                approval,
+                call.decision == "approve",
+                call.reason,
+                broken,
+                answered_before_decision(case, call.id),
+            ):
                 decided[approval] = (call.decision, call.reason)
     else:
         store_step(session, case)
@@ -1195,6 +1343,7 @@ def _check(
                 request.decision == "approve",
                 request.reason,
                 broken,
+                answered_before_decision(case, request.tool_call_id),
             ):
                 decided[request.approval_id] = (request.decision, request.reason)
         for at, call in enumerate(gated):
@@ -1305,6 +1454,13 @@ def _check(
     said_ran: dict[str, int] = {}
     for index, call in enumerate(case.calls):
         if not call.gated:
+            # Invariant 5 covers EVERY call (G-387 round 16): an ungated
+            # call that ran has exactly one outcome too.
+            texts = stored.get(("case", index), [])
+            if len(texts) != 1:
+                broken.append(
+                    f"5: ungated {call.token}#{index} has {len(texts)} recorded outcomes {texts}"
+                )
             continue
         texts = stored.get(("case", index), [])
         if len(texts) != 1:
@@ -1367,7 +1523,21 @@ def safe_check(case: Case) -> list[str]:
 
 
 def without_earlier(case: Case, index: int) -> Case:
-    return replace(case, earlier=case.earlier[:index] + case.earlier[index + 1 :])
+    """``case`` less its earlier call at ``index``, with every forgery that
+    names an earlier call by index reindexed (dropped when it named that
+    call): the shrinker once kept ``cross_forged`` pointing past the end."""
+
+    def moved(at: int | None) -> int | None:
+        if at is None or at == index:
+            return None
+        return at - (at > index)
+
+    return replace(
+        case,
+        earlier=case.earlier[:index] + case.earlier[index + 1 :],
+        earlier_forged=moved(case.earlier_forged),
+        cross_forged=moved(case.cross_forged),
+    )
 
 
 def shrink(case: Case) -> tuple[Case, list[str]]:
@@ -1540,6 +1710,20 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     # CONCURRENT_SEEDS pins one of each in every normal run.
     for kind in SUPERSEDES:
         assert any(k.concurrent == kind and oracle(k).runs for k in examined), kind
+    # ONE TRUST SIGNAL (G-387 round 16): every forged mark under every run
+    # id, inserted rows under a forged run id, and raw non-object and MIXED
+    # copies, each generated at least once.
+    for mark in FORGED_MARKS:
+        for which in RUNS:
+            assert any(k.forged == (mark, which) for k in examined), (mark, which)
+    assert any(k.insert is not None and k.insert_run == "own" for k in examined)
+    # The copies are rarer: a wider window of seeds (generating is cheap).
+    raws: list[str | None] = [
+        k.insert.variant
+        for k in (generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + 3000))
+        if k.raw and k.insert is not None
+    ]
+    assert set(JUNK) | set(NEW_CALL) <= set(raws), sorted(str(v) for v in set(raws))
     assert sorted(
         generate(seed, False).concurrent or ""
         for seed in CONCURRENT_SEEDS
@@ -1635,6 +1819,17 @@ def test_the_round_15_shapes_obey_the_rule(shape: str) -> None:
 #: a result was matched to its call by id.
 REGRESSION_SEEDS = (918, 930)
 
+#: The seed the round-15 review found at 400 examples (G-387 round 16): two
+#: identical calls that both had a result, and a lossy result naming the
+#: earlier call. The oracle's counter credited it as a second outcome.
+COUNTER_SEEDS = (7064,)
+
+#: A seed the round-16 generator found (a RAW copy holding a new call, after
+#: a step of two identical calls): the 0.5.x replaced-step row main writes
+#: for the earlier step replayed in the later step's segment, under calls it
+#: does not answer. Pinned with every round-16 stream it draws.
+RAW_SEEDS = (958,)
+
 #: One seed per superseding kind recorded while an approved call runs
 #: (G-404, G-387 round 14): user, assistant_call, assistant_text.
 CONCURRENT_SEEDS = (950, 951, 978)
@@ -1651,6 +1846,32 @@ def test_a_supersede_while_the_approved_call_runs_obeys_the_rule(seed: int) -> N
 def test_the_seeds_that_broke_main_obey_the_rule(seed: int) -> None:
     case = generate(seed, extras=False)
     assert check(case) == [], case.describe()
+
+
+@pytest.mark.parametrize("seed", RAW_SEEDS)
+def test_the_seeds_the_raw_copies_found_obey_the_rule(seed: int) -> None:
+    case = generate(seed)
+    assert case.raw and case.forged is not None
+    assert safe_check(case) == [], case.describe()
+
+
+@pytest.mark.parametrize("seed", COUNTER_SEEDS)
+def test_the_seeds_that_broke_the_counter_obey_the_rule(seed: int) -> None:
+    case = generate(seed)
+    assert safe_check(case) == [], case.describe()
+
+
+def test_the_shrinker_reindexes_the_earlier_forgeries() -> None:
+    """Dropping an earlier call never leaves a forgery naming a call that is
+    gone (the shrinker raised IndexError at seed 7064)."""
+    case = generate(7064)
+    assert case.cross_forged is not None and case.earlier
+    for index in range(len(case.earlier)):
+        smaller = without_earlier(case, index)
+        for at in (smaller.cross_forged, smaller.earlier_forged):
+            assert at is None or 0 <= at < len(smaller.earlier)
+        assert cross_target(smaller) is None or smaller.cross_forged is not None
+        assert not any("IndexError" in problem for problem in safe_check(smaller))
 
 
 def _stored(calls: tuple[Call, ...], requests: tuple[Request, ...]) -> Case:

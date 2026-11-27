@@ -99,7 +99,13 @@ def a_runtime(
 
 
 def rows(session: Session) -> list[dict[str, Any]]:
-    return [entry.message for entry in session.thread().messages()]
+    """The stored messages, less the write-ahead started rows (G-387 round
+    16), which are the harness's own and never replayed."""
+    return [
+        entry.message
+        for entry in session.thread().messages()
+        if "harness_started" not in entry.message
+    ]
 
 
 # -- a structured turn -------------------------------------------------------
