@@ -662,6 +662,41 @@ def _paired(
     return paired
 
 
+#: The result a call recorded as started gets when its result was never
+#: recorded (the store failed after it ran): it is not run again (G-392).
+STARTED_NOT_RECORDED = "Not run again: the call was started, and its result was not recorded"
+
+#: The key on the row the harness records just before it runs approved calls:
+#: ``{"position": N, "approval_ids": [...]}``, the step and the approvals whose
+#: calls it is about to run. Honoured only on a row the harness recorded.
+STARTED = "harness_started"
+
+
+def started_approvals(messages: Sequence[StoredRow]) -> set[str]:
+    """The approvals of the last step with tool calls whose calls the harness
+    recorded as started (G-392)."""
+    steps, _ = _thread_steps(messages)
+    if not steps:
+        return set()
+    position = steps[-1][0]
+    started: set[str] = set()
+    for entry in messages:
+        mark = entry.message.get(STARTED) if entry.message.get("type") == "tool_result" else None
+        if (
+            not entry.harness
+            or not isinstance(mark, dict)
+            or mark.get("position") != position
+            or entry.position <= position
+        ):
+            continue
+        started.update(a for a in _dicts_or_strings(mark.get("approval_ids")))
+    return started
+
+
+def _dicts_or_strings(value: object) -> list[str]:
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
 def own_approvals(messages: Sequence[StoredRow]) -> set[str]:
     """The approval ids the last step with tool calls asked for FIRST (G-408).
 

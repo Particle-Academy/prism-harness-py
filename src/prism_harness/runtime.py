@@ -32,6 +32,8 @@ from prism_harness.thread_rows import (
     REPEATED_CALL_ID,
     REPLACED_BY_LATER_STEP,
     REPLACED_STEP,
+    STARTED,
+    STARTED_NOT_RECORDED,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
@@ -43,6 +45,7 @@ from prism_harness.thread_rows import (
     paired_requests,
     repeats_call_ids,
     replaced_steps,
+    started_approvals,
     step_answers,
     step_position,
     thread_view,
@@ -787,6 +790,34 @@ class AgentRuntime:
             resolved: list[dict[str, Any]] = []
             unusable = unusable_stored_calls([entry.message for entry in live.thread().messages()])
 
+            # Before any approved call runs, record that it was started. If the
+            # store then fails to record its result, a later resume finds it
+            # started with no result and never runs it again (G-392).
+            started = started_approvals(live.thread().messages())
+            starting = [
+                approval_id
+                for row, approval_id in zip(calls, approval_ids, strict=True)
+                if not repeated
+                and approval_id is not None
+                and approval_id not in started
+                and (decision := decisions.get(approval_id)) is not None
+                and decision["approved"]
+                and row["id"] not in unusable
+                and row["id"] not in ambiguous
+                and any(tool.name == row["name"] for tool in bounded)
+            ]
+            if starting:
+                live.thread().record(
+                    [
+                        {
+                            **tool_result_row([]),
+                            STARTED: {"position": step, "approval_ids": starting},
+                        }
+                    ],
+                    run_id,
+                    _HARNESS_RECORDING,
+                )
+
             for row, approval_id in zip(calls, approval_ids, strict=True):
                 call = ToolCallInput(
                     id=row["id"],
@@ -800,6 +831,9 @@ class AgentRuntime:
                     # A repeated id cannot say which decision answers which
                     # call, so none of the step's gated calls runs (G-392).
                     resolved.append(tool_result_entry(call, REPEATED_CALL_ID))
+                elif approval_id is not None and approval_id in started:
+                    # Started before, and its result never recorded.
+                    resolved.append(tool_result_entry(call, STARTED_NOT_RECORDED))
                 elif decision is not None and decision["approved"] and call.id in unusable:
                     resolved.append(
                         tool_result_entry(
