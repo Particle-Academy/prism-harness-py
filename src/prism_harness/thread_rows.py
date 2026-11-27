@@ -234,17 +234,28 @@ def _as_decided(
 
 def _folded(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     view: list[dict[str, Any]] = []
+    barrier = False
 
     for row in rows:
+        if row is _FOLD_BARRIER:
+            barrier = True
+            continue
+
         normalised = _normalise(row, view)
 
         if normalised is None:
             continue
 
-        if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
+        if (
+            not barrier
+            and normalised["type"] == "tool_result"
+            and view
+            and view[-1]["type"] == "tool_result"
+        ):
             view[-1] = _fold(view[-1], normalised)
         else:
             view.append(normalised)
+        barrier = False
 
     return _once(view)
 
@@ -363,10 +374,11 @@ def _counts(acted: Mapping[str, int], approval: str, index: int) -> bool:
 
 def _replayed_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """The stored rows in the order a provider is shown them (G-387 round
-    15): a started row is never replayed; a harness row whose HONOURED mark
-    names a step is replayed in THAT step's result run (directly after the
-    step and the result and system rows that follow it), not where it sits;
-    and a started call with no result is given ONE result there,
+    15): a started row is never replayed; every result row a step owns is
+    replayed in THAT step's result run, directly after the step, past any
+    other row written in between (G-387 round 17): its segment's result rows
+    in stored order, then the harness rows whose HONOURED mark names the
+    step; and a started call with no result is given ONE result there,
     :data:`INTERRUPTED_RESULT`, after those rows. A 0.5.x
     :data:`REPLACED_STEP` row (or one main writes for such a thread) is
     moved to the step it names the same way (G-387 round 16): written after
@@ -409,8 +421,6 @@ def _replayed_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]
         for call in range(len(calls)):
             if call not in done and call not in synthesised.get(step, {}):
                 synthesised.setdefault(step, {})[call] = INTERRUPTED_RESULT
-    if not skip and not synthesised:
-        return list(rows)
     for step, texts in synthesised.items():
         calls = step_calls(rows[step])
         moved.setdefault(step, []).append(
@@ -428,20 +438,120 @@ def _replayed_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]
                 ]
             )
         )
+    # EACH STEP'S RESULT RUN (G-387 round 17): every result row a step owns
+    # (by its honoured mark, or by segment ownership) is replayed directly
+    # after the step, PAST any user, text, system or other row written in
+    # between (a host's row or a nested send while the call ran), then the
+    # results synthesised for it. A provider requires the results of a step
+    # directly after it; one left after a later row would leave every later
+    # request on the session with a call that has no result.
+    #
+    # The rows that already sat directly after the step come first and the
+    # harness rows its mark places with it next, exactly as before; a result
+    # row that sat after some other row follows them behind a fold BARRIER,
+    # so it is not folded into them (the fold lets a later result replace an
+    # earlier one; across a row in between the FIRST stands, see :func:`_once`).
+    placed: set[int] = set(skip)
+    run: dict[int, list[Mapping[str, Any]]] = {}
+    for step in ix.steps:
+        owned = [
+            index
+            for index in ix.owned.get(step, [])
+            if index not in skip and rows[index].get("type") in _RESULT_KINDS
+        ]
+        placed.update(owned)
+        adjacent = 0
+        while adjacent < len(owned) and owned[adjacent] == step + 1 + adjacent:
+            adjacent += 1
+        calls = step_calls(rows[step])
+        answered: dict[int, dict[str, Any]] = {}
+        first: list[Mapping[str, Any]] = []
+        for kept_row in (
+            _answering_only(row, calls, answered, restates=True)
+            for row in [*(rows[index] for index in owned[:adjacent]), *moved.get(step, [])]
+        ):
+            if kept_row is not None:
+                first.append(kept_row)
+        later: list[Mapping[str, Any]] = []
+        previous: int | None = None
+        if owned[adjacent:]:
+            for index in owned[adjacent:]:
+                kept = _answering_only(rows[index], calls, answered)
+                if kept is None:
+                    continue
+                if previous is None or index != previous + 1:
+                    later.append(_FOLD_BARRIER)
+                later.append(kept)
+                previous = index
+        run[step] = [*first, *later]
     out: list[Mapping[str, Any]] = []
-    waiting: list[Mapping[str, Any]] = []
     for index, row in enumerate(rows):
-        if index in skip:
+        if index in placed:
             continue
-        if waiting and row.get("type") not in ("tool_result", "system"):
-            out.extend(waiting)
-            waiting = []
         out.append(row)
-        if index in moved:
-            out.extend(waiting)
-            waiting = list(moved[index])
-    out.extend(waiting)
+        if index in run:
+            out.extend(run[index])
     return out
+
+
+def _answering_only(
+    row: Mapping[str, Any],
+    calls: Sequence[Mapping[str, Any]],
+    answered: dict[int, dict[str, Any]],
+    restates: bool = False,
+) -> Mapping[str, Any] | None:
+    """``row``, one result row of a step's result run, less each result for
+    a call that already has an outcome there: it answers nothing (a provider
+    is sent ONE result per call), recording the calls it does answer in
+    ``answered``. With ``restates`` (the rows that sat directly after the
+    step), a result under the SAME key as the call's outcome is kept, so the
+    fold lets it replace that outcome in place as before; behind a fold
+    barrier the first result stands, as for every outcome reader. None when
+    a row that held results is left with neither results nor decisions. A
+    row in the 0.1.0 one-result shape is kept as it is."""
+    entries = row.get("tool_results")
+    if not isinstance(entries, list):
+        return row
+    taken: set[int] = set()
+    kept: list[Any] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        normal = _normalise({"type": "tool_result", "tool_results": [entry]}, [])
+        assert normal is not None
+        result = normal["tool_results"][0]
+        index = _answered_call(calls, result, taken, answered)
+        if index is None:
+            # It names no call of its step: kept as before (the fold and
+            # :func:`_once` place it), never counted as an outcome.
+            kept.append(entry)
+            continue
+        if index in answered:
+            earlier = answered[index]
+            same = (earlier["tool_call_id"], earlier["tool_name"], _canonical(earlier["args"])) == (
+                result["tool_call_id"],
+                result["tool_name"],
+                _canonical(result["args"]),
+            )
+            if not (restates and same):
+                continue
+        taken.add(index)
+        answered.setdefault(index, result)
+        kept.append(entry)
+    decisions = row.get("tool_approval_responses")
+    if entries and not kept and not (isinstance(decisions, list) and decisions):
+        return None
+    return {**row, "tool_results": kept}
+
+
+#: Between two result rows of one run that were not next to each other as
+#: stored: never folded together (:func:`_folded`), never sent.
+_FOLD_BARRIER: Mapping[str, Any] = {"type": "harness_fold_barrier"}
+
+
+#: The stored row kinds that carry a step's results or decisions, and so
+#: belong in its result run (the 0.1.0 decision row included).
+_RESULT_KINDS = ("tool_result", "tool_approval_response")
 
 
 def _once(view: list[dict[str, Any]]) -> list[dict[str, Any]]:
