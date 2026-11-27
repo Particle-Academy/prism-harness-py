@@ -18,6 +18,7 @@ tool or around a store write, never by timing.
 
 from __future__ import annotations
 
+import re
 import socket
 import time
 from collections.abc import Iterator
@@ -494,8 +495,11 @@ def test_a_decision_from_inside_the_tool_waits_only_the_configured_lock_wait() -
     replay = str(placed_view(session.thread().rows())) + str(
         [request.messages for request in world.requests]
     )
-    for secret in (session.key(), session.thread().key, "ada", "support"):
+    for secret in (session.key(), session.thread().key):
         assert secret not in replay
+    # As WORDS: a random approval id's hex may hold the letters "ada".
+    for name in ("ada", "support"):
+        assert re.search(rf"(?<![0-9A-Za-z]){name}(?![0-9A-Za-z])", replay) is None
 
 
 # -- 7. the replay is linear -----------------------------------------------------
