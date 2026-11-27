@@ -99,9 +99,13 @@ def test_releases_the_lock_when_the_callback_raises(store: SessionStore) -> None
 
 def test_serialises_two_callers_on_the_same_key(store: SessionStore) -> None:
     order: list[str] = []
+    # Signalled from INSIDE the lock, so the second caller starts only once
+    # the first holds it: no sleep racing the thread's start (G-387 round 10).
+    holding = threading.Event()
 
     def slow() -> None:
         order.append("first-in")
+        holding.set()
         time.sleep(0.05)
         order.append("first-out")
 
@@ -110,7 +114,7 @@ def test_serialises_two_callers_on_the_same_key(store: SessionStore) -> None:
 
     first = threading.Thread(target=lambda: store.with_lock("k", slow))
     first.start()
-    time.sleep(0.01)  # let the first caller take the lock
+    assert holding.wait(30)
     store.with_lock("k", quick)
     first.join()
 

@@ -16,6 +16,15 @@ from prism_harness.stores import _file_owner_lock as ownership
 from prism_harness.stores._file_lock_identity import native_identity
 
 
+def wait_until_lapsed(expires_at: int) -> None:
+    """Wait on the lease's own clock until it has lapsed (G-387 round 10):
+    the condition itself, never a sleep guessed to outlast it."""
+    deadline = time.monotonic() + 30
+    while int(time.time()) < expires_at:
+        assert time.monotonic() < deadline, "the lease never lapsed"
+        time.sleep(0.05)
+
+
 @pytest.mark.parametrize("action", ["release", "crash"])
 @pytest.mark.parametrize("blocked_command_path", [False, True])
 def test_real_unknown_worker_excludes_and_preserves_release_or_crash(
@@ -82,7 +91,7 @@ def test_real_unknown_worker_excludes_and_preserves_release_or_crash(
         _, stderr = child.communicate(timeout=30)
         assert child.returncode == 0, stderr
         if action == "crash":
-            time.sleep(1.1)
+            wait_until_lapsed(owner["expires_at"])
             assert owner["expires_at"] <= int(time.time())
             with pytest.raises(HarnessError) as caught:
                 store.with_lock("unknown-key", lambda: calls.append(1), wait_seconds=0)

@@ -24,6 +24,15 @@ from prism_harness.stores._file_lock_identity import (
 )
 
 
+def wait_until_lapsed(expires_at: int) -> None:
+    """Wait on the lease's own clock until it has lapsed (G-387 round 10):
+    the condition itself, never a sleep guessed to outlast it."""
+    deadline = time.monotonic() + 30
+    while int(time.time()) < expires_at:
+        assert time.monotonic() < deadline, "the lease never lapsed"
+        time.sleep(0.05)
+
+
 @pytest.mark.parametrize("blocked_control_paths", [False, True])
 def test_native_independent_live_dead_and_foreign_unknown_production_rows(
     blocked_control_paths: bool,
@@ -104,7 +113,7 @@ def test_native_independent_live_dead_and_foreign_unknown_production_rows(
         old_bytes = owner_path.read_bytes()
         old = json.loads(old_bytes)
         assert old["pid"] == ready["pid"] and old["released"] is False
-        time.sleep(1.1)
+        wait_until_lapsed(old["expires_at"])
         assert old["expires_at"] <= int(time.time())
         probes = 0
         callbacks: list[bool] = []
