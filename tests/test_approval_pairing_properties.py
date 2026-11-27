@@ -87,6 +87,45 @@ MODES = ModeRegistry(
     }
 )
 
+SPENT = ModeRegistry(
+    {
+        "default": "guarded",
+        "modes": {
+            "guarded": {
+                "system_prompt": "Careful.",
+                "tools": [GATED, UNGATED],
+                "max_steps": 1,
+                "requires_approval": [GATED],
+            }
+        },
+    }
+)
+
+#: Rows a host may record while an approval is pending (G-399).
+BETWEEN: dict[str, dict[str, Any]] = {
+    "assistant": {"type": "assistant", "content": "Waiting for your approval."},
+    "user": {"type": "user", "content": "Hurry."},
+    "system": {"type": "system", "content": "A note."},
+    "other": {"type": "developer", "content": "A note."},
+    "tool": {
+        "type": "tool_result",
+        "tool_results": [
+            {
+                "tool_call_id": "elsewhere",
+                "tool_name": UNGATED,
+                "args": {"token": "elsewhere"},
+                "result": f"{UNGATED}:elsewhere",
+                "tool_call_result_id": None,
+                "artifacts": [],
+            }
+        ],
+        "tool_approval_responses": [],
+    },
+}
+
+#: The rows after which a pending step can no longer be resumed into a run.
+ENDS_THE_PAUSE = ("assistant", "user")
+
 SCHEMA: dict[str, Any] = {
     "name": "answer",
     "type": "object",
@@ -143,6 +182,13 @@ class Case:
     resumes: tuple[str, ...] = ("text", "text")
     #: The shape of the send that takes the step (live only).
     first: str = "text"
+    #: A row a host records while the approval is pending (G-399), or None.
+    between: str | None = None
+    #: When: before-decision or after-decision.
+    between_when: str = "before-decision"
+    #: The run has no step left after the step that parked (live only), so a
+    #: resume ends without another model step.
+    spent: bool = False
 
     def describe(self) -> str:
         return json.dumps(
@@ -178,6 +224,12 @@ class Case:
                     else {}
                 ),
                 "decision_order": list(self.decision_order),
+                **(
+                    {"between": self.between, "between_when": self.between_when}
+                    if self.between is not None
+                    else {}
+                ),
+                **({"spent": True} if self.spent else {}),
             }
         )
 
@@ -236,6 +288,9 @@ def generate(seed: int) -> Case:
         decision_order=tuple(decidable),
         resumes=resumes,
         first=rng.choice(("text", "structured")),
+        between=rng.choice((None, *sorted(BETWEEN))),
+        between_when=rng.choice(("before-decision", "after-decision")),
+        spent=path == "live" and rng.random() < 0.5,
     )
 
 
@@ -275,7 +330,11 @@ def oracle(case: Case) -> Expected:
         else:
             own = [r for r in case.requests if r.tool_call_id == call.id]
             decision, reason = (own[0].decision, own[0].reason) if own else ("none", None)
-        if decision == "approve":
+        if decision == "approve" and case.between in ENDS_THE_PAUSE:
+            # A user row or an assistant answer after the step ends the pause:
+            # the approval stands, but the call is refused, never run.
+            expected.outcomes[call.token] = f"Not run: {GATED} is not available to this run."
+        elif decision == "approve":
             expected.runs.append(call.token)
             expected.outcomes[call.token] = f"{GATED}:{call.token}"
         elif decision == "deny":
@@ -393,6 +452,11 @@ def store_step(session: Session, case: Case) -> None:
     session.thread().record(rows)
 
 
+def insert_between(session: Session, case: Case, when: str) -> None:
+    if case.between is not None and case.between_when == when:
+        session.thread().record([BETWEEN[case.between]])
+
+
 def outcomes_by_token(session: Session) -> dict[str, list[str]]:
     """Every stored result, by the token of the call it answers, as STORED (never
     the provider view, which folds results by call id). A resume row restates
@@ -424,7 +488,7 @@ def check(case: Case) -> list[str]:
     expected = oracle(case)
     ran: list[tuple[str, str]] = []
     tools = ToolRegistry().register(TokenTool(GATED, ran)).register(TokenTool(UNGATED, ran))
-    runtime = AgentRuntime(client=a_model(case), modes=MODES, tools=tools)
+    runtime = AgentRuntime(client=a_model(case), modes=SPENT if case.spent else MODES, tools=tools)
     with tempfile.TemporaryDirectory(
         prefix="prism-harness-pairing-", ignore_cleanup_errors=True
     ) as directory:
@@ -467,6 +531,7 @@ def _check(
             broken.append(f"6: the first step reported tool_calls {first.tool_calls}")
         for call, p in zip(gated, pending, strict=True):
             approval_of[call.token] = p.id
+        insert_between(session, case, "before-decision")
         for index in case.decision_order:
             call = gated[index]
             if call.decision == "none":
@@ -477,6 +542,7 @@ def _check(
             decided[approval] = (call.decision, call.reason)
     else:
         store_step(session, case)
+        insert_between(session, case, "before-decision")
         for index in case.decision_order:
             request = case.requests[index]
             if request.decision == "none":
@@ -489,6 +555,7 @@ def _check(
             own = [r.approval_id for r in case.requests if r.tool_call_id == call.id]
             approval_of[call.token] = own[0] if len(own) == 1 else None
 
+    insert_between(session, case, "after-decision")
     before = len(ran)
     resumed = a_send(runtime, session, case.resumes[0], "")
     ran_now = [token for name, token in ran[before:] if name == GATED]
@@ -690,5 +757,21 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     )
     assert any("structured" in k.resumes for k in examined)
     assert any(k.path == "live" and k.first == "structured" for k in examined)
+    for kind in BETWEEN:
+        for when in ("before-decision", "after-decision"):
+            assert any(k.between == kind and k.between_when == when for k in examined)
+    # The shape that ran an approved call again (G-399): a note recorded
+    # after the decision, and no model step after the resume. Reached by the
+    # FIXED set the normal test run uses, not only by the long run.
+    fast = [
+        generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + DEFAULT_EXAMPLES)
+    ]
+    assert any(
+        k.spent
+        and k.between in ("system", "other")
+        and k.between_when == "after-decision"
+        and oracle(k).runs
+        for k in fast
+    )
     outcomes = {text for e in expectations for text in e.outcomes.values()}
     assert {REPEATED, NO_DECISION, DEFAULT_DENIAL} <= outcomes
