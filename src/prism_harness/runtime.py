@@ -47,6 +47,8 @@ from prism_harness.subagents import (
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     REPEATED_CALL_ID,
+    SUPERSEDED,
+    SUPERSEDED_RESULT,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
@@ -61,8 +63,12 @@ from prism_harness.thread_rows import (
     paused_approval_row,
     pending_approval_ids,
     repeats_call_ids,
+    replaced_earlier_steps,
+    replaced_step_row,
     requested_step,
     step_requests,
+    step_rows,
+    step_superseded,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -1736,7 +1742,9 @@ class AgentRuntime:
         """
         # A read without the lock first: nearly every send() has nothing to
         # resolve and should not wait on the session lock to find that out.
-        if self._unresolved(session, mode) is None:
+        if self._unresolved(session, mode) is None and not replaced_earlier_steps(
+            [entry.message for entry in session.thread().messages()]
+        ):
             return list(offered)
 
         # Then under the session lock, reading again inside it. Two workers
@@ -1745,12 +1753,26 @@ class AgentRuntime:
         # finds the result the first recorded, and runs nothing. If it cannot get
         # the lock it raises, and nothing runs.
         def resolve(live: Session) -> list[HarnessTool]:
+            # An earlier step a later one replaced, left with calls that have
+            # no outcome (a thread the 0.5.x line wrote): each gets its one
+            # denial first, and nothing of it runs (G-387 round 13).
+            earlier = replaced_earlier_steps([entry.message for entry in live.thread().messages()])
+            if earlier:
+                live.thread().record(
+                    [replaced_step_row(at, calls) for at, calls in earlier], run_id
+                )
             work = self._unresolved(live, mode)
 
             if work is None:
                 return list(offered)
 
             calls, results, decisions, approval_ids, scope, ambiguous, repeated = work
+            # A step a row in the thread already superseded, never answered
+            # for it (a thread the 0.5.x line wrote): each call with no
+            # result gets its one replaced-step denial (G-387 round 13).
+            superseded = step_superseded(
+                [(entry.message, entry.run_id) for entry in live.thread().messages()]
+            )
             # Bind calls, decisions and scope from the same locked snapshot.
             # A concurrent narrower approval also bounds the continuation.
             if scope is not None and scope[1] and not legacy_diagnostic_emitted:
@@ -1773,7 +1795,10 @@ class AgentRuntime:
                 decision = decisions.get(approval_id) if approval_id is not None else None
 
                 declared = _offered(bounded, call.name)
-                if repeated:
+                if superseded:
+                    self._tool_decision(ToolDenied, live, run_id, call, declared, "policy")
+                    resolved.append(tool_result_entry(call, SUPERSEDED_RESULT))
+                elif repeated:
                     # A repeated id cannot say which decision answers which
                     # call, so none of the step's gated calls runs (G-392).
                     self._tool_decision(ToolDenied, live, run_id, call, declared, "policy")
@@ -1808,10 +1833,14 @@ class AgentRuntime:
                         tool_result_entry(call, decision["reason"] or "User denied tool execution")
                     )
 
-            live.thread().record(
-                [tool_result_row([*results, *resolved], list(decisions.values()))],
-                run_id,
-            )
+            answer = tool_result_row([*results, *resolved], list(decisions.values()))
+            if superseded:
+                answer[SUPERSEDED] = {
+                    "approval_ids": list(
+                        dict.fromkeys(approval for approval in approval_ids if approval)
+                    )
+                }
+            live.thread().record([answer], run_id)
             return bounded
 
         options = self._settings(session)
@@ -1869,7 +1898,7 @@ class AgentRuntime:
             and isinstance(rows[i].get("tool_calls"), list)
             and any(isinstance(call, dict) for call in rows[i]["tool_calls"])
         )
-        answered = call_results(assistant["tool_calls"], rows[at + 1 :])
+        answered = call_results(assistant["tool_calls"], step_rows(rows, at))
         results = [answered[i] for i in sorted(answered)]
         # Which decision counts comes from the stored rows, the FIRST recorded
         # for an approval id standing; the view folds later over earlier. A

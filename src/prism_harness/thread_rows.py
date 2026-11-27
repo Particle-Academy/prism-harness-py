@@ -14,6 +14,7 @@ import json
 import math
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any
 
 from prism_harness.tool_arguments import usable_arguments
@@ -264,7 +265,7 @@ def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     # Which call has a result is matched BY POSITION (G-387 round 13): a
     # result under a repeated id answers ONE call, never every call that
     # carries the id.
-    done = call_results(_dicts(rows[index].get("tool_calls")), rows[index + 1 :])
+    done = call_results(_dicts(rows[index].get("tool_calls")), step_rows(rows, index))
     found: list[str] = []
     for request, call in step_requests(rows, index):
         approval_id = request.get("approval_id")
@@ -303,8 +304,26 @@ def superseded_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     """The approval ids whose call was denied because a later step replaced
     the step it was asked on (DECISION B, G-387 round 13): never approved,
     whatever decision was recorded. Recognised only by :data:`SUPERSEDED`,
-    scoped exactly as :func:`ended_approval_ids` is."""
-    return _marked(rows, SUPERSEDED)
+    scoped exactly as :func:`ended_approval_ids` is; and, in a thread the
+    0.5.x line wrote, the approvals of the calls its :data:`REPLACED_STEP`
+    rows answer (G-387 round 13)."""
+    found = _marked(rows, SUPERSEDED)
+    for row in rows:
+        mark = row.get(REPLACED_STEP)
+        if row.get("type") != "tool_result" or not isinstance(mark, dict):
+            continue
+        position = mark.get("position")
+        if type(position) is not int or not 1 <= position <= len(rows):
+            continue
+        step = position - 1
+        if rows[step].get("type") != "assistant":
+            continue
+        answered = call_results(_dicts(rows[step].get("tool_calls")), [row])
+        for request, call in step_requests(rows, step):
+            approval = request.get("approval_id")
+            if call in answered and isinstance(approval, str) and approval:
+                found.add(approval)
+    return found
 
 
 def _marked(rows: Sequence[Mapping[str, Any]], key: str) -> set[str]:
@@ -413,6 +432,8 @@ def _denial_before(
     answered: set[int] = set()
     owners: set[str | None] = {runs[step]}
     for index in range(step + 1, len(rows)):
+        if not belongs_to(rows[index], step):
+            continue
         found = call_results(calls, [rows[index]])
         if found:
             answered |= set(found)
@@ -445,6 +466,117 @@ def _denial_before(
             )
         )
     }
+    return row
+
+
+#: The key the 0.5.x line writes on the row answering an EARLIER step's
+#: calls that a later step replaced, ``{position: <the thread position of
+#: that step's assistant row>}``, with :data:`SUPERSEDED_RESULT` per call.
+#: Main reads it (G-387 round 13: a 0.27 main reads the threads its released
+#: line wrote) and writes it for the same case: an earlier step of a thread
+#: that line wrote whose calls a later step left with no outcome.
+REPLACED_STEP = "harness_replaced_step"
+
+
+def belongs_to(row: Mapping[str, Any], step: int) -> bool:
+    """Whether a row recorded after the step at index ``step`` may answer it:
+    every row does, except a :data:`REPLACED_STEP` row naming another step
+    (it answers only the step at its position, wherever it sits)."""
+    mark = row.get(REPLACED_STEP)
+    if not isinstance(mark, dict):
+        return True
+    position = mark.get("position")
+    return type(position) is int and position == step + 1
+
+
+def step_rows(rows: Sequence[Mapping[str, Any]], step: int) -> list[Mapping[str, Any]]:
+    """The rows after the step at index ``step`` that may answer it."""
+    return [row for row in rows[step + 1 :] if belongs_to(row, step)]
+
+
+def replaced_earlier_steps(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[tuple[int, list[dict[str, Any]]]]:
+    """Every EARLIER step with tool calls (one a later step with tool calls
+    followed) whose calls have no outcome, by index, with those calls
+    (G-387 round 13). Main denies such calls when the later step is recorded;
+    a thread the 0.5.x line wrote can hold one it never answered. A result
+    counts when recorded between the step and the next one, or marked for it
+    (:data:`REPLACED_STEP`) anywhere after."""
+    steps = [
+        index
+        for index, row in enumerate(rows)
+        if row.get("type") == "assistant" and _dicts(row.get("tool_calls"))
+    ]
+    found: list[tuple[int, list[dict[str, Any]]]] = []
+    for at, following in pairwise(steps):
+        calls = _dicts(rows[at].get("tool_calls"))
+        own = [
+            row
+            for index, row in enumerate(rows)
+            if index > at
+            and (
+                (index < following and belongs_to(row, at))
+                or (isinstance(row.get(REPLACED_STEP), dict) and belongs_to(row, at))
+            )
+        ]
+        answered = call_results(calls, own)
+        open_calls = [call for index, call in enumerate(calls) if index not in answered]
+        if open_calls:
+            found.append((at, open_calls))
+    return found
+
+
+def step_superseded(
+    stored: Sequence[tuple[Mapping[str, Any], str | None]],
+) -> bool:
+    """Whether the last step with tool calls was superseded by a row already
+    in the thread (an assistant or user row recorded outside its owning
+    runs, :func:`superseding_denials`) without being answered for it: a
+    thread the 0.5.x line wrote, which denied a superseded step only when it
+    resumed it. Its calls with no result are then answered with
+    :data:`SUPERSEDED_RESULT` (G-387 round 13)."""
+    rows = [row for row, _ in stored]
+    runs = [run for _, run in stored]
+    step = next(
+        (
+            index
+            for index in range(len(rows) - 1, -1, -1)
+            if rows[index].get("type") == "assistant" and _dicts(rows[index].get("tool_calls"))
+        ),
+        None,
+    )
+    if step is None:
+        return False
+    calls = _dicts(rows[step].get("tool_calls"))
+    owners: set[str | None] = {runs[step]}
+    for index in range(step + 1, len(rows)):
+        if belongs_to(rows[index], step) and call_results(calls, [rows[index]]):
+            owners.add(runs[index])
+    return any(
+        rows[index].get("type") in ("assistant", "user")
+        and (runs[index] is None or runs[index] not in owners)
+        for index in range(step + 1, len(rows))
+    )
+
+
+def replaced_step_row(at: int, calls: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The row answering ``calls`` of the earlier step at index ``at`` with
+    one denial each, in the 0.5.x line's shape."""
+    row = tool_result_row(
+        [
+            {
+                "tool_call_id": _text(call.get("id")),
+                "tool_name": _text(call.get("name")),
+                "args": usable_arguments(call.get("arguments")) or {},
+                "result": SUPERSEDED_RESULT,
+                "tool_call_result_id": _nullable_text(call.get("result_id")),
+                "artifacts": [],
+            }
+            for call in calls
+        ]
+    )
+    row[REPLACED_STEP] = {"position": at + 1}
     return row
 
 
@@ -672,6 +804,7 @@ def step_requests(
     ran: set[int] = set()
     if (
         following is not None
+        and belongs_to(following, index)
         and following.get("type") == "tool_result"
         and not _dicts(following.get("tool_approval_responses"))
         and ENDED_BY_START not in following

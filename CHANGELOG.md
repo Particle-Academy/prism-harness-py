@@ -241,6 +241,13 @@
   later decision is refused. Only a resume (an empty prompt) acts on
   decisions.
 
+- Threads the 0.5.x line wrote resume correctly: its `harness_replaced_step`
+  row answers only the step at its position, wherever it sits, and its
+  approvals read as no decision. An earlier step a later one replaced, or a
+  last step a recorded row already superseded, with calls the 0.5.x line
+  never answered, gets its one denial when main resumes it, and nothing of it
+  runs.
+
 ### Parity
 
 - harness-plans 0.1.9: the `step_allowance` op (hpl-0072..hpl-0083) runs

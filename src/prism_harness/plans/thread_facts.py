@@ -16,6 +16,7 @@ from prism_harness.thread_rows import (
     repeats_call_ids,
     requested_step,
     step_requests,
+    step_rows,
     superseded_approval_ids,
 )
 from prism_harness.tool_policy import args_digest
@@ -97,7 +98,7 @@ def approved_calls_awaiting_result(rows: Rows, name: str, digest: str) -> int:
     finished: set[str] = set()
     # Only the step requested_step() selects (G-397).
     at = requested_step(rows)
-    for row in reversed(rows[at + 1 :] if at is not None else []):
+    for row in reversed(step_rows(rows, at) if at is not None else []):
         if row.get("type") == "tool_result":
             for result in _dicts(row.get("tool_results")):
                 if isinstance(result.get("tool_call_id"), str):
