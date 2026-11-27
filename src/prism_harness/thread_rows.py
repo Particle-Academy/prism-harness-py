@@ -151,8 +151,9 @@ def thread_view(
     the run resumes. Rows are never rewritten, so all of them stay stored; shown
     to a provider separately, a tool output would go twice. Folded, a result is
     keyed by its tool call id, tool name and arguments (never the id alone; see
-    :func:`_fold`) and a decision by its approval id, and a later one replaces
-    an earlier one in the earlier one's position.
+    :func:`_fold`), and a later one replaces an earlier one in the earlier
+    one's position. A decision is keyed by its approval id, and the
+    any DENY for an approval is final (G-401).
     """
     view: list[dict[str, Any]] = []
     # The view row holding the current step's results: a step's result rows
@@ -219,6 +220,38 @@ def thread_view(
             answers[current] = segment_results if segment_results is not None else len(view) - 1
 
     return view
+
+
+def standing_decision(
+    earlier: Mapping[str, Any] | None, later: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Which of two decisions for one approval stands: any DENY is final, so a
+    deny is never lifted, and an approve is revoked by a later deny (G-401)."""
+    if earlier is None:
+        return dict(later)
+    if earlier.get("approved") is not True:
+        return dict(earlier)
+    if later.get("approved") is not True:
+        return dict(later)
+    return dict(earlier)
+
+
+def decided(rows: Sequence[Mapping[str, Any]], approval_id: str) -> set[bool]:
+    """The verdicts the thread already holds for ``approval_id`` (G-401)."""
+    view: list[dict[str, Any]] = []
+    verdicts: set[bool] = set()
+    for row in rows:
+        normalised = _normalise(row, view)
+        if normalised is None:
+            continue
+        if normalised["type"] == "tool_result":
+            verdicts.update(
+                decision["approved"] is True
+                for decision in normalised["tool_approval_responses"]
+                if decision["approval_id"] == approval_id
+            )
+        view.append(normalised)
+    return verdicts
 
 
 def approval_run_steps(
@@ -369,8 +402,8 @@ def step_answers(
 
     The results are in stored order and NOT folded by call id: folded, a
     result is keyed by its call id, so with a repeated id one call's result
-    reads as another's. A decision is keyed by its approval id, and a later
-    one replaces an earlier one, as the thread view folds them.
+    reads as another's. A decision is keyed by its approval id, and any DENY
+    for an approval is final, as the thread view folds them (G-401).
     """
     view: list[dict[str, Any]] = []
     entries: list[dict[str, Any]] = []
@@ -391,7 +424,9 @@ def step_answers(
         elif normalised["type"] == "tool_result":
             entries.extend(normalised["tool_results"])
             for decision in normalised["tool_approval_responses"]:
-                decisions[decision["approval_id"]] = decision
+                decisions[decision["approval_id"]] = standing_decision(
+                    decisions.get(decision["approval_id"]), decision
+                )
 
         if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
             view[-1] = _fold(view[-1], normalised)
@@ -926,7 +961,9 @@ def _fold(earlier: Mapping[str, Any], later: Mapping[str, Any]) -> dict[str, Any
             results[(same[0], same[1], same[2], seen[same])] = entry
 
     for decision in [*earlier["tool_approval_responses"], *later["tool_approval_responses"]]:
-        decisions[decision["approval_id"]] = decision
+        decisions[decision["approval_id"]] = standing_decision(
+            decisions.get(decision["approval_id"]), decision
+        )
 
     return tool_result_row(list(results.values()), list(decisions.values()))
 

@@ -210,6 +210,14 @@ class Case:
     #: Stored only: arguments stored as JSON strings, as the PHP reference
     #: writes them, for the calls and for the results already present.
     string_arguments: bool = False
+    #: A SECOND decision, the opposite of the first, for the first approval
+    #: decided (G-401); with ``second_after_failure``, recorded after a turn
+    #: that failed before acting on any decision. The first decision stands.
+    second: bool = False
+    second_after_failure: bool = False
+    #: The second decision written straight onto the thread, as another
+    #: writer would, rather than through ``record_approval``.
+    second_direct: bool = False
     #: A later step with tool calls a host records after the park, or None.
     later: Later | None = None
     #: Stored only: an EARLIER parked step the case's step followed. Each of its
@@ -318,6 +326,16 @@ class Case:
                     else {}
                 ),
                 **({"string_arguments": True} if self.string_arguments else {}),
+                **(
+                    {
+                        "second_decision": "after-failed-turn"
+                        if self.second_after_failure
+                        else "batch",
+                        **({"second_direct": True} if self.second_direct else {}),
+                    }
+                    if self.second
+                    else {}
+                ),
             }
         )
 
@@ -617,6 +635,9 @@ def generate(seed: int) -> Case:
             else None
         ),
         later=later_step(seed, calls, insert),
+        second=(second := random.Random(seed ^ 0x401401).random() < 0.35),
+        second_after_failure=second and random.Random(seed ^ 0x401402).random() < 0.5,
+        second_direct=second and random.Random(seed ^ 0x401403).random() < 0.4,
         earlier=tuple(earlier),
         string_arguments=path == "stored" and rng.random() < 0.3,
         spent=path == "live" and rng.random() < 0.8,
@@ -643,6 +664,36 @@ class Expected:
 def copied(case: Case) -> bool:
     """Whether the case records a copy of the paused step (G-408)."""
     return case.copy is not None and case.later is None
+
+
+#: Which of two decisions for one approval stands (G-401): ``first`` (the
+#: first recorded) or ``deny`` (any deny is final).
+DECISION_RULE = "deny"
+
+
+def second_decided(case: Case) -> str | None:
+    """The approval the case records a second, opposite decision for: its key
+    (a call token, live; a request index, stored), or None."""
+    if not case.second:
+        return None
+    if case.path == "live":
+        gated = [c for c in case.calls if c.gated]
+        for index in case.decision_order:
+            if gated[index].decision != "none":
+                return gated[index].token
+        return None
+    for index in case.decision_order:
+        if case.requests[index].decision != "none":
+            return case.requests[index].approval_id
+    return None
+
+
+def standing(case: Case, key: str, decision: str, reason: str | None) -> tuple[str, str | None]:
+    """The decision that stands for one approval, given the rule."""
+    if second_decided(case) != key or DECISION_RULE == "first" or decision == "deny":
+        return decision, reason
+    # Denial wins: the second decision, a deny, revokes the approve.
+    return "deny", "second"
 
 
 def oracle(case: Case) -> Expected:
@@ -725,10 +776,14 @@ def oracle(case: Case) -> Expected:
             expected.outcomes[call.token] = REPEATED
             continue
         if case.path == "live":
-            decision, reason = call.decision, call.reason
+            decision, reason = standing(case, call.token, call.decision, call.reason)
         else:
             own = [r for r in case.requests if r.tool_call_id == call.id]
-            decision, reason = (own[0].decision, own[0].reason) if own else ("none", None)
+            decision, reason = (
+                standing(case, own[0].approval_id, own[0].decision, own[0].reason)
+                if own
+                else ("none", None)
+            )
         if decision == "approve":
             expected.runs.append(call.token)
             expected.outcomes[call.token] = f"{GATED}:{call.token}"
@@ -1093,7 +1148,7 @@ def _check(
             approval = approval_of[call.token]
             assert approval is not None
             record_approval(session, approval, call.decision == "approve", call.reason)
-            decided[approval] = (call.decision, call.reason)
+            decided.setdefault(approval, (call.decision, call.reason))
     else:
         store_step(session, case)
         for old in case.earlier:
@@ -1107,11 +1162,44 @@ def _check(
             record_approval(
                 session, request.approval_id, request.decision == "approve", request.reason
             )
-            decided[request.approval_id] = (request.decision, request.reason)
+            decided.setdefault(request.approval_id, (request.decision, request.reason))
         for call in gated:
             own = [r.approval_id for r in case.requests if r.tool_call_id == call.id]
             approval_of[call.token] = own[0] if len(own) == 1 else None
 
+    denied: set[str] = set()
+    if case.second and decided:
+        # The opposite of the first decision recorded, for the same approval.
+        # Any deny is final; an approve after a deny records nothing (G-401).
+        approval, (verdict, _) = next(iter(decided.items()))
+        if case.second_after_failure:
+            try:
+                runtime.send(session, "", ["not-a-tool"])
+            except HarnessError as error:
+                if error.code != "tool_not_available":
+                    raise
+            else:
+                broken.append("G-401: a turn asking for an unknown tool did not fail")
+        if verdict == "approve":
+            denied.add(approval)
+        if case.second_direct:
+            session.thread().record(
+                [
+                    {
+                        "type": "tool_result",
+                        "tool_results": [],
+                        "tool_approval_responses": [
+                            {
+                                "approval_id": approval,
+                                "approved": verdict != "approve",
+                                "reason": "second",
+                            }
+                        ],
+                    }
+                ]
+            )
+        else:
+            record_approval(session, approval, verdict != "approve", "second")
     insert_between(session, case, "after_decision")
     before = len(ran)
     resumed = a_send(runtime, session, case.resumes[0], "")
@@ -1122,13 +1210,17 @@ def _check(
         broken.append(f"equality: ran {sorted(ran_now)}, the rule runs {sorted(expected.runs)}")
     if any(name == UNGATED for name, _ in ran[before:]):
         broken.append("3: a resume ran an ungated call the step had already run")
-    # 1. A denied call never runs.
+    # 1. A denied call never runs: with no exemption, a call ran under an
+    # approval for which ANY deny was recorded is broken (G-401).
+    denied.update(a for a, (verdict, _) in decided.items() if verdict == "deny")
     for call in gated:
         approval = approval_of.get(call.token)
         if call.token in ran_now and (
             approval is None or decided.get(approval, ("none",))[0] != "approve"
         ):
             broken.append(f"1: {call.token} ran without its own approve")
+        if call.token in ran_now and approval in denied:
+            broken.append(f"1: {call.token} ran though a deny was recorded for its approval")
     # 2. One decision decides at most one call.
     used = [approval_of.get(t) for t in ran_now]
     if None in used or len(set(used)) != len(used):
@@ -1427,6 +1519,42 @@ def _twin_across_steps(k: Case, e: Expected, *, prior: bool, strings: bool) -> b
     )
 
 
+def _second_decision(k: Case, e: Expected, *, path: str, failure: bool) -> bool:
+    """A second decision that, if it counted wrongly, would run a denied call."""
+    return (
+        k.path == path
+        and k.second
+        and k.second_after_failure == failure
+        and not e.repeated
+        and k.insert is None
+        and k.later is None
+        and (
+            any(c.gated and c.decision == "deny" for c in k.calls)
+            or any(r.decision == "deny" for r in k.requests)
+        )
+    )
+
+
+def _deny_after_approve(k: Case, e: Expected, *, path: str) -> bool:
+    """A second decision, a deny, after an approve that would otherwise run."""
+    if not (k.path == path and k.second and not e.repeated and k.insert is None):
+        return False
+    if k.later is not None:
+        return False
+    if path == "live":
+        gated = [c for c in k.calls if c.gated]
+        first = next((gated[i] for i in k.decision_order if gated[i].decision != "none"), None)
+        return first is not None and first.decision == "approve"
+    request = next(
+        (k.requests[i] for i in k.decision_order if k.requests[i].decision != "none"), None
+    )
+    return request is not None and request.decision == "approve"
+
+
+def _second_direct(k: Case, e: Expected, *, direct: bool) -> bool:
+    return k.second and k.second_direct == direct
+
+
 def _shapes() -> dict[str, Shape]:
     """Every shape the property claims to reach. The normal CI run includes,
     beside its fixed seeds, the first seed that reaches each one, so each is
@@ -1524,6 +1652,19 @@ def _shapes() -> dict[str, Shape]:
     for credited in (True, False):
         shapes[f"forged in later segment, credited={credited}"] = functools.partial(
             _forged_in_later_segment, credited=credited
+        )
+    for path in ("live", "stored"):
+        for failure in (False, True):
+            shapes[f"second decision (G-401), {path}, after a failed turn={failure}"] = (
+                functools.partial(_second_decision, path=path, failure=failure)
+            )
+    for path in ("live", "stored"):
+        shapes[f"second decision (G-401), a deny after an approve, {path}"] = functools.partial(
+            _deny_after_approve, path=path
+        )
+    for direct in (True, False):
+        shapes[f"second decision (G-401), written directly={direct}"] = functools.partial(
+            _second_direct, direct=direct
         )
     for prior in (True, False):
         for strings in (True, False):

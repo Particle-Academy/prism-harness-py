@@ -39,6 +39,7 @@ from prism_harness.thread_rows import (
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
+    decided,
     last_step_results,
     last_step_superseded,
     own_approvals,
@@ -1112,7 +1113,15 @@ def record_approval(
     pending, record them all first.
 
     ``approval_id`` is :attr:`PendingApproval.id`, not the tool call id.
+
+    ANY DENY IS FINAL. A decision for an approval that already has a deny
+    records nothing, and nor does an approve for one already approved; a deny
+    after an approve is recorded and revokes it (G-401).
     """
+    verdicts = decided([entry.message for entry in session.thread().messages()], approval_id)
+    if False in verdicts or (approved and True in verdicts):
+        return
+
     run = session.run()
 
     session.thread().record(
