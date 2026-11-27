@@ -167,7 +167,12 @@ OWN: dict[str, list[dict[str, Any]]] = {
             "type": "tool_result",
             "tool_results": [
                 {"tool_call_id": "h1", "tool_name": "shout", "args": {}, "result": "ok"},
-                {"tool_call_id": "h1", "tool_name": "shout", "args": {"value": "b"}, "result": "ok"},
+                {
+                    "tool_call_id": "h1",
+                    "tool_name": "shout",
+                    "args": {"value": "b"},
+                    "result": "ok",
+                },
             ],
         },
     ],

@@ -183,13 +183,14 @@ def thread_view(
 
         if (
             normalised["type"] == "assistant"
-            and not normalised["tool_calls"]
             and not entries[index].harness
+            and not _own_content(normalised)
         ):
-            # A host's assistant row without tool calls sends no tool call in
-            # its provider-native content either: nobody would answer it, and
-            # the provider refuses an unanswered tool call (G-415).
-            normalised["additional_content"] = _without_tool_items(normalised["additional_content"])
+            # A client replays provider-native content in place of the row's
+            # text and tool calls. On a host's row it is sent only when it is
+            # the row's own; otherwise the row is sent as its text and tool
+            # calls (G-415).
+            normalised["additional_content"] = {}
 
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             segment_results = None
@@ -276,26 +277,86 @@ def decided(rows: Sequence[Mapping[str, Any]], approval_id: str) -> set[bool]:
     return verdicts
 
 
-def _without_tool_items(extra: Mapping[str, Any]) -> dict[str, Any]:
-    """Provider-native content with its tool items left out: Anthropic
-    ``content_blocks`` of a ``*tool_use`` type and OpenAI ``output_items`` of a
-    ``*_call`` type. Everything else is kept as stored."""
-    kept = dict(extra)
-    blocks = kept.get("content_blocks")
-    if isinstance(blocks, list):
-        kept["content_blocks"] = [
-            b
-            for b in blocks
-            if not (isinstance(b, dict) and str(b.get("type", "")).endswith("tool_use"))
-        ]
-    items = kept.get("output_items")
-    if isinstance(items, list):
-        kept["output_items"] = [
-            i
-            for i in items
-            if not (isinstance(i, dict) and str(i.get("type", "")).endswith("_call"))
-        ]
-    return kept
+#: Provider-native keys a client replays that cannot be checked against the
+#: row's text and tool calls: reasoning (G-415).
+_UNCHECKABLE_KEYS = ("thinking", "thinking_signature", "thinking_blocks")
+
+
+def _own_content(row: Mapping[str, Any]) -> bool:
+    """Whether an assistant row's provider-native content is its OWN (G-415).
+
+    Its tool items (Anthropic ``content_blocks`` of a ``*tool_use`` type,
+    OpenAI ``output_items`` of a ``*_call`` type) are exactly the row's
+    ``tool_calls`` by id and name, as a multiset; its text is the row's
+    ``content``; and it holds nothing else a client would replay that cannot
+    be checked against the row, such as a reasoning item. Content with no
+    replayed keys is trivially the row's own.
+    """
+    extra = row["additional_content"]
+    if any(key in extra for key in _UNCHECKABLE_KEYS):
+        return False
+    calls = sorted((call["id"], call["name"]) for call in row["tool_calls"])
+    blocks = extra.get("content_blocks")
+    if blocks is not None and not _own_items(
+        blocks, row["content"], calls, _anthropic_text, _anthropic_tool
+    ):
+        return False
+    items = extra.get("output_items")
+    return items is None or _own_items(items, row["content"], calls, _openai_text, _openai_tool)
+
+
+def _own_items(
+    items: object,
+    content: str,
+    calls: list[tuple[str, str]],
+    text_of: Callable[[dict[str, Any]], str | None],
+    tool_of: Callable[[dict[str, Any]], tuple[str, str] | None],
+) -> bool:
+    if not isinstance(items, list):
+        return False
+    texts: list[str] = []
+    tools: list[tuple[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            return False
+        text = text_of(item)
+        tool = tool_of(item) if text is None else None
+        if text is None and tool is None:
+            return False
+        if text is not None:
+            texts.append(text)
+        if tool is not None:
+            tools.append(tool)
+    return "".join(texts) == content and sorted(tools) == calls
+
+
+def _anthropic_text(block: dict[str, Any]) -> str | None:
+    text = block.get("text")
+    return text if block.get("type") == "text" and isinstance(text, str) else None
+
+
+def _anthropic_tool(block: dict[str, Any]) -> tuple[str, str] | None:
+    if str(block.get("type", "")).endswith("tool_use"):
+        return (_text(block.get("id")), _text(block.get("name")))
+    return None
+
+
+def _openai_text(item: dict[str, Any]) -> str | None:
+    if item.get("type") != "message" or not isinstance(item.get("content"), list):
+        return None
+    parts = item["content"]
+    if not all(
+        isinstance(p, dict) and p.get("type") == "output_text" and isinstance(p.get("text"), str)
+        for p in parts
+    ):
+        return None
+    return "".join(p["text"] for p in parts)
+
+
+def _openai_tool(item: dict[str, Any]) -> tuple[str, str] | None:
+    if str(item.get("type", "")).endswith("_call"):
+        return (_text(item.get("id")), _text(item.get("name")))
+    return None
 
 
 def approval_run_steps(
