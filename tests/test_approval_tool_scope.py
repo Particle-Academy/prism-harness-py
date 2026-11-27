@@ -23,6 +23,7 @@ from prism_harness import (
     ToolRegistry,
     record_approval,
 )
+from prism_harness.thread import _record_in_run
 from prism_harness.thread_rows import ToolCallInput, approval_tool_scope, assistant_row
 
 R = TypeVar("R")
@@ -130,7 +131,9 @@ def exercise(
             )
             if "scope" in seed:
                 row["harness_tool_names"] = seed["scope"]
-            session.thread().record([row])
+            # As the runtime stores its own paused row (G-387 round 16: a
+            # host-recorded row's harness_tool_names reads as absent).
+            _record_in_run(session.thread(), [row], "seeded-run")
             pending_id = "approval-1"
         else:
             first = runtime().send(session, "A test turn.", requested)
@@ -179,7 +182,8 @@ def exercise(
                             ],
                         )
                         row["harness_tool_names"] = ["scope_safe"]
-                        fresh.thread().record(
+                        _record_in_run(
+                            fresh.thread(),
                             [
                                 {"type": "user", "content": "A concurrent narrowed turn."},
                                 row,
@@ -194,7 +198,8 @@ def exercise(
                                         }
                                     ],
                                 },
-                            ]
+                            ],
+                            "concurrent-run",
                         )
                     return native_lock(callback, ttl_seconds, wait_seconds)
 

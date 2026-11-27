@@ -286,7 +286,8 @@
 - Only rows the harness wrote carry its marks: every `harness_*` mark on a
   row a host records (any run id or none) reads as absent, for every reader,
   and the denial a host's superseding row makes the harness write is the
-  harness's own. Readers take `thread().rows()`, which carries that.
+  harness's own. That includes the keys a paused row carries (the binding,
+  the agent's spend, the run tree, the plan ledger and the tool scope). Readers take `thread().rows()`, which carries that.
 - A decision counts only while its call has neither started nor got an
   outcome, and the replay shows the decision that stood when the call was
   resolved; a call starts only while its approval still stands.

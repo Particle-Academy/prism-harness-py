@@ -538,8 +538,10 @@ lock error text names a session, a thread, a participant or a session name.
 
 Only the harness's own rows carry its marks (`harness_started`,
 `harness_answers_step`, `harness_ended_by_start`, `harness_superseded`,
-`harness_replaced_step`, `harness_steps_used`, `harness_steps_left`, and each
-request's `harness_call`): the same keys on a row a host records, under any
+`harness_replaced_step`, `harness_steps_used`, `harness_steps_left`, the
+paused row's `harness_binding`, `harness_agent_spend`, `harness_tree`,
+`harness_plan_ledger` and `harness_tool_names`, and each request's
+`harness_call`): the same keys on a row a host records, under any
 run id or none, read as absent (a 0.5.x `harness_replaced_step` row is still
 read in the one shape that line wrote: replaced denials only). Read the thread through `thread().rows()`,
 which carries that distinction; the stored messages alone do not.

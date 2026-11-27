@@ -283,8 +283,18 @@ def _owner_run(entry: Mapping[str, Any]) -> str | None:
 
 #: The harness's own keys on an assistant row: read as ABSENT on a row the
 #: harness did not write (G-387 round 16, ONE TRUST SIGNAL), as the
-#: reference reads them.
-_STEP_MARKS = ("harness_steps_used", "harness_steps_left")
+#: reference reads them; and the keys only this port's paused row carries
+#: (the binding, the agent's spend, the run tree, the plan ledger and the
+#: tool scope), which no host row may lend a resume either.
+_STEP_MARKS = (
+    "harness_steps_used",
+    "harness_steps_left",
+    "harness_binding",
+    "harness_agent_spend",
+    "harness_tree",
+    "harness_plan_ledger",
+    "harness_tool_names",
+)
 
 
 def _readable(listed: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -292,8 +302,8 @@ def _readable(listed: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     (:func:`_indexed`), and each tool result row flagged
     :data:`~prism_harness.thread_rows.HARNESS` exactly when the harness wrote
     it -- a flag no stored message can carry for itself. On an assistant row
-    the harness did not write, its own keys (``harness_steps_used``,
-    ``harness_steps_left`` and each request's binding,
+    the harness did not write, its own keys (:data:`_STEP_MARKS` and each
+    request's binding,
     :data:`~prism_harness.thread_rows.CALL_BINDING`) read as absent: a request
     with no binding binds its own step's call by position."""
     rows = _indexed([entry["message"] for entry in listed], [_position(e) for e in listed])
