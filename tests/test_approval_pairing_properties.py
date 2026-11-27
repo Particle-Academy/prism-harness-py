@@ -218,6 +218,11 @@ class Case:
     #: The run has no step left after the step that parked (live only), so a
     #: resume ends without another model step.
     spent: bool = False
+    #: After the first resume, a later row in the SAME segment holds a result
+    #: under this call's id and tool with OTHER arguments (index of the call,
+    #: or None). Every call already has its own result by then, so the stray
+    #: one ends nothing and replaces nothing.
+    stray: int | None = None
 
     def describe(self) -> str:
         return json.dumps(
@@ -294,6 +299,7 @@ class Case:
                     else {}
                 ),
                 **({"spent": True} if self.spent else {}),
+                **({"stray": self.stray} if self.stray is not None else {}),
                 **({"string_arguments": True} if self.string_arguments else {}),
             }
         )
@@ -343,6 +349,34 @@ def later_row(case: Case) -> dict[str, Any]:
             }
         ],
         "tool_approval_requests": [],
+    }
+
+
+def stray_result(seed: int, calls: list[Call]) -> int | None:
+    """The stray result, from a stream of its own (the other draws are unchanged)."""
+    rng = random.Random(seed ^ 0x141141)
+    gated = [i for i, c in enumerate(calls) if c.gated]
+    if not gated or rng.random() >= 0.3:
+        return None
+    return rng.choice(gated)
+
+
+def stray_row(case: Case) -> dict[str, Any]:
+    assert case.stray is not None
+    call = case.calls[case.stray]
+    return {
+        "type": "tool_result",
+        "tool_results": [
+            {
+                "tool_call_id": call.id,
+                "tool_name": GATED,
+                "args": {"token": "stray"},
+                "result": "stray",
+                "tool_call_result_id": None,
+                "artifacts": [],
+            }
+        ],
+        "tool_approval_responses": [],
     }
 
 
@@ -498,6 +532,7 @@ def generate(seed: int) -> Case:
         resumes=resumes,
         first=rng.choice(("text", "structured")),
         insert=(insert := insertion(seed, calls)),
+        stray=stray_result(seed, calls),
         later=later_step(seed, calls, insert),
         earlier=tuple(earlier),
         string_arguments=path == "stored" and rng.random() < 0.3,
@@ -889,6 +924,8 @@ def _check(
         broken.append(f"6: the run record says {run and run.get('tool_calls')}, ran {ran_now}")
 
     # 3. Nothing runs twice: resume again, decide everything late, resume again.
+    if case.stray is not None:
+        session.thread().record([stray_row(case)])
     after = len(ran)
     a_send(runtime, session, case.resumes[1], "")
     for approval in (
@@ -1153,6 +1190,9 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
             and oracle(k).later_credited == credited
             for k in examined
         ), credited
+    # A stray later result in a step with repeated ids (G-392, replay).
+    assert any(k.stray is not None and oracle(k).repeated for k in examined)
+    assert any(k.stray is not None and oracle(k).runs for k in examined)
     # String-stored arguments, and ids (and arguments) reused across steps.
     assert any(k.string_arguments and k.earlier for k in examined)
     for prior in (True, False):
