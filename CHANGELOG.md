@@ -4,6 +4,39 @@
 
 ### Changed
 
+- Each step's results are replayed directly after it, oldest first, past any
+  user, assistant text, system or other row written while its calls ran (a
+  host's row, a tool's own nested send), then the results given to its calls
+  with none. Within a step's results each result answers one call (its own
+  call first), is sent with that call's ids, and one that answers no call is
+  not sent, so every request a provider is sent answers each call once, in
+  that step's own result run (G-387 round 17).
+- Of two results for one call, the first stands in what a provider is sent,
+  the one every outcome reader counts; a later one is left out.
+- A turn that parked but none of whose approvals is still pending when it
+  returns (a row replaced its step meanwhile) is not awaiting approval: its
+  `finish_reason` and `stopped_because` are `replaced` (or `parked_elsewhere`
+  when another step's approvals are pending), with no pending approvals.
+- A call whose start the standing denial refused is answered "Not run: this
+  call was denied before it started.".
+- A step with no stored offer the harness wrote (a host's step, an older
+  worker's) offers the tools of every call it asked a person about, approved
+  or not; the diagnostic now reads "offering the requested tools only.". A
+  call still runs only on its own approval. A host step's call that needed
+  nobody and has no result is answered "Tool call was interrupted, it may
+  have run" by the resolution.
+- The nested-park stop takes a step's owner only from a row the harness
+  wrote: a step recorded under the running turn's own run id stops the run.
+  After a step's calls run, a newer step another writer parked stops the run
+  (`parked_elsewhere`), and a run that parks reports only approvals still
+  pending.
+- A step's calls that need nobody start in one guarded write: a call a row
+  recorded meanwhile already replaced keeps that one outcome and never runs.
+  A call whose started row could not be written is answered "Not run: the
+  call could not be started.".
+- The readers' shared index is reused only while a list still holds the same
+  rows, so a list edited in place is read afresh.
+
 - One authority for a run's step allowance (G-387). How many model steps a run
   may take is worked out once, when the run begins, by the pure
   `RunBudgets.allowance` (`prism_harness.run_budgets`), and every consumer

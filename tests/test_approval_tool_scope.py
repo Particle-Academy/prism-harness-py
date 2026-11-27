@@ -268,9 +268,12 @@ def test_legacy_decisions_fail_closed_with_a_constant_diagnostic(
     row = exercise(seed={}, decision=decision)
     assert row["counts"]["scope_safe"] == (1 if decision else 0)
     assert row["counts"]["scope_ceiling"] == 0
-    assert row["offers"][0] == (["scope_safe"] if decision else [])
+    # The requested tools, approved or not (G-387 round 17, the reference's
+    # rule): the resolution can answer a denied call as it answers a step the
+    # runtime wrote; a denied call still never runs.
+    assert row["offers"][0] == ["scope_safe"]
     assert [record.message for record in caplog.records] == [
-        "Pending approval has no valid stored tool scope; offering approved requests only."
+        "Pending approval has no valid stored tool scope; offering the requested tools only."
     ]
 
 
@@ -283,7 +286,10 @@ def test_an_empty_stored_list_stays_empty() -> None:
 def test_a_malformed_stored_wildcard_does_not_grant_authority() -> None:
     row = exercise(seed={"scope": ["*"]}, decision=False)
     assert row["counts"]["scope_ceiling"] == 0
-    assert row["offers"][0] == []
+    # Read as no stored offer: the requested tool only (G-387 round 17),
+    # never the wildcard's whole mode; the denied call runs nothing.
+    assert row["offers"][0] == ["scope_safe"]
+    assert row["counts"]["scope_safe"] == 0
 
 
 def test_a_wildcard_mode_freezes_actual_names() -> None:

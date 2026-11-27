@@ -349,7 +349,7 @@ def test_a_supersede_between_the_read_and_the_started_row_wins() -> None:
     approval = approved_and_parked(world)
     original = AgentRuntime._start_call
 
-    def start_call(*args: Any, **kwargs: Any) -> bool:
+    def start_call(*args: Any, **kwargs: Any) -> str | None:
         world.root().thread().record([dict(HOST_ROWS["user"])])
         return original(*args, **kwargs)
 

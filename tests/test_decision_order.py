@@ -191,7 +191,7 @@ def test_a_deny_recorded_before_an_approve_stands(separate: bool) -> None:
 
 
 def test_a_deny_recorded_after_an_approve_revokes_it() -> None:
-    """ANY DENY IS FINAL (G-401, the recommended rule, G-387 round 15): a
+    """ANY DENY IS FINAL (G-401, decided by the owner: denial wins; G-387 round 15): a
     deny recorded after an approve that has not been acted on revokes it.
     This pinned "the approve stands" before round 15."""
     rig = Rig()

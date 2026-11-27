@@ -193,7 +193,7 @@ def test_a_a_denial_then_a_locked_resume_then_an_approve_never_runs_the_call() -
 
 def test_d_an_approval_then_a_deny_before_the_turn_runs_is_denied() -> None:
     """(d) An APPROVAL is stored, the turn never runs, then a DENY arrives:
-    any deny is final (G-401, the recommended option), so the call is denied,
+    any deny is final (G-401, decided by the owner: denial wins), so the call is denied,
     never runs, and has one outcome."""
     from prism_harness.plans.thread_facts import approval_decisions
 

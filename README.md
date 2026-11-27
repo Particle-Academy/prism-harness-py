@@ -523,16 +523,35 @@ interrupted, it may have run": it is never run again, and running it again
 needs a new call and a fresh approval. A step's calls that need nobody get a
 started row too, in one write before the first of them runs, so one that ran
 and whose result was never recorded also reads interrupted, never "not run".
+That write checks each call is still open: one a row recorded since the step
+was written already replaced keeps that one outcome and never runs. One whose
+started row could not be written never ran, and is answered "Not run: the
+call could not be started.".
 In what the model is sent, every call of a step that is no longer waiting on
 a person has a result: the one recorded, or (none recorded) "Tool call was
 interrupted, it may have run", so no provider request carries a tool call
-without one.
+without one. Each step's results are sent directly after it, oldest first,
+past any user, assistant text, system or other row written while its calls
+ran. There each result answers one call of the step (its own call first: id,
+tool name and arguments; then id and tool name; then id) and is sent with
+that call's ids; one that answers no call is not sent. Of two results for
+one call the first stands, the one every reader counts. So each call is
+answered once, directly after its step, as every provider requires. A call
+whose start the denial that stands refused is answered "Not run: this call
+was denied before it started.". On a step a host recorded, a call that
+needed nobody and has no result is answered "Tool call was interrupted, it
+may have run" when the step is resolved.
 
 A call recorded on the session while a resume runs (a tool's own `send`, or a
 host) that parks a NEWER step on approval stops that resume before its next
 model step: it raises `HarnessError` coded `run_not_permitted`
 (`parked_elsewhere`), what it ran keeps its result, and the newer step stays
-waiting. A tool that records a decision on its own session while it runs
+waiting. The same holds for a step parked while a step's own calls ran, and
+for a row recorded under the running turn's own run id: a run id never says a
+row is the harness's. A run that parks reports only the approvals still
+pending when it returns; when none is (a row replaced its step meanwhile), it
+is not awaiting approval: `finish_reason` and `stopped_because` are
+`replaced`, or `parked_elsewhere` when another step's approvals are pending. A tool that records a decision on its own session while it runs
 waits at most the agent's `lock_wait` and is refused with a fixed text; no
 lock error text names a session, a thread, a participant or a session name.
 
@@ -543,7 +562,9 @@ paused row's `harness_binding`, `harness_agent_spend`, `harness_tree`,
 `harness_plan_ledger` and `harness_tool_names`, and each request's
 `harness_call`): the same keys on a row a host records, under any
 run id or none, read as absent (a 0.5.x `harness_replaced_step` row is still
-read in the one shape that line wrote: replaced denials only). Read the thread through `thread().rows()`,
+read in the one shape that line wrote: replaced denials only). A host's step
+therefore resumes on the session's own binding and tree, offering the tools of
+every call it asked a person about. Read the thread through `thread().rows()`,
 which carries that distinction; the stored messages alone do not.
 
 An approval is bound to the exact call the person was shown: every stored

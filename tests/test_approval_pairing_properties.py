@@ -256,6 +256,12 @@ class Case:
     #: A copy variant written RAW, straight to the store as an older writer
     #: would (no binding computed, no denial written at the write).
     raw: bool = False
+    #: A row (``user``, ``assistant_text`` or ``system``) a host records WHILE
+    #: the first step's first UNGATED call runs (live only; G-387 round 17), or
+    #: None. ``system`` only when the step also holds a gated call, so the row
+    #: never replaces the step the case parks on. Every request a provider is
+    #: sent must still answer each call once, in its own step's result run.
+    ungated_concurrent: str | None = None
 
     def describe(self) -> str:
         return json.dumps(
@@ -338,6 +344,11 @@ class Case:
                 **({"forged": list(self.forged)} if self.forged is not None else {}),
                 **({"insert_run": self.insert_run} if self.insert_run != "none" else {}),
                 **({"raw": True} if self.raw else {}),
+                **(
+                    {"ungated_concurrent": self.ungated_concurrent}
+                    if self.ungated_concurrent is not None
+                    else {}
+                ),
             }
         )
 
@@ -510,6 +521,19 @@ def concurrent_supersede(seed: int) -> str | None:
     return rng.choice(SUPERSEDES) if rng.random() < 0.6 else None
 
 
+def ungated_concurrent(seed: int, calls: list[Call], path: str) -> str | None:
+    """The row recorded while the first ungated call runs, from a stream of
+    its own (G-387 round 17; the other draws are unchanged)."""
+    if path != "live" or all(c.gated for c in calls):
+        return None
+    rng = random.Random(seed ^ 0x17171717)
+    if rng.random() >= 0.4:
+        return None
+    if any(c.gated for c in calls):
+        return "system"
+    return rng.choice(("user", "assistant_text", "system"))
+
+
 def a_decision(rng: random.Random) -> tuple[str, str | None]:
     decision = rng.choice(("approve", "deny", "none"))
     reason = rng.choice((None, f"no-{rng.randrange(1000)}")) if decision == "deny" else None
@@ -597,6 +621,7 @@ def generate(seed: int, extras: bool = True) -> Case:
         stray=stray_result(seed, calls),
         concurrent=concurrent,
         new_message=concurrent is None and random.Random(seed ^ 0x5E5E5E).random() < 0.25,
+        ungated_concurrent=ungated_concurrent(seed, calls, path),
     )
     if not extras:
         return base
@@ -672,6 +697,13 @@ def cross_target(case: Case) -> int | None:
     wanted = case.earlier[case.cross_forged].id
     named = [i for i, c in enumerate(case.calls) if c.id == wanted and c.gated]
     free = [i for i, c in enumerate(case.calls) if c.id == wanted]
+    # A result answers the FIRST call WITHOUT an outcome (the reference's
+    # CallPairing; seed 9029): a call with a prior result is passed over,
+    # unless every candidate already has one.
+    for found in (named, free):
+        open_calls = [i for i in found if not case.calls[i].prior]
+        if open_calls:
+            return open_calls[0]
     found = named or free
     return found[0] if found else None
 
@@ -1205,16 +1237,67 @@ def check(case: Case) -> list[str]:
     expected = oracle(case)
     ran: list[tuple[str, str]] = []
     during: list[Callable[[], None]] = []
+    ungated_during: list[Callable[[], None]] = []
     requests: list[LlmRequest] = []
-    tools = ToolRegistry().register(TokenTool(GATED, ran, during)).register(TokenTool(UNGATED, ran))
+    tools = (
+        ToolRegistry()
+        .register(TokenTool(GATED, ran, during))
+        .register(TokenTool(UNGATED, ran, ungated_during))
+    )
     runtime = AgentRuntime(
         client=a_model(case, requests), modes=SPENT if case.spent else MODES, tools=tools
     )
     with tempfile.TemporaryDirectory(
         prefix="prism-harness-pairing-", ignore_cleanup_errors=True
     ) as directory:
-        broken = _check(case, a_session(directory), runtime, ran, expected, during)
-    return broken + replayed_twice(requests)
+        session = a_session(directory)
+        if case.ungated_concurrent is not None:
+            row = inserted_row(replace(case, insert=Insert(case.ungated_concurrent, "during", 0)))
+
+            def record_row() -> None:
+                session.thread().record([dict(row)])
+
+            ungated_during.append(record_row)
+        broken = _check(case, session, runtime, ran, expected, during)
+    return broken + replayed_twice(requests) + sent_unanswered(requests)
+
+
+def sent_unanswered(requests: list[LlmRequest]) -> list[str]:
+    """G-387 round 17: every SENT provider request answers EVERY call of
+    every step it holds exactly once, in that step's own result run (the
+    tool result rows directly after it), for approved and ungated calls
+    alike; the shape Anthropic and OpenAI both require. Counted by the
+    provider's own key, the call id."""
+    broken: list[str] = []
+    for number, request in enumerate(requests):
+        messages = list(request.messages)
+        at = 0
+        while at < len(messages):
+            message = messages[at]
+            at += 1
+            if message.get("type") != "assistant" or not message.get("tool_calls"):
+                continue
+            needed: dict[str, int] = {}
+            for call in message["tool_calls"]:
+                key = str(call.get("id"))
+                needed[key] = needed.get(key, 0) + 1
+            got: dict[str, int] = {}
+            while at < len(messages) and messages[at].get("type") == "tool_result":
+                for entry in messages[at].get("tool_results", []):
+                    key = str(entry.get("tool_call_id"))
+                    got[key] = got.get(key, 0) + 1
+                at += 1
+            for key, count in needed.items():
+                # A unique id: exactly one result. A repeated or empty id (an
+                # ambiguous step, G-392; no provider accepts it as is): at
+                # least one result there, every one of them in its own run.
+                ambiguous = count > 1 or key == ""
+                if (got.get(key, 0) < 1) if ambiguous else (got.get(key, 0) != count):
+                    broken.append(
+                        f"placement: request {number} answers {key} {got.get(key, 0)}x "
+                        "in its own result run"
+                    )
+    return broken
 
 
 def replay_key(entry: dict[str, Any]) -> str:
@@ -1637,6 +1720,8 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     assert any(e.repeated and any(c.gated for c in k.calls) for k, e in zip(examined, expectations))
     assert any(not e.repeated and e.runs for e in expectations)
     assert any(c.id == "" for k in examined for c in k.calls)
+    # Round 17: rows recorded while an ungated call runs, of every kind.
+    assert {k.ungated_concurrent for k in examined} >= {"user", "assistant_text", "system"}
     assert any(len({r.tool_call_id for r in k.requests}) != len(k.requests) for k in examined)
     assert any(k.path == "stored" and any(c.gated and c.prior for c in k.calls) for k in examined)
     assert any(
@@ -1823,6 +1908,18 @@ REGRESSION_SEEDS = (918, 930)
 #: identical calls that both had a result, and a lossy result naming the
 #: earlier call. The oracle's counter credited it as a second outcome.
 COUNTER_SEEDS = (7064,)
+
+#: The seed the round-16 review found at 400 examples from base 9000: the
+#: oracle credited a lossy result to a call that already had its prior result
+#: (``cross_target``), where the harness answers the first call WITHOUT one.
+ORACLE_SEEDS = (9029,)
+
+
+@pytest.mark.parametrize("seed", ORACLE_SEEDS)
+def test_the_seeds_that_broke_the_oracle_obey_the_rule(seed: int) -> None:
+    case = generate(seed)
+    assert safe_check(case) == [], case.describe()
+
 
 #: A seed the round-16 generator found (a RAW copy holding a new call, after
 #: a step of two identical calls): the 0.5.x replaced-step row main writes
