@@ -236,7 +236,7 @@
 - A parked step is superseded by a new message, a later assistant step with
   tool calls, or an assistant or user row recorded outside the runs that own
   it (the run that recorded it and every run that recorded one of its
-  results). Each of its calls that has no result is answered once, "Tool call
+  results); a row a caller records is outside whatever run id it carries. Each of its calls that has no result is answered once, "Tool call
   was not run because a later step replaced it", whatever was decided; nothing of it runs and a
   later decision is refused. Only a resume (an empty prompt) acts on
   decisions.

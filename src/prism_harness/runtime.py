@@ -44,6 +44,7 @@ from prism_harness.subagents import (
     RunContext,
     binding_route,
 )
+from prism_harness.thread import record_in_run
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     REPEATED_CALL_ID,
@@ -984,7 +985,7 @@ class AgentRuntime:
                         "additional_attributes": {},
                     }
                 )
-                thread.record([turn], run_id)
+                record_in_run(thread, [turn], run_id)
             if started is not None:
                 # The task is recorded: the start is committed, and its tree
                 # hold is the spending run's from now on. The task row is the
@@ -1317,7 +1318,7 @@ class AgentRuntime:
                         list(decisions.values()),
                     )
                 )
-            live.thread().record([*rows, turn], run_id)
+            record_in_run(live.thread(), [*rows, turn], run_id)
             # Recorded as written AT the write (G-387 round 13): a failure
             # after it (the lock's release, an event, a read in cleanup) never
             # makes the start read as unrecorded, so it is never undone.
@@ -1609,7 +1610,7 @@ class AgentRuntime:
                         tree = member["tree"]
                         if isinstance(tree, dict):
                             row["harness_tree"] = {"session": tree["session"], "run": tree["run"]}
-            thread.record([row], run_id)
+            record_in_run(thread, [row], run_id)
 
             if failed_finish:
                 # Refuse, rather than queue, every call so a later resume
@@ -1686,7 +1687,7 @@ class AgentRuntime:
                 results.append(self._invoke(offered, call))
 
             if results:
-                thread.record([tool_result_row(results)], run_id)
+                record_in_run(thread, [tool_result_row(results)], run_id)
 
             if requests:
                 # FAILS CLOSED. The gated calls have not run, and the requests are
@@ -1840,7 +1841,7 @@ class AgentRuntime:
                         dict.fromkeys(approval for approval in approval_ids if approval)
                     )
                 }
-            live.thread().record([answer], run_id)
+            record_in_run(live.thread(), [answer], run_id)
             return bounded
 
         options = self._settings(session)

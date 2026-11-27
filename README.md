@@ -500,8 +500,10 @@ decision: authorize before calling `record_approval()`.
 Only a resume (an empty prompt) acts on decisions. A step is SUPERSEDED by a
 new message, by a later assistant step with tool calls, or by an assistant or
 user row recorded outside the runs that own it (the run that recorded it and
-every run that recorded one of its results; for example a host's row through
-`session.thread().record()`). Each of its calls that has no result is then
+every run that recorded one of its results). Only the harness's own rows in
+such a run are inside: a row a host records, through
+`session.thread().record()` or any other call, is outside whatever run id it
+carries. Each of its calls that has no result is then
 answered once with "Tool call was not run because a later step replaced it", whatever was decided,
 on a row the harness marks `harness_superseded`. Nothing of the step runs, and
 a later decision on it is refused. A decision only ever applies to the step

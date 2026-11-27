@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -12,6 +13,27 @@ from prism_harness.stores.base import SessionStore
 from prism_harness.thread_rows import superseding_denials
 
 __all__ = ["Thread", "ThreadMessage"]
+
+#: The (thread key, run id) the RUNTIME is recording rows for, set only around
+#: its own record calls (:func:`record_in_run`). A row recorded under it is
+#: the runtime's own, inside that run; any other row, whatever run id a caller
+#: passes, is outside (DECISION B, G-387 round 13).
+_RECORDING: ContextVar[tuple[str, str] | None] = ContextVar(
+    "prism_harness_recording_in_run", default=None
+)
+
+
+def record_in_run(
+    thread: Thread, messages: Sequence[dict[str, Any]], run_id: str
+) -> list[ThreadMessage]:
+    """Record ``messages`` as the runtime's own rows of run ``run_id``.
+
+    Internal: the runtime's record calls for its own turn rows."""
+    token = _RECORDING.set((thread.key, run_id))
+    try:
+        return thread.record(messages, run_id)
+    finally:
+        _RECORDING.reset(token)
 
 
 @dataclass(frozen=True)
@@ -43,6 +65,10 @@ class Thread:
     def __init__(self, store: SessionStore, key: str) -> None:
         self._store = store
         self._key = key
+
+    @property
+    def key(self) -> str:
+        return self._key
 
     def exists(self) -> bool:
         """Read only: no allocation, lock or empty transcript write."""
@@ -78,6 +104,8 @@ class Thread:
         """
         if not messages:
             return []
+        recording = _RECORDING.get()
+        inside = run_id if run_id is not None and recording == (self._key, run_id) else None
 
         def append() -> list[ThreadMessage]:
             stored = self._store.get(self._key) or {}
@@ -96,6 +124,7 @@ class Thread:
                 ],
                 list(messages),
                 run_id,
+                inside,
             )
 
             appended = [

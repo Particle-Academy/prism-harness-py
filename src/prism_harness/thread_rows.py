@@ -379,6 +379,7 @@ def superseding_denials(
     stored: Sequence[tuple[Mapping[str, Any], str | None]],
     batch: Sequence[dict[str, Any]],
     run_id: str | None,
+    inside: str | None = None,
 ) -> list[dict[str, Any]]:
     """``batch`` (recorded under ``run_id``) with, before each row of it that
     SUPERSEDES the paused step, that step's denials (DECISION B, G-387 round
@@ -388,9 +389,10 @@ def superseding_denials(
     The paused step is the last assistant row with tool calls. Its OWNING
     runs are the run that recorded it and every run that recorded a result of
     one of its calls. A later assistant row with tool calls always supersedes
-    it; an assistant text row or a user row supersedes it only when recorded
-    outside those runs (no run id, or another run), so the harness's own rows
-    in the runs resolving it never do, and a host's row always does. Each of
+    it; an assistant text row or a user row supersedes it unless the
+    RUNTIME records it inside one of those runs (``inside``, the run the
+    runtime is recording for; None for any caller). A run id a caller passes,
+    the step's own included, is outside: a host's row always supersedes. Each of
     its calls with no result (by position, see :func:`call_results`) gets ONE
     denial, :data:`SUPERSEDED_RESULT`, on one tool result row marked
     :data:`SUPERSEDED` with the approvals those calls were asked under (each
@@ -400,7 +402,7 @@ def superseding_denials(
     runs: list[str | None] = [run for _, run in stored]
     out: list[dict[str, Any]] = []
     for message in batch:
-        denial = _denial_before(rows, runs, message, run_id)
+        denial = _denial_before(rows, runs, message, inside)
         for row in ([] if denial is None else [denial]) + [message]:
             out.append(row)
             rows.append(row)
