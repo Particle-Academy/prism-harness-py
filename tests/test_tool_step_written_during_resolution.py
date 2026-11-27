@@ -5,7 +5,8 @@ session (its own loop records its step). Resolution writes the results it
 produced marked with the step they answer, so wherever that row lands they
 count for that step: the call that ran keeps its own result, it is never
 recorded as replaced, and the later step's call is never credited with it; it
-gets its own outcome.
+is decided by its own approval (the resuming run's own answer does not
+supersede it).
 Deterministic: the write is made by the tool itself, while it runs. Entered at
 the public seam; the model is scripted and its requests are captured.
 """
@@ -118,11 +119,10 @@ def test_the_call_that_ran_keeps_its_result_and_the_later_call_its_own(
 
     found = outcomes(session)
     assert set(found["a"]) == {"echo:a"}
-    assert counts == {"echo": 1}
-    # The later step is followed by the resuming run's answer, so it is
-    # replaced: its call gets the one replaced-step denial, and a decision for
-    # it runs nothing.
-    assert found["b"] == [REPLACED]
+    # The resuming run's own answer does not supersede the later step: the
+    # later call is decided by its own approval.
+    assert counts == {"echo": 2 if later_decided else 1}
+    assert set(found["b"]) == ({"echo:b"} if later_decided else {"No approval response provided"})
     # The replay sends each result as its own call's.
     last = requests[-1]
     replayed = [
