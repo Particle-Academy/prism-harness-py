@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.4 (unreleased)
+
+Security fixes on the 0.5 line. Each tool call is now decided only by its own approval, and gets exactly one outcome.
+
+### Fixed
+
+- If a resumed run's pending step holds two tool calls with the same call id (an empty id counts), none of the step's approval-gated calls run, whatever was decided. The same applies when two approval requests name the same call id, or share one approval id. Each of those calls gets its own result, `Tool call was not run because another call in this step has the same id`, and no later decision or resume runs it. When the ids in a step are distinct, each call is decided on its own approval, as before.
+- Stored results are paired with the step's tool calls by position, never through a map keyed by the call id. A result counts for the step it was recorded after. A call that has its own result never gets a second outcome, and another call's result never ends it.
+- Results and decisions are read from every tool result row recorded after the step, not only the first group of them. A call that already has a result never runs again on a later resume.
+- A paused step is replaced when a later step with tool calls is recorded after it, or when the application records a user or assistant message on the thread while the approval is pending. Each of the replaced step's approval-gated calls that has no result gets `Tool call was not run because a later step replaced it`, once, and none of them runs. A decision recorded for a replaced step runs nothing.
+- An approved call refused because its tool is not available to the run, or because it is not authorized, is no longer listed in the run's `tool_calls`.
+- `send_structured` returns a `StructuredAgentResponse` with `structured` `None` when the run stops for an approval or runs out of steps, instead of failing with an `AssertionError`.
+
+### Upgrading
+
+- A thread holding a paused step that was already replaced gets a one-time row on its first resume, answering each unanswered approval-gated call of that step with `Tool call was not run because a later step replaced it`. The row is not sent to the model.
+- If your application records user or assistant messages while an approval is pending, record the decisions and resume first.
+
 ## 0.5.3
 
 Security-only release on the 0.5 line. Nothing else from main is included.
