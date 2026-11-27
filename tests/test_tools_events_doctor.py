@@ -174,10 +174,12 @@ def test_a_raising_listener_does_not_break_the_run() -> None:
     events.listen(explode)
     events.listen(lambda event: seen.append(event.type))
 
-    with pytest.warns(UserWarning, match="listener exploded"):
+    with pytest.warns(UserWarning, match=r"\[run\.failed\]: RuntimeError$") as caught:
         events.emit(RunFailed(run_id="r1", session_key="k", failure="nope", steps=1))
 
     assert seen == ["run.failed"]
+    # Named by its class only (G-387 round 12): never the listener's own text.
+    assert "listener exploded" not in " ".join(str(warning.message) for warning in caught)
 
 
 # -- the doctor --------------------------------------------------------------

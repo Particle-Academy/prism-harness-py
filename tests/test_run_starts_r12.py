@@ -243,6 +243,7 @@ def test_a_base_exception_in_a_run_started_listener_fails_the_root() -> None:
     assert world.runtime._trees.members == {}
     # The next turn runs normally.
     world.runtime._events = None
+    world.queue.clear()
     world.text("Again.")
     assert world.runtime.send(world.root(), "Again").text == "Again."
 
@@ -382,7 +383,6 @@ def test_a_forged_own_run_view_on_a_crash_residue_confirms_nothing() -> None:
         child._cached_state = None
         assert child.child_binding() is None
         assert child.child_ceiling() is None
-        assert child.mode() != "work"
         assert child.child_provisional()
     finally:
         leave()

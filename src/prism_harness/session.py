@@ -97,6 +97,9 @@ class Session:
         # read-only views copied from it share the lineage.
         self._lineage = secrets.token_hex(8)
         self._own_start: str | None = None
+        # The runner start THIS object committed (its (b) write), the only
+        # one whose own-run view it may enter (G-387 round 12).
+        self._committed_start: str | None = None
         self._lock_store = self._ephemeral
         if address_index is not None and store_lock_rank(durable) > store_lock_rank(ephemeral):
             self._lock_store = self._durable
@@ -641,6 +644,7 @@ class Session:
             )
 
         self._durable.with_lock(key, change, 10, 5)
+        self._committed_start = run_id
         return handle
 
     def undo_child_start(self, run_id: str, handle: Mapping[str, Any]) -> None:
@@ -744,7 +748,15 @@ class Session:
         existed. Nothing is written. Returns the leave, which clears it and
         is safe to call twice.
 
+        Only the Session object whose :meth:`start_child` committed
+        ``run_id`` enters it (G-387 round 12): on any other object, whatever
+        run id it is handed (one read from storage, a crash's residue still
+        marked running), nothing is entered and every reader keeps the
+        provisional rule.
+
         Internal: entered by the runtime."""
+        if self._committed_start is None or self._committed_start != run_id:
+            return _nothing_entered
         self._own_start = run_id
         token = _OWN_START.set((self._lineage, run_id))
         left = [False]
@@ -1151,6 +1163,10 @@ class Session:
 #: lineage of the Session object it uses (G-387 round 11). An entry point that
 #: is not that run (a turn, a decision) clears it for its own duration.
 _OWN_START: ContextVar[tuple[str, str] | None] = ContextVar("prism_harness_own_start", default=None)
+
+
+def _nothing_entered() -> None:
+    """The leave of an own-run view that was never entered."""
 
 
 @contextmanager

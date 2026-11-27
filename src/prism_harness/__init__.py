@@ -90,6 +90,7 @@ from prism_harness.thread import Thread, ThreadMessage
 from prism_harness.thread_rows import (
     ToolCallInput,
     assistant_row,
+    ended_by_start_row,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -218,6 +219,7 @@ __all__ = [
     "canonical_json",
     "canonical_task_json",
     "diagnose",
+    "ended_by_start_row",
     "is_person_only_tool",
     "is_well_formed_tool_name",
     "normalise_tool_name",

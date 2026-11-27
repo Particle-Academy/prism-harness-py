@@ -46,8 +46,6 @@ from prism_harness.subagents import (
 )
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
-    DELEGATION_ENDED,
-    ENDED_BY_START,
     REPEATED_CALL_ID,
     ToolCallInput,
     ambiguous_calls,
@@ -56,6 +54,7 @@ from prism_harness.thread_rows import (
     assistant_row,
     carried_agent_spend,
     decided_unresolved_ids,
+    ended_by_start_row,
     first_decisions,
     paired_requests,
     paused_approval_row,
@@ -745,6 +744,27 @@ class AgentRuntime:
                 depth=member["depth"],
                 provisional=started is not None,
             )
+        except BaseException:
+            # Every exception, a BaseException included (G-387 round 10):
+            # releasing the start's holds does not depend on what was raised,
+            # and the exception still propagates. No run began, so there is
+            # no run to fail and no event to end.
+            leave_own()
+            if started is not None:
+                # The run could not begin: the child is put back as it was,
+                # and the start's tree hold released. Housekeeping: the
+                # start's writes are provisional, absent until a task row.
+                self._undo_start(session, member, run_id, started)
+                _quietly(lambda: self._trees.finished(session, run_id))
+            raise
+
+        turn_token = None
+        # From here the run has begun: everything it does, its RunStarted
+        # included, is inside this try (G-387 round 12), so whatever raises
+        # (a store write, a listener's BaseException, an emit that throws)
+        # fails THIS run by class name, releases its holds and ends it with
+        # RunFailed, a root run as much as a runner start.
+        try:
             # Recorded before any tool can run, so a child started from this
             # turn finds it; dropped when the run finishes.
             self._trees.record(session, run_id, member, run)
@@ -761,21 +781,6 @@ class AgentRuntime:
                     harness_agent=session.agent,
                 )
             )
-        except BaseException:
-            # Every exception, a BaseException included (G-387 round 10):
-            # releasing the start's holds does not depend on what was raised,
-            # and the exception still propagates.
-            leave_own()
-            if started is not None:
-                # The run could not begin: the child is put back as it was,
-                # and the start's tree hold released. Housekeeping: the
-                # start's writes are provisional, absent until a task row.
-                self._undo_start(session, member, run_id, started)
-                _quietly(lambda: self._trees.finished(session, run_id))
-            raise
-
-        turn_token = None
-        try:
             # The plan context (G-360), computed once per run and never stored:
             # a system prompt contribution, not a message. A turn with a new
             # user message reads the plan as if nothing were pending.
@@ -1017,6 +1022,12 @@ class AgentRuntime:
                 self._undo_start(session, member, run_id, started)
             failure = _failure(error)
             _quietly(lambda: session.fail_run(run_id, failure))
+            _quietly(lambda: self._plans.after_turn(session))
+            # The holds released BEFORE RunFailed (G-387 round 12): a
+            # listener never observes, or races, a hold about to go, and its
+            # own BaseException cannot skip the release.
+            _quietly(lambda: self._settle_child(session, run_id))
+            _quietly(lambda: self._trees.finished(session, run_id))
             _quietly(
                 lambda: self._emit(
                     RunFailed(
@@ -1029,9 +1040,6 @@ class AgentRuntime:
                     )
                 )
             )
-            _quietly(lambda: self._plans.after_turn(session))
-            _quietly(lambda: self._settle_child(session, run_id))
-            _quietly(lambda: self._trees.finished(session, run_id))
             raise
         except BaseException as error:
             # Not an Exception (G-387 round 10): host code stopping the
@@ -1230,8 +1238,9 @@ class AgentRuntime:
         anyone while it ran) is ever acted on, by this start or any later
         turn. Under the session lock, reading the pending calls inside it.
 
-        The row closing them carries :data:`ENDED_BY_START`, the approval ids
-        it ended (round 11): the only thing that marks them ended. Returns the
+        The row closing them carries :data:`ENDED_BY_START`,
+        ``{approval_ids: [...]}``, the approvals it ended (rounds 11 and 12,
+        the reference's shape): the only thing that marks them ended. Returns the
         calls it ended; their events are the caller's, once the start is
         marked recorded."""
         turn: dict[str, Any] = (
@@ -1251,20 +1260,28 @@ class AgentRuntime:
             work = self._unresolved(live, mode)
             if work is not None:
                 calls, results, decisions, approval_ids, _, _, _ = work
-                closed: list[dict[str, Any]] = []
-                approvals: list[str] = []
-                # Each call ends with its OWN approval id (G-392).
-                for row, approval_id in zip(calls, approval_ids, strict=True):
-                    call = ToolCallInput(
-                        id=row["id"], name=row["name"], arguments={}, result_id=row["result_id"]
+                closing = [
+                    ToolCallInput(
+                        id=row["id"],
+                        name=row["name"],
+                        arguments=row["arguments"]
+                        if isinstance(row.get("arguments"), dict)
+                        else {},
+                        result_id=row["result_id"],
                     )
-                    ended.append(call)
-                    closed.append(tool_result_entry(call, _DELEGATION_ENDED))
-                    if approval_id is not None:
-                        approvals.append(approval_id)
-                closing = tool_result_row([*results.values(), *closed], list(decisions.values()))
-                closing[ENDED_BY_START] = list(dict.fromkeys(approvals))
-                rows.append(closing)
+                    for row in calls
+                ]
+                ended.extend(closing)
+                # Each call ends with its OWN approval id (G-392), the ids in
+                # the reference's mark (G-387 round 12).
+                rows.append(
+                    ended_by_start_row(
+                        closing,
+                        approval_ids,
+                        list(results.values()),
+                        list(decisions.values()),
+                    )
+                )
             live.thread().record([*rows, turn], run_id)
 
         options = self._settings(session)
@@ -1967,11 +1984,6 @@ class AgentRuntime:
     def _emit(self, event: HarnessEvent) -> None:
         if self._events is not None:
             self._events.emit(event)
-
-
-#: What a call still pending on a child is answered with when a runner start
-#: gives the child a new task (G-387 round 9).
-_DELEGATION_ENDED = DELEGATION_ENDED
 
 
 def _awaiting(rows: Sequence[Mapping[str, Any]]) -> bool:

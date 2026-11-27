@@ -219,8 +219,13 @@ class HarnessEvents:
         A RAISING LISTENER MUST NOT BREAK THE RUN. Telemetry that takes down the
         thing it observes is worse than no telemetry, and a listener is by
         definition somebody else's code. Failures are collected and warned about
-        after every listener has had its turn.
+        after every listener has had its turn, each by its CLASS NAME only (G-387
+        round 12): a listener's own text is never read, so neither what it says
+        nor a ``__str__`` that raises can reach the warning or break the emit.
         """
+        # Imported here: failures reads the plan modules, which import events.
+        from prism_harness.failures import class_label
+
         failures: list[BaseException] = []
 
         for listener in list(self._listeners):
@@ -231,7 +236,8 @@ class HarnessEvents:
 
         for failure in failures:
             warnings.warn(
-                f"A prism-harness event listener raised while handling [{event.type}]: {failure}",
+                "A prism-harness event listener raised while handling "
+                f"[{event.type}]: {class_label(failure)}",
                 stacklevel=2,
             )
 

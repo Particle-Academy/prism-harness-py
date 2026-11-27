@@ -14,7 +14,14 @@ from typing import Any
 
 import pytest
 
-from prism_harness import ToolCallInput, assistant_row, thread_view, tool_result_row
+from prism_harness import (
+    ToolCallInput,
+    assistant_row,
+    ended_by_start_row,
+    thread_view,
+    tool_result_row,
+)
+from prism_harness.thread_rows import paired_requests
 
 CORPUS: dict[str, Any] = json.loads(
     (Path(__file__).parent / "fixtures" / "harness-thread-rows.json").read_text(encoding="utf-8")
@@ -27,6 +34,34 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
         return thread_view(case["fold"])
 
     spec = case["input"]
+
+    if spec["write"] == "ended_by_start":
+        # The row a runner start's task row closes a child's pending calls
+        # with (G-387): the harness's own writer, handed the calls and each
+        # call's own approval, paired as the runtime pairs the parked step.
+        step = {
+            "tool_calls": spec["tool_calls"],
+            "tool_approval_requests": spec["approval_requests"],
+        }
+        own: dict[int, str] = {
+            index: request["approval_id"]
+            for request, index in paired_requests(step)
+            if index is not None
+        }
+        return [
+            ended_by_start_row(
+                [
+                    ToolCallInput(
+                        id=call["id"],
+                        name=call["name"],
+                        arguments=call["arguments"],
+                        result_id=call.get("result_id"),
+                    )
+                    for call in spec["tool_calls"]
+                ],
+                [own.get(index) for index in range(len(spec["tool_calls"]))],
+            )
+        ]
 
     if spec["write"] == "assistant":
         return [
@@ -67,7 +102,7 @@ def rows_for(case: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def test_is_the_whole_suite_not_a_subset_someone_trimmed_to_green() -> None:
-    assert len(CORPUS["cases"]) == 13
+    assert len(CORPUS["cases"]) == 14
 
 
 @pytest.mark.parametrize("case", CORPUS["cases"], ids=lambda case: case["id"])
