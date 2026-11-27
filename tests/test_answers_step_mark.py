@@ -21,6 +21,7 @@ from test_runtime import CountingTool, a_session
 
 from prism_harness import (
     AgentRuntime,
+    HarnessError,
     LlmRequest,
     LlmResponse,
     LlmToolCall,
@@ -172,10 +173,15 @@ def test_a_failed_steps_refusals_name_the_step() -> None:
             text="", finish_reason="error", tool_calls=[LlmToolCall("c1", "echo", {"value": "a"})]
         )
 
-    tools = ToolRegistry().register(CountingTool("echo", counts))
+    tools = (
+        ToolRegistry()
+        .register(CountingTool("echo", counts))
+        .register(CountingTool("shout", counts))
+    )
     runtime = AgentRuntime(client=client, modes=MODES, tools=tools)
-    with pytest.raises(Exception):  # noqa: B017 - the step failed; its code is tested elsewhere
+    with pytest.raises(HarnessError) as failed:
         runtime.send(session, "go")
+    assert failed.value.code == "model_step_failed"
 
     [refusals] = [m for m in session.thread().messages() if m.message["type"] == "tool_result"]
     assert refusals.message["harness_answers_step"] == {"position": step_position(session)}

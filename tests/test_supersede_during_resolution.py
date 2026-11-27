@@ -147,12 +147,14 @@ def test_a_decision_around_a_new_messages_writes_runs_nothing(
 
     native = Thread.record
 
-    def record(self: Thread, messages: Any, run_id: str | None = None) -> Any:
+    def record(
+        self: Thread, messages: Any, run_id: str | None = None, origin: object = None
+    ) -> Any:
         if any(m.get("type") == "user" and m.get("content") == "Another" for m in messages):
             if second_write == "fails":
                 raise RuntimeError("the store refused the write")
             record_approval(session, approval, True)
-        return native(self, messages, run_id)
+        return native(self, messages, run_id, origin)
 
     monkeypatch.setattr(Thread, "record", record)
     with pytest.raises(RuntimeError) if second_write == "fails" else nullcontext():
