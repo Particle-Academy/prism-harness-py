@@ -39,6 +39,7 @@ from prism_harness.thread_rows import (
     assistant_row,
     last_step_results,
     last_step_superseded,
+    own_approvals,
     paired_requests,
     repeats_call_ids,
     replaced_steps,
@@ -916,10 +917,13 @@ class AgentRuntime:
         # Each request paired with its own call by position, never through a
         # map keyed by call id, where the last request under a repeated id
         # would answer every call carrying it (G-392).
+        # Only the requests this step asked FIRST: a later row repeating an
+        # approval id (a copy of the paused step) asks for nothing (G-408).
+        own = own_approvals(messages)
         requested: dict[int, str] = {
             index: request["approval_id"]
             for request, index in paired_requests(assistant)
-            if index is not None
+            if index is not None and request["approval_id"] in own
         }
 
         # A call that has a result is DONE, whatever its decision says. A call that
