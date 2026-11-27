@@ -44,7 +44,6 @@ from prism_harness.subagents import (
     RunContext,
     binding_route,
 )
-from prism_harness.thread import enter_run
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     REPEATED_CALL_ID,
@@ -763,9 +762,6 @@ class AgentRuntime:
             raise
 
         turn_token = None
-        # The rows this run records are IN the run (DECISION B): a text or a
-        # user row it writes never supersedes the step it resolves.
-        leave_run = enter_run(f"{session.key()}:thread", run_id)
         # Set at the task-row write itself: the in-memory fact that the
         # start's task row is in the thread (G-387 round 13). Read before any
         # undo, never a store read.
@@ -1104,7 +1100,6 @@ class AgentRuntime:
         finally:
             if turn_token is not None:
                 _TURN_RUN.reset(turn_token)
-            leave_run()
             leave_own()
 
     def _start_child(
