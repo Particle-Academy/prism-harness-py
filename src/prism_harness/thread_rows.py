@@ -117,8 +117,13 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     # that are not consecutive (a note between them, say) fold into the FIRST,
     # so each result is replayed exactly once, in its own segment.
     segment_results: int | None = None
+    # A step's assistant row and its results row in the view, by the step's
+    # thread position, for result rows marked with the step they answer.
+    current: int | None = None
+    steps: dict[int, int] = {}
+    answers: dict[int, int] = {}
 
-    for row in rows:
+    for index, row in enumerate(rows):
         if is_replaced_row(row):
             # Answers an EARLIER step, written after a later one: folded in
             # here it would stand for the later step's calls that share an id.
@@ -131,6 +136,31 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             segment_results = None
+            current = index + 1
+            view.append(normalised)
+            steps[current] = len(view) - 1
+            continue
+
+        anchor = anchored_step(row)
+        if (
+            normalised["type"] == "tool_result"
+            and anchor is not None
+            and anchor != current
+            and anchor in steps
+        ):
+            # Resolution results for an EARLIER step that landed after a later
+            # one: shown in that step's place, as that step's (G-392).
+            if anchor in answers:
+                view[answers[anchor]] = _fold(view[answers[anchor]], normalised)
+            else:
+                at = steps[anchor] + 1
+                view.insert(at, normalised)
+                steps = {k: v + (v >= at) for k, v in steps.items()}
+                answers = {k: v + (v >= at) for k, v in answers.items()}
+                if segment_results is not None and segment_results >= at:
+                    segment_results += 1
+                answers[anchor] = at
+            continue
 
         if normalised["type"] == "tool_result" and segment_results is not None:
             view[segment_results] = _fold(view[segment_results], normalised)
@@ -141,6 +171,8 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
             view.append(normalised)
             if normalised["type"] == "tool_result":
                 segment_results = len(view) - 1
+        if normalised["type"] == "tool_result" and current is not None:
+            answers[current] = segment_results if segment_results is not None else len(view) - 1
 
     return view
 
@@ -346,6 +378,21 @@ REPLACED_STEP = "harness_replaced_step"
 SUPERSEDING = ("user", "assistant")
 
 
+#: The key on a resolution row naming the step it answers, by the thread
+#: position of the step's assistant row (G-392). A harness-only field: a tool
+#: controls its result text, never this key. Wherever such a row lands (a step
+#: with tool calls may be written while an approved call runs), its results
+#: count for that step.
+ANSWERS_STEP = "harness_answers_step"
+
+
+def anchored_step(row: Mapping[str, Any]) -> int | None:
+    """The step a tool result row is marked as answering, or None."""
+    mark = row.get(ANSWERS_STEP) if row.get("type") == "tool_result" else None
+    position = mark.get("position") if isinstance(mark, dict) else None
+    return position if type(position) is int else None
+
+
 def is_replaced_row(row: Mapping[str, Any]) -> bool:
     return row.get("type") == "tool_result" and isinstance(row.get(REPLACED_STEP), dict)
 
@@ -377,11 +424,16 @@ def _thread_steps(
         if normalised is None:
             continue
 
-        if normalised["type"] in SUPERSEDING:
+        anchor = anchored_step(row)
+        if anchor is not None and normalised["type"] == "tool_result":
+            written.setdefault(anchor, []).extend(
+                _occurrences(_parsed_arguments(row, normalised["tool_results"]))
+            )
+        elif normalised["type"] in SUPERSEDING:
             superseded = len(steps)
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
             steps.append((position, normalised, []))
-        elif normalised["type"] == "tool_result" and steps:
+        elif normalised["type"] == "tool_result" and steps and anchor is None:
             steps[-1][2].extend(_occurrences(_parsed_arguments(row, normalised["tool_results"])))
 
         if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
@@ -499,6 +551,12 @@ def _paired(
         for index, entry in results.items():
             results[index] = {k: v for k, v in entry.items() if k != _OCCURRENCE}
     return paired
+
+
+def step_position(messages: Sequence[tuple[int, Mapping[str, Any]]]) -> int:
+    """The thread position of the last tool-calling step's assistant row."""
+    steps, _ = _thread_steps(messages)
+    return steps[-1][0] if steps else 0
 
 
 def last_step_results(

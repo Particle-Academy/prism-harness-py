@@ -26,6 +26,7 @@ from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import (
+    ANSWERS_STEP,
     ARGUMENTS_AS_SENT,
     REPEATED_CALL_ID,
     REPLACED_BY_LATER_STEP,
@@ -41,6 +42,7 @@ from prism_harness.thread_rows import (
     repeats_call_ids,
     replaced_steps,
     step_answers,
+    step_position,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -763,7 +765,7 @@ class AgentRuntime:
             if work is None:
                 return list(offered)
 
-            calls, results, decisions, approval_ids, scope, ambiguous, repeated = work
+            calls, results, decisions, approval_ids, scope, ambiguous, repeated, step = work
             # Bind calls, decisions and scope from the same locked snapshot.
             # A concurrent narrower approval also bounds the continuation.
             if scope is not None and scope[1] and not legacy_diagnostic_emitted:
@@ -823,7 +825,15 @@ class AgentRuntime:
                     )
 
             live.thread().record(
-                [tool_result_row([*results, *resolved], list(decisions.values()))],
+                [
+                    {
+                        **tool_result_row([*results, *resolved], list(decisions.values())),
+                        # Marked with the step it answers: a step with tool
+                        # calls written while these calls ran must not take
+                        # their results (G-392).
+                        ANSWERS_STEP: {"position": step},
+                    }
+                ],
                 run_id,
             )
             return bounded
@@ -855,6 +865,7 @@ class AgentRuntime:
             tuple[list[str], bool] | None,
             set[str],
             bool,
+            int,
         ]
         | None
     ):
@@ -919,6 +930,7 @@ class AgentRuntime:
             approval_tool_scope(rows),
             ambiguous_calls(assistant),
             repeats_call_ids(assistant),
+            step_position([(entry.position, entry.message) for entry in messages]),
         )
 
     @classmethod
