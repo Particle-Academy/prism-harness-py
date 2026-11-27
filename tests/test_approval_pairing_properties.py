@@ -216,8 +216,8 @@ class Case:
     #: gated calls is asked about under ``old_<token>`` and decided by its own
     #: ``decision``; none of them may ever run.
     earlier: tuple[Call, ...] = ()
-    #: The run has no step left after the step that parked (live only), so a
-    #: resume ends without another model step.
+    #: The mode allows one step (live only): the step that parks is the run's
+    #: last, so a resume takes no model step.
     spent: bool = False
     #: A row written WHILE the first approved call runs (``user``, or
     #: ``tool_step``: a step with an ungated call reusing that call's id), or

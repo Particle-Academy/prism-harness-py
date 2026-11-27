@@ -3,7 +3,7 @@
 A resume resolves the paused step under the session lock and runs its
 approved calls there. A row that supersedes the step (a host's user row, or a
 new message) written while an approved call runs must not give that call a
-second outcome, and must not run it again. Every case is deterministic: the
+second outcome, and the call runs once. Every case is deterministic: the
 superseding write is made by the tool itself, during its own execution.
 Entered at the public seam; the model is scripted.
 """
