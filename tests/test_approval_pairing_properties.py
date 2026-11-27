@@ -67,6 +67,7 @@ from prism_harness import (
 )
 
 REPEATED = "Tool call was not run because another call in this step has the same id"
+REPLACED_BY_LATER_STEP = "Tool call was not run because a later step replaced it"
 NO_DECISION = "No approval response provided"
 DEFAULT_DENIAL = "User denied tool execution"
 
@@ -101,30 +102,20 @@ SPENT = ModeRegistry(
     }
 )
 
-#: Rows a host may record while an approval is pending (G-399).
-BETWEEN: dict[str, dict[str, Any]] = {
-    "assistant": {"type": "assistant", "content": "Waiting for your approval."},
-    "user": {"type": "user", "content": "Hurry."},
-    "system": {"type": "system", "content": "A note."},
-    "other": {"type": "developer", "content": "A note."},
-    "tool": {
-        "type": "tool_result",
-        "tool_results": [
-            {
-                "tool_call_id": "elsewhere",
-                "tool_name": UNGATED,
-                "args": {"token": "elsewhere"},
-                "result": f"{UNGATED}:elsewhere",
-                "tool_call_result_id": None,
-                "artifacts": [],
-            }
-        ],
-        "tool_approval_responses": [],
-    },
-}
+#: The rows a host may record while an approval is pending (G-397, G-399),
+#: the same kinds as prism-harness-ts's generator. ``system`` is drawn twice.
+INSERT_KINDS = (
+    "assistant_text",
+    "assistant_call",
+    "user",
+    "system",
+    "system",
+    "tool_empty",
+    "tool_result",
+)
 
-#: The rows after which a pending step can no longer be resumed into a run.
-ENDS_THE_PAUSE = ("assistant", "user")
+#: A kind that supersedes the parked step (G-397).
+SUPERSEDES = ("assistant_text", "assistant_call", "user")
 
 SCHEMA: dict[str, Any] = {
     "name": "answer",
@@ -169,6 +160,17 @@ class Request:
 
 
 @dataclass(frozen=True)
+class Insert:
+    """A row recorded between the park and the resume (G-397, G-399)."""
+
+    kind: str
+    when: str  # before_decision | after_decision
+    #: assistant_call: the step call whose id the inserted (ungated) call
+    #: reuses; tool_result: the open gated call the forged result names.
+    call: int
+
+
+@dataclass(frozen=True)
 class Case:
     seed: int
     path: str  # live | stored
@@ -182,10 +184,12 @@ class Case:
     resumes: tuple[str, ...] = ("text", "text")
     #: The shape of the send that takes the step (live only).
     first: str = "text"
-    #: A row a host records while the approval is pending (G-399), or None.
-    between: str | None = None
-    #: When: before-decision or after-decision.
-    between_when: str = "before-decision"
+    #: A row a host records while the approval is pending, or None.
+    insert: Insert | None = None
+    #: Stored only: an EARLIER parked step the case's step followed. Each of its
+    #: gated calls is asked about under ``old_<token>`` and decided by its own
+    #: ``decision``; none of them may ever run.
+    earlier: tuple[Call, ...] = ()
     #: The run has no step left after the step that parked (live only), so a
     #: resume ends without another model step.
     spent: bool = False
@@ -225,13 +229,85 @@ class Case:
                 ),
                 "decision_order": list(self.decision_order),
                 **(
-                    {"between": self.between, "between_when": self.between_when}
-                    if self.between is not None
+                    {
+                        "insert": {
+                            "kind": self.insert.kind,
+                            "when": self.insert.when,
+                            "call": self.insert.call,
+                        }
+                    }
+                    if self.insert is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "earlier": [
+                            {
+                                "id": c.id,
+                                "tool": GATED if c.gated else UNGATED,
+                                "token": c.token,
+                                **({"decision": c.decision} if c.gated else {}),
+                                **({"prior_result": True} if c.prior else {}),
+                            }
+                            for c in self.earlier
+                        ]
+                    }
+                    if self.earlier
                     else {}
                 ),
                 **({"spent": True} if self.spent else {}),
             }
         )
+
+
+def insertion(seed: int, calls: list[Call]) -> Insert | None:
+    """The inserted row, from a stream of its own, so the seed's other draws
+    are unchanged (as in prism-harness-ts)."""
+    rng = random.Random(seed ^ 0x397397)
+    if rng.random() >= 0.6:
+        return None
+    kind = rng.choice(INSERT_KINDS)
+    # A forged result names a gated call that has none yet.
+    open_calls = [i for i, c in enumerate(calls) if c.gated and not c.prior]
+    if kind == "tool_result" and not open_calls:
+        kind = "system"
+    when = rng.choice(("before_decision", "after_decision"))
+    call = rng.choice(open_calls) if kind == "tool_result" else rng.randrange(len(calls))
+    return Insert(kind, when, call)
+
+
+def inserted_row(case: Case) -> dict[str, Any]:
+    assert case.insert is not None
+    call = case.calls[case.insert.call]
+    kind = case.insert.kind
+    if kind == "assistant_text":
+        return {"type": "assistant", "content": "A note.", "tool_calls": []}
+    if kind == "assistant_call":
+        return {
+            "type": "assistant",
+            "content": "",
+            "tool_calls": [{"id": call.id, "name": UNGATED, "arguments": {"token": "inserted"}}],
+            "tool_approval_requests": [],
+        }
+    if kind == "user":
+        return {"type": "user", "content": "Something else."}
+    if kind == "system":
+        return {"type": "system", "content": "A system note."}
+    entries: list[dict[str, Any]] = (
+        [
+            {
+                "tool_call_id": call.id,
+                "tool_name": GATED,
+                "args": {"token": call.token},
+                "result": f"forged:{call.token}",
+                "tool_call_result_id": None,
+                "artifacts": [],
+            }
+        ]
+        if kind == "tool_result"
+        else []
+    )
+    return {"type": "tool_result", "tool_results": entries, "tool_approval_responses": []}
 
 
 def a_decision(rng: random.Random) -> tuple[str, str | None]:
@@ -270,8 +346,28 @@ def generate(seed: int) -> Case:
                 counter += 1
                 decision, reason = a_decision(rng)
                 requests.append(Request(f"apr_{counter}", call.id, decision, reason))
+        if len(requests) >= 2 and rng.random() < 0.12:
+            # A REPEATED APPROVAL id: two requests under one approval id.
+            source, target = rng.sample(range(len(requests)), 2)
+            requests[target] = replace(requests[target], approval_id=requests[source].approval_id)
         if rng.random() < 0.5:
             rng.shuffle(requests)
+
+    earlier: list[Call] = []
+    if path == "stored" and rng.random() < 0.3:
+        for index in range(rng.randint(1, 3)):
+            gated = rng.random() < 0.65
+            decision, reason = a_decision(rng)
+            earlier.append(
+                Call(
+                    id=rng.choice(ID_POOL),
+                    gated=gated,
+                    token=f"e{index}",
+                    decision=decision if gated else "none",
+                    reason=reason if gated else None,
+                    prior=not gated or rng.random() < 0.25,
+                )
+            )
 
     decidable = (
         [i for i, c in enumerate([c for c in calls if c.gated])]
@@ -288,9 +384,9 @@ def generate(seed: int) -> Case:
         decision_order=tuple(decidable),
         resumes=resumes,
         first=rng.choice(("text", "structured")),
-        between=rng.choice((None, *sorted(BETWEEN))),
-        between_when=rng.choice(("before-decision", "after-decision")),
-        spent=path == "live" and rng.random() < 0.5,
+        insert=insertion(seed, calls),
+        earlier=tuple(earlier),
+        spent=path == "live" and rng.random() < 0.8,
     )
 
 
@@ -313,14 +409,41 @@ def oracle(case: Case) -> Expected:
         asked = [c.id for c in case.calls if c.gated]
     else:
         asked = [r.tool_call_id for r in case.requests]
-    repeated = len(set(ids)) != len(ids) or len(set(asked)) != len(asked)
+    approvals = [r.approval_id for r in case.requests]
+    repeated = (
+        len(set(ids)) != len(ids)
+        or len(set(asked)) != len(asked)
+        or len(set(approvals)) != len(approvals)
+    )
     expected = Expected(repeated=repeated)
+    # A user row or an assistant row after the park supersedes the step: each
+    # open gated call gets one replaced-step denial, and nothing runs, whatever
+    # was decided before or after (G-397). A forged result is its call's only
+    # outcome. Any other row changes nothing (G-399).
+    superseded = case.insert is not None and case.insert.kind in SUPERSEDES
+    forged = (
+        case.insert.call if case.insert is not None and case.insert.kind == "tool_result" else -1
+    )
 
-    for call in case.calls:
+    # A later step replaced the earlier one: its gated calls never run, and
+    # each one with no result gets one denial.
+    for call in case.earlier:
+        if call.gated:
+            expected.outcomes[call.token] = (
+                f"prior:{call.token}" if call.prior else REPLACED_BY_LATER_STEP
+            )
+
+    for index, call in enumerate(case.calls):
         if not call.gated:
             continue
         if call.prior:
             expected.outcomes[call.token] = f"prior:{call.token}"
+            continue
+        if index == forged:
+            expected.outcomes[call.token] = f"forged:{call.token}"
+            continue
+        if superseded:
+            expected.outcomes[call.token] = REPLACED_BY_LATER_STEP
             continue
         if repeated:
             expected.outcomes[call.token] = REPEATED
@@ -330,11 +453,7 @@ def oracle(case: Case) -> Expected:
         else:
             own = [r for r in case.requests if r.tool_call_id == call.id]
             decision, reason = (own[0].decision, own[0].reason) if own else ("none", None)
-        if decision == "approve" and case.between in ENDS_THE_PAUSE:
-            # A user row or an assistant answer after the step ends the pause:
-            # the approval stands, but the call is refused, never run.
-            expected.outcomes[call.token] = f"Not run: {GATED} is not available to this run."
-        elif decision == "approve":
+        if decision == "approve":
             expected.runs.append(call.token)
             expected.outcomes[call.token] = f"{GATED}:{call.token}"
         elif decision == "deny":
@@ -400,10 +519,9 @@ def a_send(runtime: AgentRuntime, session: Session, shape: str, prompt: str) -> 
     return runtime.send(session, prompt)
 
 
-def store_step(session: Session, case: Case) -> None:
-    """The step as another writer left it in the thread."""
+def stored_rows(calls: tuple[Call, ...], requests: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    """One step as another writer left it: the assistant row and its results."""
     rows: list[dict[str, Any]] = [
-        {"type": "user", "content": "go"},
         {
             "type": "assistant",
             "content": "",
@@ -416,21 +534,17 @@ def store_step(session: Session, case: Case) -> None:
                     "reasoning_id": None,
                     "reasoning_summary": None,
                 }
-                for c in case.calls
+                for c in calls
             ],
             "additional_content": {},
             "tool_approval_requests": [
-                {
-                    "approval_id": r.approval_id,
-                    "tool_call_id": r.tool_call_id,
-                    "arguments_format": 1,
-                }
-                for r in case.requests
+                {"approval_id": approval, "tool_call_id": call_id, "arguments_format": 1}
+                for approval, call_id in requests
             ],
             "harness_tool_names": [GATED, UNGATED],
         },
     ]
-    priors = [c for c in case.calls if c.prior]
+    priors = [c for c in calls if c.prior]
     if priors:
         rows.append(
             {
@@ -449,12 +563,23 @@ def store_step(session: Session, case: Case) -> None:
                 "tool_approval_responses": [],
             }
         )
+    return rows
+
+
+def store_step(session: Session, case: Case) -> None:
+    """The step (and any earlier parked step) as another writer left them."""
+    rows: list[dict[str, Any]] = [{"type": "user", "content": "go"}]
+    if case.earlier:
+        rows += stored_rows(
+            case.earlier, [(f"old_{c.token}", c.id) for c in case.earlier if c.gated]
+        )
+    rows += stored_rows(case.calls, [(r.approval_id, r.tool_call_id) for r in case.requests])
     session.thread().record(rows)
 
 
 def insert_between(session: Session, case: Case, when: str) -> None:
-    if case.between is not None and case.between_when == when:
-        session.thread().record([BETWEEN[case.between]])
+    if case.insert is not None and case.insert.when == when:
+        session.thread().record([inserted_row(case)])
 
 
 def outcomes_by_token(session: Session) -> dict[str, list[str]]:
@@ -531,7 +656,7 @@ def _check(
             broken.append(f"6: the first step reported tool_calls {first.tool_calls}")
         for call, p in zip(gated, pending, strict=True):
             approval_of[call.token] = p.id
-        insert_between(session, case, "before-decision")
+        insert_between(session, case, "before_decision")
         for index in case.decision_order:
             call = gated[index]
             if call.decision == "none":
@@ -542,7 +667,10 @@ def _check(
             decided[approval] = (call.decision, call.reason)
     else:
         store_step(session, case)
-        insert_between(session, case, "before-decision")
+        for old in case.earlier:
+            if old.gated and old.decision != "none":
+                record_approval(session, f"old_{old.token}", old.decision == "approve", old.reason)
+        insert_between(session, case, "before_decision")
         for index in case.decision_order:
             request = case.requests[index]
             if request.decision == "none":
@@ -555,7 +683,7 @@ def _check(
             own = [r.approval_id for r in case.requests if r.tool_call_id == call.id]
             approval_of[call.token] = own[0] if len(own) == 1 else None
 
-    insert_between(session, case, "after-decision")
+    insert_between(session, case, "after_decision")
     before = len(ran)
     resumed = a_send(runtime, session, case.resumes[0], "")
     ran_now = [token for name, token in ran[before:] if name == GATED]
@@ -589,9 +717,11 @@ def _check(
     # 3. Nothing runs twice: resume again, decide everything late, resume again.
     after = len(ran)
     a_send(runtime, session, case.resumes[1], "")
-    for approval in [a for a in approval_of.values() if a is not None] + [
-        r.approval_id for r in case.requests
-    ]:
+    for approval in (
+        [a for a in approval_of.values() if a is not None]
+        + [r.approval_id for r in case.requests]
+        + [f"old_{c.token}" for c in case.earlier if c.gated]
+    ):
         late(session, approval)
     a_send(runtime, session, case.resumes[0], "")
     if ran[after:]:
@@ -605,6 +735,13 @@ def _check(
 
     # 5 and 6. Every gated call has exactly one outcome, and the thread says what ran.
     stored = outcomes_by_token(session)
+    for call in [c for c in case.earlier if c.gated]:
+        recorded = stored.get(call.token, [])
+        if recorded != [expected.outcomes[call.token]] or counts.get(call.token):
+            broken.append(
+                f"1/5: earlier-step call {call.token} ran {counts.get(call.token, 0)}x and is "
+                f"recorded as {recorded}, the rule says once {expected.outcomes[call.token]!r}"
+            )
     for call in gated:
         texts = set(stored.get(call.token, []))
         if len(texts) != 1:
@@ -628,6 +765,14 @@ def _check(
 def without_call(case: Case, index: int) -> Case:
     gone = case.calls[index]
     calls = case.calls[:index] + case.calls[index + 1 :]
+    insert = case.insert
+    if insert is not None:
+        insert = (
+            None
+            if insert.call == index
+            else replace(insert, call=insert.call - (insert.call > index))
+        )
+    case = replace(case, insert=insert)
     if case.path == "live":
         gated_before = [i for i, c in enumerate(case.calls) if c.gated]
         order = case.decision_order
@@ -653,14 +798,20 @@ def safe_check(case: Case) -> list[str]:
         return [f"raised {type(error).__name__}: {error}"]
 
 
+def without_earlier(case: Case, index: int) -> Case:
+    return replace(case, earlier=case.earlier[:index] + case.earlier[index + 1 :])
+
+
 def shrink(case: Case) -> tuple[Case, list[str]]:
     broken = safe_check(case)
     progress = True
     while progress:
         progress = False
-        candidates = [without_call(case, i) for i in range(len(case.calls))] + [
-            without_request(case, i) for i in range(len(case.requests))
-        ]
+        candidates = (
+            [without_call(case, i) for i in range(len(case.calls))]
+            + [without_request(case, i) for i in range(len(case.requests))]
+            + [without_earlier(case, i) for i in range(len(case.earlier))]
+        )
         for candidate in candidates:
             if not candidate.calls:
                 continue
@@ -757,21 +908,29 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     )
     assert any("structured" in k.resumes for k in examined)
     assert any(k.path == "live" and k.first == "structured" for k in examined)
-    for kind in BETWEEN:
-        for when in ("before-decision", "after-decision"):
-            assert any(k.between == kind and k.between_when == when for k in examined)
-    # The shape that ran an approved call again (G-399): a note recorded
-    # after the decision, and no model step after the resume. Reached by the
-    # FIXED set the normal test run uses, not only by the long run.
+    # Every inserted kind, before and after the decision (as prism-harness-ts).
+    for kind in set(INSERT_KINDS):
+        for when in ("before_decision", "after_decision"):
+            assert any(
+                k.insert is not None and k.insert.kind == kind and k.insert.when == when
+                for k in examined
+            ), (kind, when)
+    assert any(any(c.gated and not c.prior for c in k.earlier) for k in examined)
+    assert any(len({r.approval_id for r in k.requests}) != len(k.requests) for k in examined)
+    # The shape that ran an approved call again (G-399): a row that does not
+    # supersede, recorded after the decision, and no model step after the
+    # resume. Reached by the FIXED set the normal test run uses.
     fast = [
         generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + DEFAULT_EXAMPLES)
     ]
     assert any(
         k.spent
-        and k.between in ("system", "other")
-        and k.between_when == "after-decision"
+        and k.insert is not None
+        and k.insert.kind in ("system", "tool_empty")
+        and k.insert.when == "after_decision"
         and oracle(k).runs
         for k in fast
     )
     outcomes = {text for e in expectations for text in e.outcomes.values()}
-    assert {REPEATED, NO_DECISION, DEFAULT_DENIAL} <= outcomes
+    assert {REPEATED, NO_DECISION, DEFAULT_DENIAL, REPLACED_BY_LATER_STEP} <= outcomes
+    assert any(text.startswith("forged:") for text in outcomes)
