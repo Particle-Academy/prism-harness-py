@@ -655,7 +655,10 @@ class AgentRuntime:
         # binding it states for that turn; it is never saved. The rule is
         # binding_route(), the one the harness-plans corpus pins.
         saved_binding = ChildBinding.from_row(session.child_binding())
-        if saved_binding is None:
+        if saved_binding is None and not session.child_provisional():
+            # A runner start's records are absent until its task row (G-387
+            # round 9), and so is anything older they replaced: never read
+            # back from a paused row instead.
             tail = paused_approval_row([entry.message for entry in session.thread().messages()])
             saved_binding = ChildBinding.from_row(tail.get("harness_binding")) if tail else None
         route = binding_route(
@@ -703,8 +706,16 @@ class AgentRuntime:
         try:
             # The run itself: for a runner start, only now that it is committed
             # (its mode was written with the child's records, in (b)).
+            # A runner start's run is absent from the run state and the run
+            # history until its task row is recorded (G-387 round 9).
             session.begin_run(
-                run_id, mode.name, provider, model, tree=member["tree"], depth=member["depth"]
+                run_id,
+                mode.name,
+                provider,
+                model,
+                tree=member["tree"],
+                depth=member["depth"],
+                provisional=started is not None,
             )
             # Recorded before any tool can run, so a child started from this
             # turn finds it; dropped when the run finishes.
@@ -725,9 +736,10 @@ class AgentRuntime:
         except Exception:
             if started is not None:
                 # The run could not begin: the child is put back as it was,
-                # and the start's tree hold released.
+                # and the start's tree hold released. Housekeeping: the
+                # start's writes are provisional, absent until a task row.
                 self._undo_start(session, member, run_id, started)
-                self._trees.finished(session, run_id)
+                _quietly(lambda: self._trees.finished(session, run_id))
             raise
 
         turn_token = None
@@ -888,12 +900,17 @@ class AgentRuntime:
 
             # Decisions recorded since the run stopped are acted on FIRST, before
             # a new prompt is recorded, so the results land after the calls they
-            # answer rather than after the new turn.
-            offered = self._resolve_approvals(
-                session, mode, offered, run_id, called, scope is not None and scope[1]
-            )
+            # answer rather than after the new turn. Never by a runner start
+            # (G-387 round 9): it acts on no recorded decision, and its task
+            # row ends every call still pending on the child, as not run.
+            if started is None:
+                offered = self._resolve_approvals(
+                    session, mode, offered, run_id, called, scope is not None and scope[1]
+                )
 
-            if prompt != "":
+            if prompt != "" and started is not None:
+                self._record_task(session, mode, run_id, prompt, attachments)
+            elif prompt != "":
                 # With attachments, the shape prism-ai-core's UserMessage.to_dict()
                 # writes: the media parts, then the turn's own text as a trailing
                 # text part, which from_dict() strips back off. Without them,
@@ -911,9 +928,13 @@ class AgentRuntime:
                 thread.record([turn], run_id)
             if started is not None:
                 # The task is recorded: the start is committed, and its tree
-                # hold is the spending run's from now on.
+                # hold is the spending run's from now on. The task row is the
+                # authority that confirms the start's provisional writes;
+                # dropping the mark is housekeeping, and its failure changes
+                # nothing.
                 self._trees.committed(member, run_id)
                 started = None
+                _quietly(lambda: session.confirm_child_start(run_id))
 
             return self._loop(
                 session,
@@ -940,30 +961,31 @@ class AgentRuntime:
             # or tool wrote it, and it can carry anything. The harness has no
             # content capture of its own, so it records the class, the harness
             # code and a fixed description, never the message.
-            code = harness_code(error)
-            failure = (
-                code
-                if isinstance(error, HarnessError) and error.document is not None and code
-                else failure_of(error)
-            )
+            # CLEANUP FIRST, and every step on its own: an exception whose
+            # attributes cannot be read (a host subclass that never ran the
+            # base constructor, a getter that raises) must not skip any of it.
             if started is not None:
                 # Failed before its task was recorded: the child is put back
                 # as it was before the start, and the tree hold released.
+                # Housekeeping: the start's writes are provisional.
                 self._undo_start(session, member, run_id, started)
-            session.fail_run(run_id, failure)
-            self._emit(
-                RunFailed(
-                    run_id=run_id,
-                    session_key=session.key(),
-                    failure=failure,
-                    steps=run.ledger.steps,
-                    at=_now(),
-                    harness_agent=session.agent,
+            failure = _failure(error)
+            _quietly(lambda: session.fail_run(run_id, failure))
+            _quietly(
+                lambda: self._emit(
+                    RunFailed(
+                        run_id=run_id,
+                        session_key=session.key(),
+                        failure=failure,
+                        steps=run.ledger.steps,
+                        at=_now(),
+                        harness_agent=session.agent,
+                    )
                 )
             )
-            self._plans.after_turn(session)
-            self._settle_child(session, run_id)
-            self._trees.finished(session, run_id)
+            _quietly(lambda: self._plans.after_turn(session))
+            _quietly(lambda: self._settle_child(session, run_id))
+            _quietly(lambda: self._trees.finished(session, run_id))
             raise
         finally:
             if turn_token is not None:
@@ -1101,9 +1123,11 @@ class AgentRuntime:
         """A committed runner start failed before its task was recorded: the
         child's records and mode go back to what they were before (b) (only
         where they are still what (b) wrote), its hold on the child's count
-        goes with them, and the tree hold (a) is released. Never raises: a
-        failed write is reported by class, and a hold left behind is charged
-        in full once it expires."""
+        goes with them, and the tree hold (a) is released. HOUSEKEEPING ONLY
+        (G-387 round 9): what (b) wrote is provisional, absent to every reader
+        until a task row confirms it, so a failed undo changes nothing a
+        reader sees. Never raises: a failed write is reported by class, and a
+        hold left behind is charged in full once it expires."""
         live = self._trees.members.get(run_id)
         if live is not None:
             live["child_claim"] = False
@@ -1115,7 +1139,61 @@ class AgentRuntime:
                 logging.getLogger(__name__).warning(
                     "A child start could not be undone: %s.", type(failure).__name__
                 )
-        self._trees.release_start(session, member, run_id)
+        _quietly(lambda: self._trees.release_start(session, member, run_id))
+
+    def _record_task(
+        self,
+        session: Session,
+        mode: AgentMode,
+        run_id: str,
+        prompt: str,
+        attachments: Sequence[object],
+    ) -> None:
+        """A runner start's task row (G-387 round 9). It ENDS every call still
+        pending on the child: each is recorded as not run, in the same write
+        as the task, so no decision recorded on it (before the start, or by
+        anyone while it ran) is ever acted on, by this start or any later
+        turn. Under the session lock, reading the pending calls inside it."""
+        turn: dict[str, Any] = (
+            {"type": "user", "content": prompt}
+            if not attachments
+            else {
+                "type": "user",
+                "content": prompt,
+                "additional_content": [*attachments, {"text": prompt}],
+                "additional_attributes": {},
+            }
+        )
+        ended: list[ToolCallInput] = []
+
+        def record(live: Session) -> None:
+            rows: list[dict[str, Any]] = []
+            work = self._unresolved(live, mode)
+            if work is not None:
+                calls, results, decisions, _, _, _ = work
+                closed: list[dict[str, Any]] = []
+                for row in calls:
+                    call = ToolCallInput(
+                        id=row["id"], name=row["name"], arguments={}, result_id=row["result_id"]
+                    )
+                    ended.append(call)
+                    closed.append(tool_result_entry(call, _DELEGATION_ENDED))
+                rows.append(tool_result_row([*results.values(), *closed], list(decisions.values())))
+            live.thread().record([*rows, turn], run_id)
+
+        options = self._settings(session)
+        session.lock(
+            record,
+            options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
+            options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
+        )
+        for call in ended:
+            try:
+                self._tool_decision(ToolDenied, session, run_id, call, None, "policy")
+            except Exception as failure:  # noqa: BLE001 - the task row is recorded either way
+                logging.getLogger(__name__).warning(
+                    "A tool decision event failed: %s.", type(failure).__name__
+                )
 
     def _allowance_facts(
         self,
@@ -1685,7 +1763,7 @@ class AgentRuntime:
         try:
             return cls._invoke(offered, call)
         except HarnessError as error:
-            if error.code == "call_not_authorized":
+            if harness_code(error) == "call_not_authorized":
                 return tool_result_entry(
                     call, f"Not run: this call to {call.name} is not authorized."
                 )
@@ -1710,14 +1788,14 @@ class AgentRuntime:
         except HarnessError as error:
             # A refused call propagates. A refusal fed back to the model reads
             # as a retryable failure, which is the opposite of a guard.
-            if error.code == "call_not_authorized":
+            if harness_code(error) == "call_not_authorized":
                 raise
 
-            return tool_result_entry(call, f"The tool failed: {error}")
+            return tool_result_entry(call, f"The tool failed: {_text_of(error)}")
         except Exception as error:  # noqa: BLE001 - a tool is someone else's code
             # A failed tool is a RESULT, not a crashed run: the model can often
             # recover, and losing the whole turn to one bad call is worse.
-            return tool_result_entry(call, f"The tool failed: {error}")
+            return tool_result_entry(call, f"The tool failed: {_text_of(error)}")
 
         return tool_result_entry(call, text)
 
@@ -1797,6 +1875,48 @@ class AgentRuntime:
     def _emit(self, event: HarnessEvent) -> None:
         if self._events is not None:
             self._events.emit(event)
+
+
+#: What a call still pending on a child is answered with when a runner start
+#: gives the child a new task (G-387 round 9).
+_DELEGATION_ENDED = "Not run: the subagent was given a new task before this call was resumed."
+
+
+def _text_of(error: BaseException) -> str:
+    """A failed tool's message, as its result for the model. A message that
+    cannot be read names the class only, so the failure stays a result."""
+    try:
+        return str(error)
+    except Exception:  # noqa: BLE001 - an unreadable message names its class
+        return type(error).__name__
+
+
+def _quietly(step: Callable[[], object]) -> None:
+    """One cleanup step of a failed run, whose own failure never skips the
+    next: reported by class only."""
+    try:
+        step()
+    except Exception as failure:  # noqa: BLE001 - cleanup reports, never raises
+        logging.getLogger(__name__).warning(
+            "A failed run's cleanup step failed: %s.", type(failure).__name__
+        )
+
+
+def _failure(error: BaseException) -> str:
+    """What a failed run records (G-385, G-387): a structured failure's code,
+    or the class, harness code and a fixed description. Every attribute read
+    guarded: a missing or raising one names the class only."""
+    code = harness_code(error)
+    try:
+        document = getattr(error, "document", None) if isinstance(error, HarnessError) else None
+    except Exception:  # noqa: BLE001 - a getter that raises holds no document
+        document = None
+    if document is not None and code:
+        return code
+    try:
+        return failure_of(error)
+    except Exception:  # noqa: BLE001 - never fails the cleanup it is part of
+        return f"{type(error).__name__}: the run failed."
 
 
 def _allowance(facts: Mapping[str, Any], forged: bool) -> dict[str, Any]:
@@ -1982,7 +2102,7 @@ def _unanswerable(session: Session, rows: Sequence[Mapping[str, Any]]) -> str | 
     (``child_binding_missing`` or ``too_deep``), or None when it would be
     accepted. A read that raises propagates: it is never an answer."""
     saved = ChildBinding.from_row(session.child_binding())
-    if saved is None:
+    if saved is None and not session.child_provisional():
         tail = paused_approval_row(rows)
         saved = ChildBinding.from_row(tail.get("harness_binding")) if tail else None
     route = binding_route("none", False, saved is not None, session.child_refs() is not None)

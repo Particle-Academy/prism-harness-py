@@ -583,15 +583,14 @@ def _lesser(a: float | None, b: float | None) -> float | None:
 
 def _limit_ok(value: Any) -> bool:
     """Whether a time or cost limit is usable: absent, or a finite number of
-    zero or more. A value of another type is left to the caller's own reading
-    (``from_config`` reads it as absent, as it always has)."""
-    if value is None or isinstance(value, str):
+    zero or more. A limit that is PRESENT but anything else (text such as
+    ``"NAN"``, ``"INF"``, ``"0,50"`` or a quoted ``"60"``, a boolean, a list) is
+    a configuration error, never read as "no limit" (G-387 round 9)."""
+    if value is None:
         return True
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
-    if isinstance(value, (int, float)):
-        return math.isfinite(value) and value >= 0
-    return True
+    return math.isfinite(value) and value >= 0
 
 
 def _finite_limit(value: Any) -> bool:

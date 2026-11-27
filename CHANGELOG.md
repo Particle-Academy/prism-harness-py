@@ -89,15 +89,31 @@
   the child now has a pending approval a person could answer (re-read under
   that lock with the gate's rule), releasing the tree hold; then the run
   itself. The child's records and its session mode are written together in
-  that one locked write. Until the start's task is recorded, the write is
-  reversible: if anything fails in between (the run's begin, its run state,
-  the tool registry or offer, the plan context), the child's records and mode
-  are put back as they were, in one locked write and only where they are still
-  what the start wrote (a later writer's change is never overwritten), its
-  hold on the child's count goes with them, and the tree hold is released. So
-  a failed start never re-binds a child or revives an approval nobody could
-  answer. Once the task is recorded, a later cancel or time-out only stops its
-  model steps. A read that raises refuses the start as `failed`, naming the
+  that one locked write, and everything it writes is PROVISIONAL: marked with
+  the start's run id, and treated as absent by every reader (a decision, a
+  resume, a new message or host turn on the child, the start gate, the
+  delegation count, the paused-row reads) until that run's task row is in the
+  child's thread. Confirmation is read from the thread, never written, so a
+  start that fails before its task row needs no second write to stay
+  harmless: the child reads as one with no binding (`child_binding_missing`),
+  no saved ceiling and no count, and a re-delegation is not blocked once the
+  start's hold has expired. A record with no mark (written by an earlier
+  version) reads as it did; a mark that is not a run id never confirms. The
+  undo that puts the child's records and mode back after such a failure is
+  housekeeping only, and its failure changes nothing a reader sees. The run a
+  start begins is provisional the same way: until its task row, the child's
+  run state still reads as the run it is parked on, and the attempted run is
+  absent from its run history. Once the task is recorded, a later cancel or
+  time-out only stops its model steps.
+- A runner start acts on no decision recorded on the child, whenever it was
+  recorded. Its task row ends every call still pending there, recorded as not
+  run in the same write, so a re-delegation never runs a call a bare resume
+  would refuse, and no later turn acts on it either.
+- A failed run's cleanup (undoing a start, failing the run, `RunFailed`, the
+  plan and count bookkeeping) runs first and step by step, and an exception's
+  attributes are read only guarded: a host exception that never ran
+  `HarnessError`'s constructor, or whose `code` or `document` raises, is
+  named by its class and skips none of it. A read that raises refuses the start as `failed`, naming the
   exception's class, with nothing written; the answerability read counts only
   its own answers (no saved binding, too deep) as unanswerable, and any other
   error refuses the start. A child stuck on an approval no decision could act
@@ -130,7 +146,10 @@
   The exception itself still reaches the caller. A schema violation still
   records its code.
 - `RunBudget` refuses a `max_cost_usd` or `max_seconds` that is NaN, infinite
-  or negative (`ValueError`), and so does `RunBudget.from_config`. A limit
+  or negative (`ValueError`), and so does `RunBudget.from_config`. A limit that
+  is present but not a number (text such as `"60"`, `"NAN"`, `"INF"` or
+  `"0,50"`, a boolean, a list) is refused the same way, never read as no
+  limit; a subagent declaring one makes its mode malformed. A limit
   forged past the constructor is read as spent by the loop's gate and the start
   gate, never as no limit.
 - `send_structured()` returns a `StructuredAgentResponse`, with no document,
