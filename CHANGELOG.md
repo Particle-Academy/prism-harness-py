@@ -21,7 +21,7 @@ BREAKING CHANGE: a security fix that fails closed. Approval-gated calls that cou
 - An approved call refused because its tool is not available to the run, or because it is not authorized, is no longer listed in the run's `tool_calls`.
 - A deny is final. An approve recorded after a deny, or a decision repeated, records nothing. A deny recorded after an approve revokes it while the call has not started.
 - The result rows the harness writes for a step are sent to the model right after that step, even when other rows were recorded between them.
-- An assistant message your application records without tool calls sends no provider-native tool item to the model: Anthropic content blocks of a `*tool_use` type and OpenAI output items of a `*_call` type are left out of the history sent; the rest of its `additional_content` is sent as stored.
+- An assistant message your application records is sent with its provider-native content (`additional_content`) only when that content is the message's own: its tool items (Anthropic content blocks of a `*tool_use` type, OpenAI output items of a `*_call` type) are exactly the message's `tool_calls` by id and name, its text is the message's `content`, and it holds no reasoning item (an Anthropic `thinking` block or `thinking`, `thinking_signature` or `thinking_blocks` key, an OpenAI `reasoning` item) or other item that cannot be checked. Otherwise the message is sent as its text and tool calls, with no provider-native content. Messages the harness records are sent unchanged.
 - `send_structured` returns a `StructuredAgentResponse` with `structured` `None` when the run stops for an approval or runs out of steps, instead of failing with an `AssertionError`. Check `finish_reason` before reading `structured`.
 
 ### Upgrading
