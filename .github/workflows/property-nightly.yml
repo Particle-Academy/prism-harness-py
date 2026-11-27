@@ -6,9 +6,14 @@ name: Property tests (long set)
 # run, so each run explores new cases and logs the seed to replay them
 # (PRISM_PROPERTY_SEED=<seed> replays one).
 #
-# `schedule` fires only from the default branch, and this copy runs the
-# branch it was started on; a release line that carries the property file
-# keeps a dispatch-only copy of this workflow.
+# `schedule` fires only from the default branch and tests it. A dispatch
+# may name a release line to test instead (`ref`, G-387 round 16), so this
+# one main-hosted workflow checks the release lines too: the ref is
+# validated by tools/property_ref.py (tests/test_property_ref.py) BEFORE
+# anything is checked out for the tests, and is refused unless it is the
+# default branch or `release/<name>` (no other branch, tag, SHA or fork
+# ref). The validators run from the default branch's own copy; the tests
+# run from the ref's.
 #
 # Every action is pinned to a full commit SHA (resolved read-only from the
 # tag's ref, `gh api repos/<owner>/<action>/git/ref/tags/<tag>`; both tags
@@ -23,6 +28,10 @@ on:
         description: Examples per property (a whole number from 1 to 1000000)
         required: true
         default: '5000'
+      ref:
+        description: The branch to test, the default branch or release/<name>
+        required: true
+        default: main
 
 permissions:
   contents: read
@@ -37,6 +46,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
+      # The validators, from the copy this workflow runs from.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -52,6 +62,22 @@ jobs:
         run: |
           count="$(python tools/property_examples.py "$EVENT" "$GIVEN")"
           echo "count=$count" >> "$GITHUB_OUTPUT"
+      - name: Ref
+        id: ref
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          GIVEN: ${{ inputs.ref }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          branch="$(python tools/property_ref.py "$EVENT" "$GIVEN" "$DEFAULT")"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+      # Then the branch under test, of THIS repository only.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: refs/heads/${{ steps.ref.outputs.branch }}
+          persist-credentials: false
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
       - name: Property tests
@@ -60,6 +86,7 @@ jobs:
           PRISM_PROPERTY_EXAMPLES: ${{ steps.examples.outputs.count }}
           PRISM_PROPERTY_BASE_SEED: ${{ github.run_id }}
           PYTHONIOENCODING: utf-8
+          BRANCH: ${{ steps.ref.outputs.branch }}
         run: |
-          echo "PRISM_PROPERTY_BASE_SEED=$PRISM_PROPERTY_BASE_SEED PRISM_PROPERTY_EXAMPLES=$PRISM_PROPERTY_EXAMPLES"
+          echo "ref=$BRANCH PRISM_PROPERTY_BASE_SEED=$PRISM_PROPERTY_BASE_SEED PRISM_PROPERTY_EXAMPLES=$PRISM_PROPERTY_EXAMPLES"
           python -m pytest tests/test_approval_pairing_properties.py -v
