@@ -264,17 +264,26 @@ def paired_requests(assistant: Mapping[str, Any]) -> list[tuple[dict[str, Any], 
     return pairs
 
 
-def step_results(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Every result stored for the last tool-calling turn, in stored order and
-    NOT folded by call id (G-392).
+def step_answers(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Every result and every decision stored for the last tool-calling turn
+    (G-392, G-399).
 
-    These are the entries of the tool result rows the thread view folds into the
-    one row answering that turn. Folded, a result is keyed by its call id, so
-    with a repeated id one call's result reads as another's.
+    Read from EVERY tool result row after that turn, whatever sits between
+    them: a host can record an assistant note, a user row or any other row
+    while an approval is pending, and the results written after it are still
+    this turn's. Reading only the first run of tool result rows would read a
+    call that already ran as unanswered, and run it again.
+
+    The results are in stored order and NOT folded by call id: folded, a
+    result is keyed by its call id, so with a repeated id one call's result
+    reads as another's. A decision is keyed by its approval id, and a later
+    one replaces an earlier one, as the thread view folds them.
     """
     view: list[dict[str, Any]] = []
     entries: list[dict[str, Any]] = []
-    state = "none"  # none | waiting | collecting | done
+    decisions: dict[str, dict[str, Any]] = {}
 
     for row in rows:
         normalised = _normalise(row, view)
@@ -283,20 +292,18 @@ def step_results(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
             continue
 
         if normalised["type"] == "assistant" and normalised["tool_calls"]:
-            entries, state = [], "waiting"
+            entries, decisions = [], {}
         elif normalised["type"] == "tool_result":
-            if state in ("waiting", "collecting"):
-                entries.extend(normalised["tool_results"])
-                state = "collecting"
-        elif state == "collecting":
-            state = "done"
+            entries.extend(normalised["tool_results"])
+            for decision in normalised["tool_approval_responses"]:
+                decisions[decision["approval_id"]] = decision
 
         if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
             view[-1] = _fold(view[-1], normalised)
         else:
             view.append(normalised)
 
-    return entries
+    return entries, decisions
 
 
 def paired_results(

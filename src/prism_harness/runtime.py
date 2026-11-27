@@ -36,7 +36,7 @@ from prism_harness.thread_rows import (
     paired_requests,
     paired_results,
     repeats_call_ids,
-    step_results,
+    step_answers,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -832,14 +832,14 @@ class AgentRuntime:
             return None
 
         assistant = view[index]
-        answered = next((row for row in view[index + 1 :] if row["type"] == "tool_result"), None)
-        # Each stored result paired with its own call by position, never through
-        # a map keyed by call id, where an ungated call's result would stand for
-        # a gated call sharing its id and leave that call with no outcome (G-392).
-        results = paired_results(assistant, step_results(rows))
-        decisions = {
-            d["approval_id"]: d for d in (answered or {}).get("tool_approval_responses", [])
-        }
+        # Results and decisions from EVERY tool result row after the turn, not
+        # only the first run of them: a row recorded in between must not make a
+        # call that already ran read as unanswered (G-399). Each result is
+        # paired with its own call by position, never through a map keyed by
+        # call id, where an ungated call's result would stand for a gated call
+        # sharing its id and leave that call with no outcome (G-392).
+        entries, decisions = step_answers(rows)
+        results = paired_results(assistant, entries)
         # Each request paired with its own call by position, never through a
         # map keyed by call id, where the last request under a repeated id
         # would answer every call carrying it (G-392).
