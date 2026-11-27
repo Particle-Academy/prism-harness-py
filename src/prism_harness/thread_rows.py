@@ -222,6 +222,38 @@ def thread_view(
     return view
 
 
+def standing_decision(
+    earlier: Mapping[str, Any] | None, later: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Which of two decisions for one approval stands: any DENY is final, so a
+    deny is never lifted, and an approve is revoked by a later deny (G-401)."""
+    if earlier is None:
+        return dict(later)
+    if earlier.get("approved") is not True:
+        return dict(earlier)
+    if later.get("approved") is not True:
+        return dict(later)
+    return dict(earlier)
+
+
+def decided(rows: Sequence[Mapping[str, Any]], approval_id: str) -> set[bool]:
+    """The verdicts the thread already holds for ``approval_id`` (G-401)."""
+    view: list[dict[str, Any]] = []
+    verdicts: set[bool] = set()
+    for row in rows:
+        normalised = _normalise(row, view)
+        if normalised is None:
+            continue
+        if normalised["type"] == "tool_result":
+            verdicts.update(
+                decision["approved"] is True
+                for decision in normalised["tool_approval_responses"]
+                if decision["approval_id"] == approval_id
+            )
+        view.append(normalised)
+    return verdicts
+
+
 def approval_run_steps(
     rows: Sequence[Mapping[str, Any]], stored: Sequence[StoredRow] | None = None
 ) -> int | None:
