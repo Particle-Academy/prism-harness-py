@@ -624,3 +624,39 @@ def test_a_call_whose_start_a_standing_denial_refused_says_it_was_denied() -> No
     world.fresh().runtime.send(world.root(), "")
     assert world.ran_with == [("echo", {"n": 1}), ("echo", {"n": 2})]
     assert outcomes(world.root(), 3) == [START_DENIED]
+
+
+def test_a_host_steps_unanswered_ungated_call_is_answered_interrupted_by_the_resolution() -> (
+    None
+):
+    """Item 3 (the reference's rule): a HOST step holds an ungated call it
+    never answered and a gated one; the gated call is approved and resumed.
+    The resolution records the ungated call's one outcome, "interrupted, it
+    may have run" (the host may have run it), it never runs here, and every
+    request answers every call."""
+    world = Hooked()
+    world.text("Hi.")
+    world.runtime.send(world.root(), "Go")
+    world.root().thread().record(
+        [
+            {
+                "type": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "h1", "name": "lookup", "arguments": {"n": 3}},
+                    {"id": "h2", "name": "echo", "arguments": {"n": 4}},
+                ],
+                "tool_approval_requests": [{"approval_id": "apr_h2", "tool_call_id": "h2"}],
+            }
+        ]
+    )
+    record_approval(world.fresh().root(), "apr_h2", True)
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+    assert outcomes(world.root(), 4) == ["echo:4"]
+    assert outcomes(world.root(), 3) == [INTERRUPTED_RESULT]
+    assert ("lookup", {"n": 3}) not in world.ran_with
+    world.text("Later.")
+    world.fresh().runtime.send(world.root(), "Later.")
+    for request in world.requests:
+        assert misplaced(list(request.messages)) == []
