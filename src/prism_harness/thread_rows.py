@@ -251,11 +251,16 @@ def approval_tool_scope(
     if not steps or superseded[-1]:
         return None
     position, assistant, _ = steps[-1]
-    requests = assistant.get("tool_approval_requests", [])
+    own = own_approvals(entries)
+    requests = [r for r in assistant.get("tool_approval_requests", []) if r["approval_id"] in own]
     if not requests:
         return None
     results = _paired(steps)[-1]
-    if all(index is not None and index in results for _, index in paired_requests(assistant)):
+    if all(
+        index is not None and index in results
+        for request, index in paired_requests(assistant)
+        if request["approval_id"] in own
+    ):
         return None
     raw = next(entry.message for entry in entries if entry.position == position)
     scope = raw.get("harness_tool_names")
@@ -652,6 +657,29 @@ def _paired(
         for index, entry in results.items():
             results[index] = {k: v for k, v in entry.items() if k != _OCCURRENCE}
     return paired
+
+
+def own_approvals(messages: Sequence[StoredRow]) -> set[str]:
+    """The approval ids the last step with tool calls asked for FIRST (G-408).
+
+    An approval belongs to the step that first asked for it. A later row that
+    repeats its approval id (a host's copy of the paused step, say) asks for
+    nothing, so a decision for that approval never runs a call of the later
+    row.
+    """
+    steps, _ = _thread_steps(messages)
+    if not steps:
+        return set()
+    first: dict[str, int] = {}
+    for position, assistant, _ in steps:
+        for request in assistant.get("tool_approval_requests", []):
+            first.setdefault(request["approval_id"], position)
+    position, assistant, _ = steps[-1]
+    return {
+        request["approval_id"]
+        for request in assistant.get("tool_approval_requests", [])
+        if first.get(request["approval_id"]) == position
+    }
 
 
 def step_position(messages: Sequence[StoredRow]) -> int:
