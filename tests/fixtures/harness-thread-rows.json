@@ -1,7 +1,7 @@
 {
   "suite": "harness-thread-rows",
   "schema_version": 1,
-  "corpus_version": "0.2.0",
+  "corpus_version": "0.3.0",
   "generated_by": "prism-parity:tools/generate-thread-rows.php for php; tools/record-thread-rows.mjs for ts and tools/record_thread_rows.py for py. Every output is execution output, encoded as compact JSON with keys in the order each language wrote them.",
   "pins_note": "The rows a harness stores for a run, and what a stored run is replayed as. A PHP app and a TypeScript or Python agent can share one session. If they store tool calls, approvals or decisions in different shapes, one language resumes the other’s approval against the wrong call or never, or replays a conversation a provider refuses.",
   "cases": [
@@ -594,7 +594,50 @@
       },
       "agrees": true,
       "notes": "What the NEXT turn sends. The document reaches the provider as the text the model wrote, and the parsed object rides along untouched -- a transcript that differed by the shape of the request that produced it is the defect the streaming path already refuses to have. A language that promoted `structured` into the content, or dropped it on replay, would send a different conversation than the other two."
+    },
+    {
+      "id": "thr-0014",
+      "title": "the row a runner start writes when it ends the calls a child was parked on",
+      "since": "0.3.0",
+      "input": {
+        "write": "ended_by_start",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "weather",
+            "arguments": {
+              "city": "Paris"
+            }
+          },
+          {
+            "id": "call_2",
+            "name": "transfer",
+            "arguments": {
+              "to": "acct_9",
+              "amount": 5
+            },
+            "result_id": "fc_2"
+          }
+        ],
+        "approval_requests": [
+          {
+            "approval_id": "apr_2",
+            "tool_call_id": "call_2"
+          },
+          {
+            "approval_id": "apr_1",
+            "tool_call_id": "call_1"
+          }
+        ]
+      },
+      "rows": {
+        "php": "[{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Not run: the delegation this call was proposed under ended.\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"transfer\",\"args\":{\"to\":\"acct_9\",\"amount\":5},\"result\":\"Not run: the delegation this call was proposed under ended.\",\"tool_call_result_id\":\"fc_2\",\"artifacts\":[]}],\"tool_approval_responses\":[],\"harness_ended_by_start\":{\"approval_ids\":[\"apr_1\",\"apr_2\"]}}]",
+        "ts": "[{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Not run: the delegation this call was proposed under ended.\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"transfer\",\"args\":{\"to\":\"acct_9\",\"amount\":5},\"result\":\"Not run: the delegation this call was proposed under ended.\",\"tool_call_result_id\":\"fc_2\",\"artifacts\":[]}],\"tool_approval_responses\":[],\"harness_ended_by_start\":{\"approval_ids\":[\"apr_1\",\"apr_2\"]}}]",
+        "py": "[{\"type\":\"tool_result\",\"tool_results\":[{\"tool_call_id\":\"call_1\",\"tool_name\":\"weather\",\"args\":{\"city\":\"Paris\"},\"result\":\"Not run: the delegation this call was proposed under ended.\",\"tool_call_result_id\":null,\"artifacts\":[]},{\"tool_call_id\":\"call_2\",\"tool_name\":\"transfer\",\"args\":{\"to\":\"acct_9\",\"amount\":5},\"result\":\"Not run: the delegation this call was proposed under ended.\",\"tool_call_result_id\":\"fc_2\",\"artifacts\":[]}],\"tool_approval_responses\":[],\"harness_ended_by_start\":{\"approval_ids\":[\"apr_1\",\"apr_2\"]}}]"
+      },
+      "agrees": true,
+      "notes": "G-387: a runner start never acts on a decision recorded on the child; it ends the calls the child was parked on with its task row, each with one fixed result, and marks the row with the approvals they were asked under. That mark is the ONLY thing that makes an ended call read ended, so it is pinned here byte for byte: `harness_ended_by_start` as a top-level key AFTER `tool_approval_responses`, never inside a result (a tool controls its result text, never this key), holding `{approval_ids: [...]}` in CALL order, not in the order the requests were stored (the requests here are deliberately reversed). The two calls carry DISTINCT tool_call ids; calls that share one id are G-392's and are not in this row. A language that wrote another shape, or none, would read a call another language ended as approved, the decision standing for a side effect that never ran."
     }
   ],
-  "divergence_note": "All thirteen rows agree across PHP, TypeScript and Python. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised. User rows are out of scope here by decision; a draft of thr-0013 that carried them found PHP writing additional_content and additional_attributes as empty LISTS where both ports write neither key, recorded under G-58 rather than pinned in a suite that says it does not cover them."
+  "divergence_note": "thr-0001..thr-0013 agree across PHP, TypeScript and Python. thr-0014 (0.3.0) pins the ended mark, which the three languages wrote in three different shapes before it; it agrees once each port records the PHP reference's row. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised. User rows are out of scope here by decision; a draft of thr-0013 that carried them found PHP writing additional_content and additional_attributes as empty LISTS where both ports write neither key, recorded under G-58 rather than pinned in a suite that says it does not cover them."
 }

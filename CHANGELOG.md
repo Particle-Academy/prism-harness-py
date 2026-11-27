@@ -130,8 +130,10 @@
   task row recording them is durable and the start is marked recorded, so a
   listener that raises cannot undo a start whose task row exists. "Ended by a
   start" is recognised only by `harness_ended_by_start`, a field the harness
-  writes on the row that closes those calls, naming the approval ids it
-  ended, and only for the approvals the turn before it asked for: never by a
+  writes last on the row that closes those calls, `{approval_ids: [...]}`
+  naming the approval ids it ended (the PHP reference's shape, the same in
+  all three languages and pinned by the `harness-thread-rows` corpus; no other
+  shape is read), and only for the approvals the turn before it asked for: never by a
   result's text (a tool may return any text) and never by a tool call id
   (providers reuse them across turns), so a person's approval of a call that
   ran, or of a later call under a reused id, always stands.
@@ -148,7 +150,14 @@
   named by its class and skips none of it. A `BaseException` that is not an
   `Exception` (host code stopping the process) still releases the start's and
   the run's holds, marks the run failed and emits `RunFailed` (its class
-  only), and propagates unchanged. The harness's own log lines name a class
+  only), and propagates unchanged. Every run event, `RunStarted` included, is
+  emitted inside the run's own error handling, so anything raised from it (a
+  listener's `BaseException`, an emit that fails) fails that run, root or
+  child, by class name, releases its holds and emits `RunFailed`; a run never
+  stays `running` because of a listener. The holds are released BEFORE
+  `RunFailed` is emitted, so a listener never observes one about to go. A
+  raising listener is warned about by its class name only, never its text,
+  and a listener error whose text cannot be read does not break the emit. The harness's own log lines name a class
   by the same identifier rule as a failed run. A read that raises refuses the start as `failed`, naming the
   exception's class, with nothing written; the answerability read counts only
   its own answers (no saved binding, too deep) as unanswerable, and any other
@@ -157,6 +166,10 @@
 - A tree hold records the start that took it, and only that start releases or
   hands it over: a re-entrant start (from a `RunStarted` listener) that fails
   never releases the hold of the start it re-entered.
+- A runner start's own run reads the records it committed on the Session
+  object it uses; only the object that committed that start enters this
+  view. Any other Session object, whatever run id it is handed, keeps the
+  provisional rule.
 - Everything the runner does around a child (building its session, reading
   its thread, its count, the budget arithmetic) is framed: any exception comes
   back to the parent as a `failed` result naming the exception's class (and a

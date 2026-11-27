@@ -23,6 +23,7 @@ __all__ = [
     "REPEATED_CALL_ID",
     "ToolCallInput",
     "assistant_row",
+    "ended_by_start_row",
     "thread_view",
     "tool_result_entry",
     "tool_result_row",
@@ -98,6 +99,34 @@ def tool_result_row(
         "tool_results": [dict(entry) for entry in results],
         "tool_approval_responses": [dict(decision) for decision in decisions],
     }
+
+
+def ended_by_start_row(
+    calls: Sequence[ToolCallInput],
+    approval_ids: Sequence[str | None],
+    results: Sequence[Mapping[str, Any]] = (),
+    decisions: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    """The tool result row a runner start's task row closes the calls still
+    pending on a child with (G-387): the results the step already had, then
+    each ended call with the one fixed :data:`DELEGATION_ENDED` result (its
+    arguments and provider ids kept), the decisions, and LAST on the row the
+    harness's own mark, ``{approval_ids: [...]}``: the approvals those calls
+    were asked under (``approval_ids``, each call's OWN, paired by
+    :func:`paired_requests`, None for a call asked nothing), in CALL order. The
+    PHP reference's row, so a thread reads the same in every language;
+    prism-parity's ``harness-thread-rows`` corpus pins it (``write:
+    ended_by_start``)."""
+    approvals = [
+        approval
+        for _, approval in zip(calls, approval_ids, strict=True)
+        if isinstance(approval, str) and approval
+    ]
+    row = tool_result_row(
+        [*results, *(tool_result_entry(call, DELEGATION_ENDED) for call in calls)], decisions
+    )
+    row[ENDED_BY_START] = {"approval_ids": list(dict.fromkeys(approvals))}
+    return row
 
 
 def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -249,26 +278,37 @@ def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
                 if isinstance(request.get("approval_id"), str) and request["approval_id"]
             }
         elif kind == "tool_result":
-            marked = row.get(ENDED_BY_START)
-            if isinstance(marked, list):
-                ended.update(
-                    approval
-                    for approval in marked
-                    if isinstance(approval, str) and approval in asked
-                )
+            ended.update(
+                approval for approval in _ended_mark(row.get(ENDED_BY_START)) if approval in asked
+            )
     return ended
 
 
+def _ended_mark(value: object) -> list[str]:
+    """The approval ids an ended mark names: ONLY the reference shape,
+    ``{approval_ids: [...]}`` (G-387 round 12). Any other value, the
+    round-11 list included (it never shipped), names nothing."""
+    if not isinstance(value, dict):
+        return []
+    ids = value.get("approval_ids")
+    if not isinstance(ids, list):
+        return []
+    return [approval for approval in ids if isinstance(approval, str) and approval]
+
+
 #: The field a runner start's task row writes on the tool result row that
-#: closes the calls still pending on the child (G-387 round 11): the approval
-#: ids it ended. Written by the harness alone, and the only thing that marks a
-#: call as ended by a start.
+#: closes the calls still pending on the child (G-387 rounds 11 and 12):
+#: ``{approval_ids: [...]}``, the approvals it ended, the PHP reference's
+#: shape. Written by the harness alone, and the only thing that marks a call
+#: as ended by a start.
 ENDED_BY_START = "harness_ended_by_start"
 
 
 #: What a call still pending on a child is answered with when a runner start
-#: gives the child a new task (G-387 round 9).
-DELEGATION_ENDED = "Not run: the subagent was given a new task before this call was resumed."
+#: gives the child a new task (G-387 round 9): the PHP reference's text (round
+#: 12), so the row reads the same in every language. Nothing reads it to
+#: decide anything; :data:`ENDED_BY_START` marks the call ended.
+DELEGATION_ENDED = "Not run: the delegation this call was proposed under ended."
 
 
 def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], bool] | None:

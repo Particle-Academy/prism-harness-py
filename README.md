@@ -326,11 +326,14 @@ What one run tree is:
   that run, the Session object it uses (handed to tool providers, factories,
   the authorizer and the plan service) reads the committed mode, binding,
   references, depth, ceiling and run, while every other reader keeps the
+  provisional rule. Only the Session object that committed the start enters
+  that view; any other object, whatever run id it is handed, reads by the
   provisional rule. Absent never widens anything: until then the child still reads as in the
   run tree and shared plan budget it was last confirmed in. The task row ends
   every call still pending on the child as not run (read as ended, never as
   approved, and recognised only by the `harness_ended_by_start` field the
-  harness writes on that row, for the approvals of that turn: never by a
+  harness writes on that row, `{approval_ids: [...]}`, the same shape in every
+  language, for the approvals of that turn: never by a
   result's text or a reused tool call id); a runner start never acts on a recorded decision, and a decision
   a person recorded that a resume could still act on refuses the start like
   a pending approval does, so the host resumes it first.
