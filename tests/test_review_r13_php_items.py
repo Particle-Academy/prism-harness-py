@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from test_repeated_call_ids import Recording, park, rows
+from test_repeated_call_ids import Recording, park, rows, say
 from test_structured import a_session, scripted
 
 from prism_harness import (
@@ -193,14 +193,16 @@ def test_a_host_row_recorded_inside_the_runtimes_write_window_is_outside(
         return original(self, key, callback, *args)
 
     monkeypatch.setattr(FileSessionStore, "with_lock", with_lock)
-    _, reported = park(world, ("c1", "echo", {"n": 1}), ("c2", "lookup", {"n": 2}))
+    say(world, ("c1", "echo", {"n": 1}), ("c2", "lookup", {"n": 2}))
+    response = world.runtime.send(world.root(), "go")
     monkeypatch.setattr(FileSessionStore, "with_lock", original)
 
     assert seen == ["recorded"]
     stored = rows(world.fresh().root())
-    # The run reports only approvals still pending when it returns (G-387
-    # round 17): the host row ended the step's, so none.
-    assert reported == []
+    # The host row replaced the step and nothing else waits (G-387 round
+    # 17, decision 8): the turn is not awaiting approval.
+    assert response.finish_reason == "replaced"
+    assert response.pending_approvals == []
     approvals = [
         request["approval_id"]
         for row in stored

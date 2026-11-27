@@ -1812,7 +1812,25 @@ class AgentRuntime:
                 self._trees.finished(session, run_id)
                 # The approvals still pending once the run's end steps ran
                 # (host code among them may record a row), read again.
-                still = set(pending_approval_ids(thread.rows()))
+                pending_now = pending_approval_ids(thread.rows())
+                still = set(pending_now)
+                if not any(request["approval_id"] in still for request in requests):
+                    # NONE of its approvals is still pending (G-387 round 17,
+                    # decision 8; the reference's shape): the turn is not
+                    # awaiting approval. "replaced" when a row replaced its
+                    # step and nothing waits; "parked_elsewhere" when another
+                    # step's approvals do.
+                    why = "parked_elsewhere" if pending_now else "replaced"
+                    session.complete_run(run_id, why, called)
+                    ended = AgentResponse(
+                        run_id=run_id,
+                        text=text,
+                        steps=run.ledger.steps,
+                        tool_calls=called,
+                        finish_reason=why,
+                        stopped_because=why,
+                    )
+                    return ended if schema is None else _structured(ended, None)
                 parked = AgentResponse(
                     run_id=run_id,
                     text=text,
