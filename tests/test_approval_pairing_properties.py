@@ -215,6 +215,9 @@ class Case:
     #: that failed before acting on any decision. The first decision stands.
     second: bool = False
     second_after_failure: bool = False
+    #: The second decision written straight onto the thread, as another
+    #: writer would, rather than through ``record_approval``.
+    second_direct: bool = False
     #: A later step with tool calls a host records after the park, or None.
     later: Later | None = None
     #: Stored only: an EARLIER parked step the case's step followed. Each of its
@@ -327,7 +330,8 @@ class Case:
                     {
                         "second_decision": "after-failed-turn"
                         if self.second_after_failure
-                        else "batch"
+                        else "batch",
+                        **({"second_direct": True} if self.second_direct else {}),
                     }
                     if self.second
                     else {}
@@ -633,6 +637,7 @@ def generate(seed: int) -> Case:
         later=later_step(seed, calls, insert),
         second=(second := random.Random(seed ^ 0x401401).random() < 0.35),
         second_after_failure=second and random.Random(seed ^ 0x401402).random() < 0.5,
+        second_direct=second and random.Random(seed ^ 0x401403).random() < 0.4,
         earlier=tuple(earlier),
         string_arguments=path == "stored" and rng.random() < 0.3,
         spent=path == "live" and rng.random() < 0.8,
@@ -659,6 +664,36 @@ class Expected:
 def copied(case: Case) -> bool:
     """Whether the case records a copy of the paused step (G-408)."""
     return case.copy is not None and case.later is None
+
+
+#: Which of two decisions for one approval stands (G-401): ``first`` (the
+#: first recorded) or ``deny`` (any deny is final).
+DECISION_RULE = "first"
+
+
+def second_decided(case: Case) -> str | None:
+    """The approval the case records a second, opposite decision for: its key
+    (a call token, live; a request index, stored), or None."""
+    if not case.second:
+        return None
+    if case.path == "live":
+        gated = [c for c in case.calls if c.gated]
+        for index in case.decision_order:
+            if gated[index].decision != "none":
+                return gated[index].token
+        return None
+    for index in case.decision_order:
+        if case.requests[index].decision != "none":
+            return case.requests[index].approval_id
+    return None
+
+
+def standing(case: Case, key: str, decision: str, reason: str | None) -> tuple[str, str | None]:
+    """The decision that stands for one approval, given the rule."""
+    if second_decided(case) != key or DECISION_RULE == "first" or decision == "deny":
+        return decision, reason
+    # Denial wins: the second decision, a deny, revokes the approve.
+    return "deny", "second"
 
 
 def oracle(case: Case) -> Expected:
@@ -741,10 +776,14 @@ def oracle(case: Case) -> Expected:
             expected.outcomes[call.token] = REPEATED
             continue
         if case.path == "live":
-            decision, reason = call.decision, call.reason
+            decision, reason = standing(case, call.token, call.decision, call.reason)
         else:
             own = [r for r in case.requests if r.tool_call_id == call.id]
-            decision, reason = (own[0].decision, own[0].reason) if own else ("none", None)
+            decision, reason = (
+                standing(case, own[0].approval_id, own[0].decision, own[0].reason)
+                if own
+                else ("none", None)
+            )
         if decision == "approve":
             expected.runs.append(call.token)
             expected.outcomes[call.token] = f"{GATED}:{call.token}"
@@ -1140,7 +1179,24 @@ def _check(
                     raise
             else:
                 broken.append("G-401: a turn asking for an unknown tool did not fail")
-        record_approval(session, approval, verdict != "approve", "second")
+        if case.second_direct:
+            session.thread().record(
+                [
+                    {
+                        "type": "tool_result",
+                        "tool_results": [],
+                        "tool_approval_responses": [
+                            {
+                                "approval_id": approval,
+                                "approved": verdict != "approve",
+                                "reason": "second",
+                            }
+                        ],
+                    }
+                ]
+            )
+        else:
+            record_approval(session, approval, verdict != "approve", "second")
     insert_between(session, case, "after_decision")
     before = len(ran)
     resumed = a_send(runtime, session, case.resumes[0], "")

@@ -109,3 +109,35 @@ def test_a_resent_identical_decision_writes_no_row_and_runs_nothing_more(approve
     runtime.send(session, "")
     runtime.send(session, "")
     assert counts.get("echo", 0) == (1 if approved else 0)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "runs"),
+    [(False, True, False), (True, False, True)],
+    ids=["deny-then-approve", "approve-then-deny"],
+)
+def test_a_decision_pair_already_in_the_thread_is_read_first_wins(
+    first: bool, second: bool, runs: bool
+) -> None:
+    # Written directly, as an earlier release or another writer could have.
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    runtime = guarded_runtime(once([LlmToolCall("p", "echo", {"value": "P"})]), counts)
+
+    approval = runtime.send(session, "go").pending_approvals[0].id
+    session.thread().record(
+        [
+            {
+                "type": "tool_result",
+                "tool_results": [],
+                "tool_approval_responses": [
+                    {"approval_id": approval, "approved": verdict, "reason": None}
+                ],
+            }
+            for verdict in (first, second)
+        ]
+    )
+    runtime.send(session, "")
+    runtime.send(session, "")
+
+    assert counts.get("echo", 0) == (1 if runs else 0)
