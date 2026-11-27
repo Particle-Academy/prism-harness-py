@@ -92,3 +92,20 @@ def test_a_decision_after_the_step_was_resolved_records_nothing() -> None:
     assert set(decisions_for(session, approval)) == {False}
     assert counts == {}
     assert results_for(session, "P") == {"no"}
+
+
+@pytest.mark.parametrize("approved", [True, False], ids=["approve", "deny"])
+def test_a_resent_identical_decision_writes_no_row_and_runs_nothing_more(approved: bool) -> None:
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    runtime = guarded_runtime(once([LlmToolCall("p", "echo", {"value": "P"})]), counts)
+
+    approval = runtime.send(session, "go").pending_approvals[0].id
+    record_approval(session, approval, approved, None if approved else "no")
+    rows = len(session.thread().messages())
+    record_approval(session, approval, approved, None if approved else "no")
+
+    assert len(session.thread().messages()) == rows
+    runtime.send(session, "")
+    runtime.send(session, "")
+    assert counts.get("echo", 0) == (1 if approved else 0)
