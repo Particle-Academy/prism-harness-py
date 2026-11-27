@@ -417,8 +417,8 @@ def _paired(
        another writer), so a finished call never reads as unanswered and can
        never run again. It never ends another step's call.
 
-    An entry identical to one already paired is the same result restated by a
-    later row, and pairs with nothing.
+    An entry identical to one already paired in its OWN step is the same
+    result restated by a later row, and pairs with nothing.
     """
 
     def same(call: Mapping[str, Any], entry: Mapping[str, Any], exact: int) -> bool:
@@ -432,8 +432,10 @@ def _paired(
     paired: list[dict[int, dict[str, Any]]] = [{} for _ in steps]
     left: list[list[dict[str, Any]]] = [[] for _ in steps]
 
-    def restated(entry: Mapping[str, Any]) -> bool:
-        return any(dict(entry) == done for results in paired for done in results.values())
+    def restated(step: int, entry: Mapping[str, Any]) -> bool:
+        # A resume row restates ITS OWN step's results; an identical result in
+        # another step is that step's own, never a restatement.
+        return any(dict(entry) == done for done in paired[step].values())
 
     def first(step: int, entry: Mapping[str, Any], exact: int) -> int | None:
         return next(
@@ -447,7 +449,7 @@ def _paired(
 
     for step, (_, _, entries) in enumerate(steps):
         for entry in entries:
-            if restated(entry):
+            if restated(step, entry):
                 continue
             index = first(step, entry, 2)
             if index is None:
@@ -476,7 +478,7 @@ def _paired(
 
     for step in range(len(steps)):
         for entry in left[step]:
-            if restated(entry):
+            if restated(step, entry):
                 continue
             index = first(step, entry, 1)
             if index is None:
