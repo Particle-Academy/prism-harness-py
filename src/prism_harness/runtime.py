@@ -28,6 +28,8 @@ from prism_harness.subagents import RunBudget, RunContext
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     REPEATED_CALL_ID,
+    REPLACED_BY_LATER_STEP,
+    REPLACED_STEP,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
@@ -36,6 +38,7 @@ from prism_harness.thread_rows import (
     paired_requests,
     paired_results,
     repeats_call_ids,
+    replaced_steps,
     step_answers,
     thread_view,
     tool_result_entry,
@@ -716,7 +719,7 @@ class AgentRuntime:
         """
         # A read without the lock first: nearly every send() has nothing to
         # resolve and should not wait on the session lock to find that out.
-        if self._unresolved(session, mode) is None:
+        if self._unresolved(session, mode) is None and not self._replaced(session, mode):
             return list(offered)
 
         # Then under the session lock, reading again inside it. Two workers
@@ -725,6 +728,35 @@ class AgentRuntime:
         # finds the result the first recorded, and runs nothing. If it cannot get
         # the lock it raises, and nothing runs.
         def resolve(live: Session) -> list[HarnessTool]:
+            # An earlier parked step that a later step followed is answered
+            # first, once: each of its gated calls with no result is denied,
+            # and none of its decisions runs anything (G-392).
+            replaced = self._replaced(live, mode)
+            if replaced:
+                live.thread().record(
+                    [
+                        {
+                            **tool_result_row(
+                                [
+                                    tool_result_entry(
+                                        ToolCallInput(
+                                            id=row["id"],
+                                            name=row["name"],
+                                            arguments=row["arguments"],
+                                            result_id=row["result_id"],
+                                        ),
+                                        REPLACED_BY_LATER_STEP,
+                                    )
+                                    for row in rows
+                                ]
+                            ),
+                            REPLACED_STEP: {"position": position},
+                        }
+                        for position, rows in replaced
+                    ],
+                    run_id,
+                )
+
             work = self._unresolved(live, mode)
 
             if work is None:
@@ -800,6 +832,14 @@ class AgentRuntime:
             resolve,
             options.get("lock_ttl", _RESOLUTION_LOCK_SECONDS),
             options.get("lock_wait", _RESOLUTION_WAIT_SECONDS),
+        )
+
+    @staticmethod
+    def _replaced(session: Session, mode: AgentMode) -> list[tuple[int, list[dict[str, Any]]]]:
+        """The gated calls of earlier steps a later step replaced, with no result yet."""
+        return replaced_steps(
+            [(entry.position, entry.message) for entry in session.thread().messages()],
+            mode.needs_approval,
         )
 
     @staticmethod

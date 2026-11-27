@@ -11,7 +11,7 @@ prism-parity's ``harness-thread-rows`` corpus pins it.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +19,7 @@ from prism_harness.tool_arguments import usable_arguments
 
 __all__ = [
     "REPEATED_CALL_ID",
+    "REPLACED_BY_LATER_STEP",
     "ToolCallInput",
     "assistant_row",
     "thread_view",
@@ -112,6 +113,11 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     view: list[dict[str, Any]] = []
 
     for row in rows:
+        if is_replaced_row(row):
+            # Answers an EARLIER step, written after a later one: folded in
+            # here it would stand for the later step's calls that share an id.
+            continue
+
         normalised = _normalise(row, view)
 
         if normalised is None:
@@ -222,18 +228,21 @@ REPEATED_CALL_ID = "Tool call was not run because another call in this step has 
 
 def repeats_call_ids(assistant: Mapping[str, Any]) -> bool:
     """Whether a tool call id repeats among one step's calls (an empty or
-    missing id counts), or a ``tool_call_id`` among its approval requests
-    (G-392).
+    missing id counts), or a ``tool_call_id`` or an ``approval_id`` among its
+    approval requests (G-392).
 
     Such a step cannot say which decision answers which call, so none of its
     gated calls runs.
     """
     ids = [_text(call.get("id")) for call in _dicts(assistant.get("tool_calls"))]
-    asked = [
-        _text(request.get("tool_call_id"))
-        for request in _dicts(assistant.get("tool_approval_requests"))
-    ]
-    return len(set(ids)) != len(ids) or len(set(asked)) != len(asked)
+    requests = _dicts(assistant.get("tool_approval_requests"))
+    asked = [_text(request.get("tool_call_id")) for request in requests]
+    approvals = [_text(request.get("approval_id")) for request in requests]
+    return (
+        len(set(ids)) != len(ids)
+        or len(set(asked)) != len(asked)
+        or len(set(approvals)) != len(approvals)
+    )
 
 
 def paired_requests(assistant: Mapping[str, Any]) -> list[tuple[dict[str, Any], int | None]]:
@@ -286,6 +295,9 @@ def step_answers(
     decisions: dict[str, dict[str, Any]] = {}
 
     for row in rows:
+        if is_replaced_row(row):
+            continue
+
         normalised = _normalise(row, view)
 
         if normalised is None:
@@ -347,6 +359,75 @@ def paired_results(
             paired[chosen[0]] = dict(entry)
 
     return paired
+
+
+#: The result each gated call of an earlier parked step gets once a later
+#: step with tool calls follows it (G-392), identical in every language.
+REPLACED_BY_LATER_STEP = "Tool call was not run because a later step replaced it"
+
+#: The key on the row holding those results, naming the step they answer by
+#: the thread position of its assistant row. A harness-only field: a tool
+#: controls its result text, never this key.
+REPLACED_STEP = "harness_replaced_step"
+
+
+def is_replaced_row(row: Mapping[str, Any]) -> bool:
+    return row.get("type") == "tool_result" and isinstance(row.get(REPLACED_STEP), dict)
+
+
+def replaced_steps(
+    messages: Sequence[tuple[int, Mapping[str, Any]]],
+    needs_approval: Callable[[str], bool],
+) -> list[tuple[int, list[dict[str, Any]]]]:
+    """The gated calls of every EARLIER tool-calling step that have no result
+    of their own, by the thread position of the step's assistant row (G-392).
+
+    Only the last step with tool calls is resolved; a decision for an earlier
+    one never runs anything. Each such call gets one result saying a later
+    step replaced it, so no gated call is left without an outcome. A step's
+    results are the tool result rows after it up to the next step with tool
+    calls, and the rows written for it under ``harness_replaced_step``.
+    """
+    view: list[dict[str, Any]] = []
+    steps: list[tuple[int, dict[str, Any], list[dict[str, Any]]]] = []
+    written: dict[int, list[dict[str, Any]]] = {}
+
+    for position, row in messages:
+        if is_replaced_row(row):
+            target = row[REPLACED_STEP].get("position")
+            if type(target) is int:
+                normalised = _normalise(row, view)
+                if normalised is not None:
+                    written.setdefault(target, []).extend(normalised["tool_results"])
+            continue
+
+        normalised = _normalise(row, view)
+
+        if normalised is None:
+            continue
+
+        if normalised["type"] == "assistant" and normalised["tool_calls"]:
+            steps.append((position, normalised, []))
+        elif normalised["type"] == "tool_result" and steps:
+            steps[-1][2].extend(normalised["tool_results"])
+
+        if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
+            view[-1] = _fold(view[-1], normalised)
+        else:
+            view.append(normalised)
+
+    replaced: list[tuple[int, list[dict[str, Any]]]] = []
+    for position, assistant, entries in steps[:-1]:
+        results = paired_results(assistant, [*entries, *written.get(position, [])])
+        requested = {index for _, index in paired_requests(assistant) if index is not None}
+        calls = [
+            call
+            for index, call in enumerate(assistant["tool_calls"])
+            if index not in results and (index in requested or needs_approval(call["name"]))
+        ]
+        if calls:
+            replaced.append((position, calls))
+    return replaced
 
 
 def ambiguous_calls(assistant: Mapping[str, Any]) -> set[str]:
