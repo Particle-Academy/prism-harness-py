@@ -181,3 +181,23 @@ def test_a_retry_after_a_failed_model_step_does_not_run_an_approved_call_again()
 
     assert counts == {"echo": 1}
     assert stored_results(session, "P") == 1
+
+
+@pytest.mark.parametrize("kind", ["assistant", "user"])
+def test_an_approved_call_that_is_refused_is_not_reported_as_called(kind: str) -> None:
+    # The run reports the tools it invoked. An approved call refused instead
+    # of run is not one of them.
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    runtime = a_runtime(once([LlmToolCall("p", "echo", {"value": "P"})]), counts, 4)
+
+    first = runtime.send(session, "go")
+    session.thread().record([INSERTED[kind]])
+    record_approval(session, first.pending_approvals[0].id, True)
+    resumed = runtime.send(session, "")
+
+    assert counts == {}
+    assert outcomes(session) == {"P": {"Not run: echo is not available to this run."}}
+    assert resumed.tool_calls == []
+    run = session.run()
+    assert run is not None and run["tool_calls"] == []
