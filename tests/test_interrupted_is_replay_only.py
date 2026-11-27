@@ -1,4 +1,4 @@
-""""Interrupted" is an answer in the replay only, never a stored outcome (G-410).
+""" "Interrupted" is an answer in the replay only, never a stored outcome (G-410).
 
 A call the harness recorded as started, with no result, is shown to the model
 as "Tool call was interrupted, it may have run". That answer is built for the

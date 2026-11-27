@@ -29,7 +29,6 @@ from prism_harness.thread import _HARNESS_RECORDING, ThreadMessage
 from prism_harness.thread_rows import (
     ANSWERS_STEP,
     ARGUMENTS_AS_SENT,
-    INTERRUPTED,
     NOT_OPEN,
     REPEATED_CALL_ID,
     REPLACED_BY_LATER_STEP,
@@ -40,6 +39,7 @@ from prism_harness.thread_rows import (
     approval_tool_scope,
     assistant_row,
     decided,
+    has_open_started,
     last_step_results,
     last_step_superseded,
     own_approvals,
@@ -737,7 +737,13 @@ class AgentRuntime:
         """
         # A read without the lock first: nearly every send() has nothing to
         # resolve and should not wait on the session lock to find that out.
-        if self._unresolved(session, mode) is None and not self._replaced(session, mode):
+        # A started call with no result may still be running, so a send then
+        # also waits on the lock, as it did while that call was pending.
+        if (
+            self._unresolved(session, mode) is None
+            and not self._replaced(session, mode)
+            and not has_open_started(session.thread().messages())
+        ):
             return list(offered)
 
         # Then under the session lock, reading again inside it. Two workers
@@ -750,7 +756,6 @@ class AgentRuntime:
             # first, once: each of its gated calls with no result is denied,
             # and none of its decisions runs anything (G-392).
             replaced = self._replaced(live, mode)
-            started_before = started_calls(live.thread().messages()) if replaced else set()
             if replaced:
                 live.thread().record(
                     [
@@ -764,9 +769,7 @@ class AgentRuntime:
                                             arguments=row["arguments"],
                                             result_id=row["result_id"],
                                         ),
-                                        INTERRUPTED
-                                        if (position, row["id"], row["name"]) in started_before
-                                        else REPLACED_BY_LATER_STEP,
+                                        REPLACED_BY_LATER_STEP,
                                     )
                                     for row in rows
                                 ]
@@ -795,10 +798,6 @@ class AgentRuntime:
             resolved: list[dict[str, Any]] = []
             unusable = unusable_stored_calls([entry.message for entry in live.thread().messages()])
 
-            # A call the harness recorded as started and has no result may have
-            # run: it reads interrupted, and never runs again (G-410).
-            started = started_calls(live.thread().messages())
-
             for row, approval_id in zip(calls, approval_ids, strict=True):
                 call = ToolCallInput(
                     id=row["id"],
@@ -812,8 +811,6 @@ class AgentRuntime:
                     # A repeated id cannot say which decision answers which
                     # call, so none of the step's gated calls runs (G-392).
                     resolved.append(tool_result_entry(call, REPEATED_CALL_ID))
-                elif (step, call.id, call.name) in started:
-                    resolved.append(tool_result_entry(call, INTERRUPTED))
                 elif decision is not None and decision["approved"] and call.id in unusable:
                     resolved.append(
                         tool_result_entry(
@@ -939,11 +936,18 @@ class AgentRuntime:
         }
 
         # A call that has a result is DONE, whatever its decision says. A call that
-        # needs nobody is not this method's to run.
+        # needs nobody is not this method's to run. A call the harness recorded
+        # as started may have run: it is never run again, and gets no stored
+        # outcome here; the replay answers it "interrupted" until its own result
+        # lands (G-410).
+        step = step_position(messages)
+        started = started_calls(messages)
         pending = [
             (row, requested.get(index))
             for index, row in enumerate(assistant["tool_calls"])
-            if index not in results and (index in requested or mode.needs_approval(row["name"]))
+            if index not in results
+            and (step, row["id"], row["name"]) not in started
+            and (index in requested or mode.needs_approval(row["name"]))
         ]
 
         if not pending:
@@ -957,7 +961,7 @@ class AgentRuntime:
             approval_tool_scope(rows, messages),
             ambiguous_calls(assistant),
             repeats_call_ids(assistant),
-            step_position(messages),
+            step,
         )
 
     @classmethod

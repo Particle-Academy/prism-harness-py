@@ -167,12 +167,19 @@ def thread_view(
     answers: dict[int, int] = {}
     entries = _stored(rows, stored)
     marks = _valid_marks(entries)
+    interrupted = _open_started(entries)
 
     for index, row in enumerate(rows):
         normalised = _normalise(row, view)
 
         if normalised is None:
             continue
+
+        if index in interrupted:
+            # A started call with no result is answered "interrupted" here,
+            # in the request only, never in the store: its real result, when
+            # it lands, is its one stored outcome (G-410).
+            normalised["tool_results"] = [interrupted[index]]
 
         if (
             normalised["type"] == "assistant"
@@ -790,6 +797,47 @@ def started_calls(messages: Sequence[StoredRow]) -> set[tuple[int, str, str]]:
     return started
 
 
+def _open_started(entries: Sequence[StoredRow]) -> dict[int, dict[str, Any]]:
+    """The started rows (by index) whose call has no result in its step, each
+    with the answer the replay shows for it: ``INTERRUPTED``, for the call as
+    its step stored it (G-410). Built for the request, never stored."""
+    started = started_calls(entries)
+    if not started:
+        return {}
+    steps, _ = _thread_steps(entries)
+    paired = _paired(steps)
+    open_calls: dict[tuple[int, str, str], dict[str, Any]] = {}
+    for step, (position, assistant, _) in enumerate(steps):
+        for index, call in enumerate(assistant["tool_calls"]):
+            key = (position, call["id"], call["name"])
+            if key in started and index not in paired[step] and key not in open_calls:
+                open_calls[key] = tool_result_entry(
+                    ToolCallInput(
+                        id=call["id"],
+                        name=call["name"],
+                        arguments=call["arguments"],
+                        result_id=call["result_id"],
+                    ),
+                    INTERRUPTED,
+                )
+    marks = _valid_marks(entries)
+    answers: dict[int, dict[str, Any]] = {}
+    for index, entry in enumerate(entries):
+        mark = entry.message.get(STARTED_KEY)
+        if index not in marks or not isinstance(mark, dict):
+            continue
+        key = (marks[index], _text(mark.get("tool_call_id")), _text(mark.get("tool_name")))
+        if key in open_calls:
+            answers[index] = open_calls.pop(key)
+    return answers
+
+
+def has_open_started(messages: Sequence[StoredRow]) -> bool:
+    """Whether a call the harness recorded as started has no result yet: it
+    may still be running (G-410)."""
+    return bool(_open_started(messages))
+
+
 def own_approvals(messages: Sequence[StoredRow]) -> set[str]:
     """The approval ids the last step with tool calls asked for FIRST (G-408).
 
@@ -850,6 +898,9 @@ def replaced_steps(
     """
     steps, superseded = _thread_steps(messages)
     paired = _paired(steps)
+    # A started call may have run: it is answered "interrupted" in the replay
+    # until its own result lands, never denied as replaced (G-410).
+    started = started_calls(messages)
     replaced: list[tuple[int, list[dict[str, Any]]]] = []
     for step, (position, assistant, _) in enumerate(steps):
         if not superseded[step]:
@@ -858,7 +909,9 @@ def replaced_steps(
         calls = [
             call
             for index, call in enumerate(assistant["tool_calls"])
-            if index not in paired[step] and (index in requested or needs_approval(call["name"]))
+            if index not in paired[step]
+            and (position, call["id"], call["name"]) not in started
+            and (index in requested or needs_approval(call["name"]))
         ]
         if calls:
             replaced.append((position, calls))
