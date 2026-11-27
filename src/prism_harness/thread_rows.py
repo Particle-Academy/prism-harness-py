@@ -107,8 +107,9 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     calls a stopped step did run, the decisions, and the results written when
     the run resumes. Rows are never rewritten, so all of them stay stored; shown
     to a provider separately, a tool output would go twice. Folded, a result is
-    keyed by its tool call id and a decision by its approval id, and a later one
-    replaces an earlier one in the earlier one's position.
+    keyed by its tool call id, tool name and arguments (never the id alone; see
+    :func:`_fold`) and a decision by its approval id, and a later one replaces
+    an earlier one in the earlier one's position.
     """
     view: list[dict[str, Any]] = []
 
@@ -612,16 +613,33 @@ def _normalise(row: Mapping[str, Any], view: list[dict[str, Any]]) -> dict[str, 
 
 
 def _fold(earlier: Mapping[str, Any], later: Mapping[str, Any]) -> dict[str, Any]:
-    results: dict[str, dict[str, Any]] = {}
+    """Two consecutive tool result rows as one (G-392).
+
+    A later row's result for the SAME call replaces an earlier one, in the
+    earlier one's position. The same call is the same call id, tool name and
+    arguments, the n-th such result of a row replacing the n-th of the earlier
+    one, never the call id alone: a provider may give two calls of one step the
+    same id, and keyed by id one call's result would replace the other's.
+    """
+    results: dict[tuple[str, str, str, int], dict[str, Any]] = {}
     decisions: dict[str, dict[str, Any]] = {}
 
-    for entry in [*earlier["tool_results"], *later["tool_results"]]:
-        results[entry["tool_call_id"]] = entry
+    for row in (earlier, later):
+        seen: dict[tuple[str, str, str], int] = {}
+        for entry in row["tool_results"]:
+            same = (entry["tool_call_id"], entry["tool_name"], _canonical(entry["args"]))
+            seen[same] = seen.get(same, 0) + 1
+            results[(same[0], same[1], same[2], seen[same])] = entry
 
     for decision in [*earlier["tool_approval_responses"], *later["tool_approval_responses"]]:
         decisions[decision["approval_id"]] = decision
 
     return tool_result_row(list(results.values()), list(decisions.values()))
+
+
+def _canonical(value: Any) -> str:
+    """The arguments as one canonical string: sorted keys, no whitespace."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def _decision(value: Mapping[str, Any]) -> dict[str, Any]:
