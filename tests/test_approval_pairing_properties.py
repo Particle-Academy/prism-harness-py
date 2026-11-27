@@ -213,6 +213,16 @@ class Case:
     #: result carries, recorded in the case step's segment. It may answer
     #: only a same-id call of the case step.
     cross_forged: int | None = None
+    #: After the first resume, a later row in the SAME segment holds a result
+    #: under this call's id and the gated tool with OTHER arguments (index of
+    #: the call, or None; prism-harness-py#75). Every call already has its own
+    #: result by then, so the stray one ends nothing and replaces nothing.
+    stray: int | None = None
+    #: A superseding row (a kind in SUPERSEDES) a host records WHILE the
+    #: first approved call is running (G-404, G-387 round 14), or None. It is
+    #: refused (``session_locked``) and changes nothing: the call keeps its
+    #: one outcome, its real result.
+    concurrent: str | None = None
 
     def describe(self) -> str:
         return json.dumps(
@@ -283,6 +293,8 @@ class Case:
                 ),
                 **({"later_forged": self.later_forged} if self.later_forged is not None else {}),
                 **({"cross_forged": self.cross_forged} if self.cross_forged is not None else {}),
+                **({"stray": self.stray} if self.stray is not None else {}),
+                **({"concurrent": self.concurrent} if self.concurrent is not None else {}),
             }
         )
 
@@ -335,6 +347,45 @@ def inserted_row(case: Case) -> dict[str, Any]:
         else []
     )
     return {"type": "tool_result", "tool_results": entries, "tool_approval_responses": []}
+
+
+def stray_result(seed: int, calls: list[Call]) -> int | None:
+    """The stray result, from a stream of its own (the other draws are unchanged)."""
+    rng = random.Random(seed ^ 0x141141)
+    gated = [i for i, c in enumerate(calls) if c.gated]
+    if not gated or rng.random() >= 0.3:
+        return None
+    return rng.choice(gated)
+
+
+#: The token (and result) of a stray result: no call carries it.
+STRAY = "stray"
+
+
+def stray_row(case: Case) -> dict[str, Any]:
+    assert case.stray is not None
+    call = case.calls[case.stray]
+    return {
+        "type": "tool_result",
+        "tool_results": [
+            {
+                "tool_call_id": call.id,
+                "tool_name": GATED,
+                "args": {"token": STRAY},
+                "result": STRAY,
+                "tool_call_result_id": None,
+                "artifacts": [],
+            }
+        ],
+        "tool_approval_responses": [],
+    }
+
+
+def concurrent_supersede(seed: int) -> str | None:
+    """The superseding row recorded while the approved call runs, from a
+    stream of its own (G-387 round 14)."""
+    rng = random.Random(seed ^ 0x404404)
+    return rng.choice(SUPERSEDES) if rng.random() < 0.6 else None
 
 
 def a_decision(rng: random.Random) -> tuple[str, str | None]:
@@ -415,7 +466,9 @@ def generate(seed: int) -> Case:
         earlier=tuple(earlier),
         spent=path == "live" and rng.random() < 0.8,
     )
-    return forgeries(case)
+    return replace(
+        forgeries(case), stray=stray_result(seed, calls), concurrent=concurrent_supersede(seed)
+    )
 
 
 def forgeries(case: Case) -> Case:
@@ -563,9 +616,16 @@ def oracle(case: Case) -> Expected:
 
 
 class TokenTool:
-    def __init__(self, name: str, ran: list[tuple[str, str]]) -> None:
+    def __init__(
+        self,
+        name: str,
+        ran: list[tuple[str, str]],
+        during: list[Callable[[], None]] | None = None,
+    ) -> None:
         self._name = name
         self._ran = ran
+        #: Host code run once, inside the next call of this tool.
+        self._during = during if during is not None else []
 
     @property
     def name(self) -> str:
@@ -574,6 +634,8 @@ class TokenTool:
     def handle(self, args: dict[str, Any]) -> Any:
         token = str(args.get("token", ""))
         self._ran.append((self._name, token))
+        while self._during:
+            self._during.pop(0)()
         return f"{self._name}:{token}"
 
 
@@ -587,11 +649,15 @@ def a_session(directory: str) -> Session:
     return session
 
 
-def a_model(case: Case) -> Callable[[LlmRequest], LlmResponse]:
+def a_model(
+    case: Case, seen: list[LlmRequest] | None = None
+) -> Callable[[LlmRequest], LlmResponse]:
     """Asks for the case's calls once (live), then only ever answers."""
     state = {"asked": case.path == "stored"}
 
     def client(request: LlmRequest) -> LlmResponse:
+        if seen is not None:
+            seen.append(request)
         if not state["asked"]:
             state["asked"] = True
             return LlmResponse(
@@ -744,6 +810,8 @@ def outcomes_by_token(session: Session) -> dict[str, list[str]]:
         taken: set[int] = set()
         for result in row.get("tool_results", []):
             token = str((result.get("args") or {}).get("token", ""))
+            if token == STRAY:
+                continue  # no call carries it: it answers nothing
             same_id = [
                 i
                 for i, (call_id, _, _) in enumerate(step)
@@ -810,12 +878,56 @@ def check(case: Case) -> list[str]:
     """Run one case and return every invariant it breaks."""
     expected = oracle(case)
     ran: list[tuple[str, str]] = []
-    tools = ToolRegistry().register(TokenTool(GATED, ran)).register(TokenTool(UNGATED, ran))
-    runtime = AgentRuntime(client=a_model(case), modes=SPENT if case.spent else MODES, tools=tools)
+    during: list[Callable[[], None]] = []
+    requests: list[LlmRequest] = []
+    tools = (
+        ToolRegistry()
+        .register(TokenTool(GATED, ran, during))
+        .register(TokenTool(UNGATED, ran))
+    )
+    runtime = AgentRuntime(
+        client=a_model(case, requests), modes=SPENT if case.spent else MODES, tools=tools
+    )
     with tempfile.TemporaryDirectory(
         prefix="prism-harness-pairing-", ignore_cleanup_errors=True
     ) as directory:
-        return _check(case, a_session(directory), runtime, ran, expected)
+        broken = _check(case, a_session(directory), runtime, ran, expected, during)
+    return broken + replayed_twice(requests)
+
+
+def replay_key(entry: dict[str, Any]) -> str:
+    """A replayed result's identity: id + tool name + canonical arguments,
+    the key the replay fold uses (G-403)."""
+    return json.dumps(
+        [entry.get("tool_call_id"), entry.get("tool_name"), entry.get("args")],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def replayed_twice(requests: list[LlmRequest]) -> list[str]:
+    """Item 5 (G-387 round 14): every provider request replays each result
+    ONCE. Within a step's segment no result key is emitted twice, and across
+    the whole replay no result (key and text) is emitted twice."""
+    broken: list[str] = []
+    for number, request in enumerate(requests):
+        whole: dict[tuple[str, str], int] = {}
+        segment: dict[str, int] = {}
+        for message in request.messages:
+            if message.get("type") == "assistant" and message.get("tool_calls"):
+                segment = {}
+                continue
+            if message.get("type") != "tool_result":
+                continue
+            for entry in message.get("tool_results", []):
+                key = replay_key(entry)
+                segment[key] = segment.get(key, 0) + 1
+                pair = (key, str(entry.get("result")))
+                whole[pair] = whole.get(pair, 0) + 1
+                if segment[key] == 2 or whole[pair] == 2:
+                    broken.append(f"item 5: request {number} replays {key} more than once")
+    return broken
 
 
 def _check(
@@ -824,6 +936,7 @@ def _check(
     runtime: AgentRuntime,
     ran: list[tuple[str, str]],
     expected: Expected,
+    during: list[Callable[[], None]] | None = None,
 ) -> list[str]:
     gated = [c for c in case.calls if c.gated]
     ungated = [c for c in case.calls if not c.gated]
@@ -889,8 +1002,24 @@ def _check(
             approval_of[call.token] = own[0] if len(own) == 1 else None
 
     insert_between(session, case, "after_decision")
+    refused: list[str] = []
+    if case.concurrent is not None and during is not None:
+        row = inserted_row(replace(case, insert=Insert(case.concurrent, "during", 0)))
+
+        def supersede() -> None:
+            try:
+                session.thread().record([row])
+                refused.append("recorded")
+            except HarnessError as error:
+                refused.append(str(error.code))
+
+        during.append(supersede)
     before = len(ran)
     resumed = a_send(runtime, session, case.resumes[0], "")
+    if during:
+        during.clear()  # no approved call ran: nothing was in flight
+    elif case.concurrent is not None and refused != ["session_locked"]:
+        broken.append(f"G-404: a {case.concurrent} row during the approved call was {refused}")
     ran_now = [token for name, token in ran[before:] if name == GATED]
 
     # Full equality first: what ran is what the rule says runs.
@@ -920,6 +1049,8 @@ def _check(
         broken.append(f"6: the run record says {run and run.get('tool_calls')}, ran {ran_now}")
 
     # 3. Nothing runs twice: resume again, decide everything late, resume again.
+    if case.stray is not None:
+        session.thread().record([stray_row(case)])
     after = len(ran)
     a_send(runtime, session, case.resumes[1], "")
     for approval in (
@@ -1169,6 +1300,17 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     assert any(k.insert is not None and k.insert.kind in SUPERSEDES for k, _ in hits)
     assert any(k.earlier_forged is not None for k, _ in hits)
     assert any(text.startswith("lossy:") for text in outcomes)
+    # A stray later result in a step with repeated ids (G-403, replay), and
+    # in one whose approved calls run.
+    assert any(k.stray is not None and oracle(k).repeated for k in examined)
+    assert any(k.stray is not None and oracle(k).runs for k in examined)
+    # A superseding row of every kind while an approved call runs (G-404);
+    # CONCURRENT_SEEDS pins one of each in every normal run.
+    for kind in SUPERSEDES:
+        assert any(k.concurrent == kind and oracle(k).runs for k in examined), kind
+    assert sorted(
+        generate(seed).concurrent or "" for seed in CONCURRENT_SEEDS if oracle(generate(seed)).runs
+    ) == sorted(SUPERSEDES)
 
 
 # -- fixed regression cases (G-387 round 13) ----------------------------------------
@@ -1177,6 +1319,17 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
 #: id with an ungated call that already has a result got NO outcome, because
 #: a result was matched to its call by id.
 REGRESSION_SEEDS = (918, 930)
+
+#: One seed per superseding kind recorded while an approved call runs
+#: (G-404, G-387 round 14): user, assistant_call, assistant_text.
+CONCURRENT_SEEDS = (950, 951, 978)
+
+
+@pytest.mark.parametrize("seed", CONCURRENT_SEEDS)
+def test_a_supersede_while_the_approved_call_runs_obeys_the_rule(seed: int) -> None:
+    case = generate(seed)
+    assert case.concurrent is not None and oracle(case).runs
+    assert safe_check(case) == [], case.describe()
 
 
 @pytest.mark.parametrize("seed", REGRESSION_SEEDS)
