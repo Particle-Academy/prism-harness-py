@@ -6,7 +6,7 @@ import json
 import logging
 import math
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -47,6 +47,7 @@ from prism_harness.subagents import (
 from prism_harness.thread import Thread, ThreadMessage, _record_in_run
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
+    NOT_STARTED_RESULT,
     NOT_THE_APPROVED_CALL,
     REPEATED_CALL_ID,
     SUPERSEDED,
@@ -1528,7 +1529,7 @@ class AgentRuntime:
             if refused is not None:
                 raise refused
 
-            rows = thread.rows()
+            rows, entries = thread.snapshot()
             # A NESTED PARK (G-387 round 16, the PHP reference's rule): a
             # newer step on this session, written after this run read the
             # thread by anyone else (a tool's own nested send, a host), waits
@@ -1540,7 +1541,7 @@ class AgentRuntime:
                 if (
                     newest is not None
                     and newest >= read_rows
-                    and not self._own_step(thread, newest, run_id)
+                    and not self._own_step(entries, newest, run_id)
                 ):
                     raise HarnessError.parked_elsewhere()
 
@@ -1720,20 +1721,34 @@ class AgentRuntime:
             # null), so a call that ran and whose results row then failed to
             # write reads INTERRUPTED ("it may have run"), never "not run",
             # and is never given a replaced denial.
+            #
+            # GUARDED (G-387 round 17): the started rows are written in one
+            # write with the check that each call is still open. A row
+            # recorded since the step was written (a listener on the approval
+            # asked, a host) that replaced the step gave every call its one
+            # outcome already: such a call gets no started row and never
+            # runs, so it is never "not run" AND run.
             batch = [call for call in calls if call not in gated and call.id not in unusable]
             if batch:
-                _record_in_run(
-                    thread,
-                    [
-                        started_row({"id": call.id, "name": call.name}, None, step_position)
-                        for call in batch
-                    ],
-                    run_id,
-                )
+                try:
+                    allowed = self._start_batch(thread, run_id, step_position, calls, batch)
+                except Exception:
+                    # No started row: none of them ran. Each gets its one
+                    # honest outcome if that write can be made; else the
+                    # resolution row gives it (see the resolver).
+                    _quietly(
+                        lambda: self._not_started(thread, run_id, step_position, calls, batch)
+                    )
+                    raise
+            else:
+                allowed = set()
 
             for call in calls:
                 if call in gated:
                     continue
+
+                if call.id not in unusable and id(call) not in allowed:
+                    continue  # replaced before it started: its outcome stands
 
                 if call.id in unusable:
                     results.append(
@@ -1770,6 +1785,23 @@ class AgentRuntime:
                 # FAILS CLOSED. The gated calls have not run, and the requests are
                 # in the thread, so a different process can resume after a person
                 # answers.
+                #
+                # From a RE-READ (G-387 round 17): a newer step another writer
+                # parked while this step's calls ran (a tool's own nested
+                # send) stops the run, as before a model step; and only the
+                # approvals still pending are reported, never one a row
+                # recorded meanwhile ended.
+                after, after_entries = thread.snapshot()
+                still = set(pending_approval_ids(after))
+                newest = requested_step(after)
+                own_at = _at_position(after, [e.position for e in after_entries], step_position)
+                if (
+                    still
+                    and newest is not None
+                    and (own_at is None or newest > own_at)
+                    and not self._own_step(after_entries, newest, run_id)
+                ):
+                    raise HarnessError.parked_elsewhere()
                 self._plans.after_turn(session)
                 self._settle_child(session, run_id)
                 self._trees.finished(session, run_id)
@@ -1787,6 +1819,7 @@ class AgentRuntime:
                             tool_call_id=call.id,
                         )
                         for call, request in zip(gated, requests, strict=True)
+                        if request["approval_id"] in still
                     ],
                 )
                 # A structured turn that parks answers in the structured shape,
@@ -1794,12 +1827,83 @@ class AgentRuntime:
                 return parked if schema is None else _structured(parked, None)
 
     @staticmethod
-    def _own_step(thread: Thread, index: int, run_id: str) -> bool:
+    def _own_step(entries: Sequence[ThreadMessage], index: int, run_id: str) -> bool:
         """Whether the step at ``index`` of the thread's rows is one this run
-        recorded itself (by its stored entry's run id, which only says who
-        wrote it, never whether a mark counts)."""
-        entries = thread.messages()
-        return 0 <= index < len(entries) and entries[index].run_id == run_id
+        recorded itself: a row the HARNESS wrote (G-387 round 17, ONE TRUST
+        SIGNAL) under this run's id, read from the same snapshot as the rows.
+        A run id alone is never a trust signal: a host or a tool may record a
+        row under the running turn's own id, and that step is not this
+        run's, so it stops the run like any other writer's."""
+        return (
+            0 <= index < len(entries)
+            and entries[index].written_by_harness
+            and entries[index].run_id == run_id
+        )
+
+    @staticmethod
+    def _start_batch(
+        thread: Thread,
+        run_id: str,
+        position: int,
+        calls: Sequence[ToolCallInput],
+        batch: Sequence[ToolCallInput],
+    ) -> set[int]:
+        """Record the started rows of the step's ungated ``batch`` (the step
+        at thread ``position``, its calls ``calls`` in order), in ONE write
+        with the check that each is still open: no outcome among the rows its
+        step owns and not started already (G-387 round 17). The ``id()`` of
+        each call the write started; any other must not run."""
+        started: set[int] = set()
+
+        def rows_for(
+            rows: list[dict[str, Any]], positions: list[int]
+        ) -> list[dict[str, Any]] | None:
+            at = _at_position(rows, positions, position)
+            if at is None:
+                return None
+            done = set(call_results(step_calls(rows[at]), owned_rows(rows, at)))
+            busy = set(started_calls(rows, at))
+            out: list[dict[str, Any]] = []
+            for call in batch:
+                index = next(i for i, c in enumerate(calls) if c is call)
+                if index in done or index in busy:
+                    continue
+                started.add(id(call))
+                out.append(started_row({"id": call.id, "name": call.name}, None, position))
+            return out or None
+
+        _record_in_run(thread, [], run_id, rows_for)
+        return started
+
+    @staticmethod
+    def _not_started(
+        thread: Thread,
+        run_id: str,
+        position: int,
+        calls: Sequence[ToolCallInput],
+        batch: Sequence[ToolCallInput],
+    ) -> None:
+        """Answer each call of ``batch`` that still has no outcome and no
+        started row with :data:`NOT_STARTED_RESULT`, in one guarded write."""
+
+        def rows_for(
+            rows: list[dict[str, Any]], positions: list[int]
+        ) -> list[dict[str, Any]] | None:
+            at = _at_position(rows, positions, position)
+            if at is None:
+                return None
+            done = set(call_results(step_calls(rows[at]), owned_rows(rows, at)))
+            busy = set(started_calls(rows, at))
+            entries = [
+                tool_result_entry(call, NOT_STARTED_RESULT)
+                for call in batch
+                if next(i for i, c in enumerate(calls) if c is call) not in done | busy
+            ]
+            if not entries:
+                return None
+            return [answering_step(tool_result_row(entries), position)]
+
+        _record_in_run(thread, [], run_id, rows_for)
 
     def _record_new_message(self, session: Session, run_id: str, turn: dict[str, Any]) -> None:
         """A new message's user row, in ONE write (G-404): any earlier step a
@@ -1896,6 +2000,12 @@ class AgentRuntime:
         ) -> list[HarnessTool]:
 
             calls, results, decisions, approval_ids, scope, ambiguous, repeated, indexes = work
+            # Whether the harness wrote this step: then it ran each ungated
+            # call itself, in the same turn, so one with neither a started
+            # row nor an outcome never started (G-387 round 17). A host's
+            # step answers its own ungated calls.
+            own_at = _at_position(stored, [entry.position for entry in entries], position)
+            harness_step = own_at is not None and entries[own_at].written_by_harness
             # A step a row in the thread already superseded, never answered
             # for it (a thread the 0.5.x line wrote): each call with no
             # result gets its one replaced-step denial (G-387 round 13).
@@ -2004,6 +2114,8 @@ class AgentRuntime:
                 # superseding row gave a call meanwhile).
                 at = _at_position(rows, positions, position)
                 every = [*results, *(entry for _, entry in resolved)]
+                if at is not None and harness_step:
+                    every.extend(_never_started(rows, at, {index for index, _ in resolved}))
                 entries = new_results(rows, at, every) if at is not None else every
                 row = tool_result_row(entries, list(decisions.values()))
                 if superseded:
@@ -2334,6 +2446,32 @@ def _at_position(
         if stored == position and index < len(rows):
             return index if step_calls(rows[index]) else None
     return None
+
+
+def _never_started(
+    rows: Sequence[Mapping[str, Any]], at: int, answering: Collection[int]
+) -> list[dict[str, Any]]:
+    """The one outcome, :data:`NOT_STARTED_RESULT`, of each call of the step
+    at ``at`` that no request asks about (it needed nobody) and that has
+    neither a started row nor an outcome, nor one being written now
+    (``answering``): its started row was never written, so it never ran
+    (G-387 round 17)."""
+    calls = step_calls(rows[at])
+    requested = {call for _, call in step_requests(rows, at) if call is not None}
+    done = set(call_results(calls, owned_rows(rows, at))) | set(started_calls(rows, at))
+    return [
+        tool_result_entry(
+            ToolCallInput(
+                id=str(call.get("id") or ""),
+                name=str(call.get("name") or ""),
+                arguments=usable_arguments(call.get("arguments")) or {},
+                result_id=call.get("result_id") if isinstance(call.get("result_id"), str) else None,
+            ),
+            NOT_STARTED_RESULT,
+        )
+        for index, call in enumerate(calls)
+        if index not in requested and index not in done and index not in answering
+    ]
 
 
 def _awaiting(rows: Sequence[Mapping[str, Any]]) -> bool:

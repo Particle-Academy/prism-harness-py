@@ -448,25 +448,29 @@ def test_an_ungated_call_replaced_before_it_started_never_runs(row: str) -> None
         assert misplaced(list(request.messages)) == []
 
 
-def _failing_started_write(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The ungated batch's started-row write fails, once."""
+def _failing_started_write(monkeypatch: pytest.MonkeyPatch, writes: int = 1) -> None:
+    """The ungated batch's started-row write fails, once; with ``writes`` 2,
+    the next write of the turn (its not-started answer) fails too."""
     original = FileSessionStore.put
-    state = {"armed": True}
+    state = {"left": writes, "failing": False}
 
     def put(self: FileSessionStore, key: str, value: Any, *args: Any, **kwargs: Any) -> Any:
-        if state["armed"] and key.endswith(":thread") and isinstance(value, dict):
+        if state["left"] and key.endswith(":thread") and isinstance(value, dict):
             last = (value.get("messages") or [{}])[-1].get("message", {})
-            if isinstance(last.get(STARTED), dict) and last[STARTED].get("approval_id") is None:
-                state["armed"] = False
+            started = isinstance(last.get(STARTED), dict) and last[STARTED].get("approval_id") is None
+            if started or state["failing"]:
+                state["left"] -= 1
+                state["failing"] = True
                 raise OSError("disk full (test)")
         return original(self, key, value, *args, **kwargs)
 
     monkeypatch.setattr(FileSessionStore, "put", put)
 
 
+@pytest.mark.parametrize("writes", [1, 2], ids=["started_write", "and_the_answer"])
 @pytest.mark.parametrize("then", ["approve", "new_message"])
 def test_a_failed_ungated_started_write_leaves_one_honest_outcome(
-    monkeypatch: pytest.MonkeyPatch, then: str
+    monkeypatch: pytest.MonkeyPatch, then: str, writes: int
 ) -> None:
     """Item 3 (TS run20 F3b, also Python): the started-row write for the
     step's ungated call fails, so it never runs. It gets ONE honest outcome,
@@ -474,7 +478,7 @@ def test_a_failed_ungated_started_write_leaves_one_honest_outcome(
     produce, and every later provider request answers every call."""
     world = Hooked()
     say(world, ("u1", "lookup", {"n": 5}), ("c1", "echo", {"n": 1}))
-    _failing_started_write(monkeypatch)
+    _failing_started_write(monkeypatch, writes)
     with pytest.raises(OSError):
         world.runtime.send(world.root(), "Go")
     assert world.ran_with == []
