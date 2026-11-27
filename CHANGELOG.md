@@ -227,6 +227,19 @@
   enter that start's own-run view only until its run ends. A run stopped by
   an exception that is not an `Exception` runs the plan's after-turn hook too.
 
+- A decision only ever applies to the step whose approvals were requested:
+  every reader that selects the paused step (the decision checks, the
+  repeated-id guard, the resolver and the plan readers) uses one rule, and a
+  row recorded after the park ends that step for all of them at once. Every
+  result row after the step counts, so a row in between never makes an
+  answered call read as unanswered.
+- A parked step is superseded by a new message, a later assistant step with
+  tool calls, or an assistant or user row recorded outside the harness's own
+  run. Each of its calls that has no result is answered once, "Not run: a
+  later step replaced it.", whatever was decided; nothing of it runs and a
+  later decision is refused. Only a resume (an empty prompt) acts on
+  decisions.
+
 ### Parity
 
 - harness-plans 0.1.9: the `step_allowance` op (hpl-0072..hpl-0083) runs

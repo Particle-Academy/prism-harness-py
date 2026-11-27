@@ -21,6 +21,8 @@ from prism_harness.tool_arguments import usable_arguments
 __all__ = [
     "ENDED_BY_START",
     "REPEATED_CALL_ID",
+    "SUPERSEDED",
+    "SUPERSEDED_RESULT",
     "ToolCallInput",
     "assistant_row",
     "call_results",
@@ -294,6 +296,21 @@ def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     row for the call that already ran, and that row must not hide the mark the
     start wrote. The key is the harness's alone, so this is no looser.
     """
+    return _marked(rows, ENDED_BY_START)
+
+
+def superseded_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
+    """The approval ids whose call was denied because a later step replaced
+    the step it was asked on (DECISION B, G-387 round 13): never approved,
+    whatever decision was recorded. Recognised only by :data:`SUPERSEDED`,
+    scoped exactly as :func:`ended_approval_ids` is."""
+    return _marked(rows, SUPERSEDED)
+
+
+def _marked(rows: Sequence[Mapping[str, Any]], key: str) -> set[str]:
+    """The approval ids a harness mark ``key`` names on a tool result row of
+    the step that asked for them (after its request row, before the next
+    assistant row)."""
     ended: set[str] = set()
     asked: set[str] = set()
     for row in rows:
@@ -305,9 +322,7 @@ def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
                 if isinstance(request.get("approval_id"), str) and request["approval_id"]
             }
         elif kind == "tool_result":
-            ended.update(
-                approval for approval in _ended_mark(row.get(ENDED_BY_START)) if approval in asked
-            )
+            ended.update(approval for approval in _ended_mark(row.get(key)) if approval in asked)
     return ended
 
 
@@ -329,6 +344,73 @@ def _ended_mark(value: object) -> list[str]:
 #: shape. Written by the harness alone, and the only thing that marks a call
 #: as ended by a start.
 ENDED_BY_START = "harness_ended_by_start"
+
+
+#: The field on the tool result row that denies a superseded step's open
+#: gated calls (DECISION B, G-387 round 13): ``{approval_ids: [...]}``, the
+#: PHP reference's shape, last on the row. Written by the harness alone.
+SUPERSEDED = "harness_superseded"
+
+#: The result each open gated call of a superseded step is given: the PHP
+#: reference's text, the same in every language.
+SUPERSEDED_RESULT = "Not run: a later step replaced it."
+
+
+def superseding_denials(
+    stored: Sequence[Mapping[str, Any]], batch: list[dict[str, Any]], in_run: bool
+) -> list[dict[str, Any]]:
+    """``batch`` with the denials of the paused step inserted before the
+    first row of it that supersedes that step (DECISION B), or unchanged.
+
+    A row supersedes the step :func:`requested_step` selects when it is an
+    assistant row with tool calls, or (``in_run`` False: recorded outside the
+    harness run in progress) an assistant text row or a user row. Each of the
+    step's gated calls (one its own approval request was paired with, see
+    :func:`step_requests`) that has no result, stored or earlier in the batch
+    or later in it, gets ONE denial, :data:`SUPERSEDED_RESULT`, on one tool
+    result row marked :data:`SUPERSEDED` with their approvals, in call
+    order."""
+    at = next(
+        (
+            index
+            for index, row in enumerate(batch)
+            if (row.get("type") == "assistant" and bool(_dicts(row.get("tool_calls"))))
+            or (not in_run and row.get("type") in ("assistant", "user"))
+        ),
+        None,
+    )
+    if at is None:
+        return batch
+    step = requested_step(stored)
+    if step is None:
+        return batch
+    calls = _dicts(stored[step].get("tool_calls"))
+    done = call_results(
+        calls,
+        [*stored[step + 1 :], *(row for row in batch if row.get("type") == "tool_result")],
+    )
+    open_calls: dict[int, str] = {}
+    for request, call in step_requests(stored, step):
+        approval = request.get("approval_id")
+        if call is not None and isinstance(approval, str) and approval and call not in done:
+            open_calls[call] = approval
+    if not open_calls:
+        return batch
+    row = tool_result_row(
+        [
+            {
+                "tool_call_id": _text(calls[index].get("id")),
+                "tool_name": _text(calls[index].get("name")),
+                "args": usable_arguments(calls[index].get("arguments")) or {},
+                "result": SUPERSEDED_RESULT,
+                "tool_call_result_id": _nullable_text(calls[index].get("result_id")),
+                "artifacts": [],
+            }
+            for index in sorted(open_calls)
+        ]
+    )
+    row[SUPERSEDED] = {"approval_ids": [open_calls[index] for index in sorted(open_calls)]}
+    return [*batch[:at], row, *batch[at:]]
 
 
 #: What a call still pending on a child is answered with when a runner start

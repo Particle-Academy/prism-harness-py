@@ -16,6 +16,7 @@ from prism_harness.thread_rows import (
     repeats_call_ids,
     requested_step,
     step_requests,
+    superseded_approval_ids,
 )
 from prism_harness.tool_policy import args_digest
 
@@ -73,7 +74,8 @@ def approval_decisions(rows: Rows) -> dict[str, bool]:
     decision recorded for an id is the one that counts. A call a runner start
     ended as not run has no decision standing (G-387 round 10): it was never
     acted on, and reads as ended, never as approved."""
-    ended = ended_approval_ids(rows)
+    # Nor one a later step replaced (DECISION B, G-387 round 13).
+    ended = ended_approval_ids(rows) | superseded_approval_ids(rows)
     decided: dict[str, bool] = {}
     for row in rows:
         if row.get("type") != "tool_result":

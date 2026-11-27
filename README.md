@@ -497,6 +497,16 @@ pending call with no decision is refused with "No approval response provided".
 A call that has a result never runs again. Who may approve is your application's
 decision: authorize before calling `record_approval()`.
 
+Only a resume (an empty prompt) acts on decisions. A step is SUPERSEDED by a
+new message, by a later assistant step with tool calls, or by an assistant or
+user row recorded outside the harness's own run (for example through
+`session.thread().record()`). Each of its calls that has no result is then
+answered once with "Not run: a later step replaced it.", whatever was decided,
+on a row the harness marks `harness_superseded`. Nothing of the step runs, and
+a later decision on it is refused. A decision only ever applies to the step
+whose approvals were requested: a row recorded after the park ends that step
+for every reader at once.
+
 A decision must answer an approval the session is waiting on. `record_approval()`
 raises a `HarnessError` coded `approval_not_pending` for an approval id the run
 never issued, or one already answered, and writes nothing, so a made-up id cannot

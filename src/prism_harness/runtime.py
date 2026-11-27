@@ -44,6 +44,7 @@ from prism_harness.subagents import (
     RunContext,
     binding_route,
 )
+from prism_harness.thread import enter_run
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     REPEATED_CALL_ID,
@@ -344,7 +345,7 @@ class AgentRuntime:
         """Record a person's decision, as :func:`record_approval` does, and let a
         plan held on it read the decision before the run resumes (G-360).
 
-        Nothing runs until the next ``send()``. Who may decide is the
+        Nothing runs until the next resume (``send(session, "")``). Who may decide is the
         application's decision: authorize before calling.
         """
         options = self._settings(session)
@@ -762,6 +763,9 @@ class AgentRuntime:
             raise
 
         turn_token = None
+        # The rows this run records are IN the run (DECISION B): a text or a
+        # user row it writes never supersedes the step it resolves.
+        leave_run = enter_run(f"{session.key()}:thread", run_id)
         # Set at the task-row write itself: the in-memory fact that the
         # start's task row is in the thread (G-387 round 13). Read before any
         # undo, never a store read.
@@ -942,11 +946,19 @@ class AgentRuntime:
                     plan_gates,
                 )
 
-            # Decisions recorded since the run stopped are acted on FIRST, before
-            # a new prompt is recorded, so the results land after the calls they
-            # answer rather than after the new turn. Never by a runner start
+            # A resume (an empty prompt) acts on the decisions recorded since
+            # the run stopped, FIRST, so the results land after the calls they
+            # answer. A new prompt supersedes the step instead (DECISION B):
+            # what is left after its denials is closed as undecided before the
+            # new turn is recorded. Never by a runner start
             # (G-387 round 9): it acts on no recorded decision, and its task
             # row ends every call still pending on the child, as not run.
+            if started is None and prompt != "":
+                # A NEW message supersedes the paused step (DECISION B, G-387
+                # round 13): its open gated calls are denied first, whatever
+                # was decided on them, so nothing of it runs. What is left of
+                # it (a call asked nothing) is closed below as undecided.
+                thread.supersede_paused_step()
             if started is None:
                 offered = self._resolve_approvals(
                     session, mode, offered, run_id, called, scope is not None and scope[1]
@@ -1092,6 +1104,7 @@ class AgentRuntime:
         finally:
             if turn_token is not None:
                 _TURN_RUN.reset(turn_token)
+            leave_run()
             leave_own()
 
     def _start_child(
@@ -2190,9 +2203,13 @@ def record_approval(
     approval through it, but "this user may approve THIS action" is a question
     only the host can answer. Authorize before calling.
 
-    Nothing runs until the next ``send()``, which acts on every decision recorded
-    by then and refuses any pending call still without one. With several
-    pending, record them all first.
+    Nothing runs until the next resume, ``send(session, "")``, which acts on
+    every decision recorded by then and refuses any pending call still without
+    one. With several pending, record them all first. A new message instead,
+    or any row that supersedes the paused step (a later step with tool calls,
+    or an assistant or user row recorded outside the harness's run), denies
+    its open calls, "Not run: a later step replaced it.", whatever was
+    decided.
 
     ``approval_id`` is :attr:`PendingApproval.id`, not the tool call id.
 

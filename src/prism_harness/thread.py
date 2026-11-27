@@ -2,15 +2,39 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from prism_harness.errors import HarnessError
 from prism_harness.stores.base import SessionStore
+from prism_harness.thread_rows import superseding_denials
 
 __all__ = ["Thread", "ThreadMessage"]
+
+#: The harness run in progress in this context, as (thread key, run id): set
+#: by the runtime for the length of a run, never by a caller (DECISION B,
+#: G-387 round 13). A row recorded under that run id on that thread is the
+#: harness's own, IN the run; any other row (no run id, another run id, or a
+#: run id handed to :meth:`Thread.record` outside that run) is recorded
+#: OUTSIDE it.
+_IN_RUN: ContextVar[tuple[str, str] | None] = ContextVar("prism_harness_in_run", default=None)
+
+
+def enter_run(thread_key: str, run_id: str) -> Callable[[], None]:
+    """Mark ``run_id`` as the harness run in progress on that thread in this
+    context; returns the leave. Internal: entered by the runtime."""
+    token = _IN_RUN.set((thread_key, run_id))
+    left = [False]
+
+    def leave() -> None:
+        if not left[0]:
+            left[0] = True
+            _IN_RUN.reset(token)
+
+    return leave
 
 
 @dataclass(frozen=True)
@@ -67,9 +91,17 @@ class Thread:
         """Append messages, in order, and return them with their positions.
 
         Read-and-write inside ONE lock. See the class docstring.
+
+        A row that SUPERSEDES the paused step (DECISION B, G-387 round 13) is
+        recorded after one denial for each of that step's gated calls that has
+        no result, in this batch or before it: any assistant row with tool
+        calls, and an assistant text row or a user row recorded outside the
+        harness run in progress (see ``_IN_RUN``). Nothing of the step runs
+        after it, and no decision is accepted for it.
         """
         if not messages:
             return []
+        in_run = run_id is not None and _IN_RUN.get() == (self._key, run_id)
 
         def append() -> list[ThreadMessage]:
             stored = self._store.get(self._key) or {}
@@ -77,6 +109,11 @@ class Thread:
                 entry for entry in (stored.get("messages") or []) if isinstance(entry, dict)
             ]
             recorded_at = datetime.now(timezone.utc).isoformat()
+            batch = superseding_denials(
+                [entry["message"] for entry in existing if isinstance(entry.get("message"), dict)],
+                list(messages),
+                in_run,
+            )
 
             appended = [
                 {
@@ -85,7 +122,7 @@ class Thread:
                     "run_id": run_id,
                     "recorded_at": recorded_at,
                 }
-                for index, message in enumerate(messages)
+                for index, message in enumerate(batch)
             ]
 
             self._store.put(self._key, {**stored, "messages": [*existing, *appended]})
@@ -93,6 +130,36 @@ class Thread:
             return [self._to_message(entry) for entry in appended]
 
         return self._store.with_lock(self._key, append)
+
+    def supersede_paused_step(self) -> None:
+        """Supersede the paused step now (DECISION B): one denial for each of
+        its gated calls that has no result, recorded with no run id. What a
+        new message does before its turn reads the thread: nothing of the
+        step runs, whatever was decided on it, and no decision is accepted
+        for it afterwards.
+
+        Internal: called by the runtime when a new message starts a turn."""
+
+        def append() -> None:
+            stored = self._store.get(self._key) or {}
+            existing = [
+                entry for entry in (stored.get("messages") or []) if isinstance(entry, dict)
+            ]
+            rows = [
+                entry["message"] for entry in existing if isinstance(entry.get("message"), dict)
+            ]
+            batch = superseding_denials(rows, [{"type": "user"}], False)
+            if len(batch) == 1:
+                return
+            denial = {
+                "position": len(existing) + 1,
+                "message": batch[0],
+                "run_id": None,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._store.put(self._key, {**stored, "messages": [*existing, denial]})
+
+        self._store.with_lock(self._key, append)
 
     def clear(self) -> None:
         """Forget the conversation.
