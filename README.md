@@ -333,8 +333,9 @@ What one run tree is:
   every call still pending on the child as not run (read as ended, never as
   approved, and recognised only by the `harness_ended_by_start` field the
   harness writes on that row, `{approval_ids: [...]}`, the same shape in every
-  language, for the approvals of that turn: never by a
-  result's text or a reused tool call id); a runner start never acts on a recorded decision, and a decision
+  language, for the approvals of that turn, on any result row of that step:
+  never by a result's text or a reused tool call id); a runner start never
+  acts on a recorded decision, and a decision
   a person recorded that a resume could still act on refuses the start like
   a pending approval does, so the host resumes it first.
   After that a stop only stops model steps. The
@@ -496,10 +497,31 @@ pending call with no decision is refused with "No approval response provided".
 A call that has a result never runs again. Who may approve is your application's
 decision: authorize before calling `record_approval()`.
 
+Only a resume (an empty prompt) acts on decisions. A step is SUPERSEDED by a
+new message, by a later assistant step with tool calls, or by an assistant or
+user row recorded outside the runs that own it (the run that recorded it and
+every run that recorded one of its results). Only the harness's own rows in
+such a run are inside: a row a host records, through
+`session.thread().record()` or any other call, is outside whatever run id it
+carries. Each of its calls that has no result is then
+answered once with "Tool call was not run because a later step replaced it", whatever was decided,
+on a row the harness marks `harness_superseded`. Nothing of the step runs, and
+a later decision on it is refused. A decision only ever applies to the step
+whose approvals were requested: a row recorded after the park ends that step
+for every reader at once.
+
 A decision must answer an approval the session is waiting on. `record_approval()`
 raises a `HarnessError` coded `approval_not_pending` for an approval id the run
 never issued, or one already answered, and writes nothing, so a made-up id cannot
 cancel a real one.
+
+Each call is decided by its own approval. When a step's tool call ids repeat
+(some providers reuse one id within a response; an empty id counts), the step
+cannot say which decision answers which call: none of its gated calls runs,
+each is answered "Tool call was not run because another call in this step has
+the same id", and every decision recorded on that step is stored as a denial
+with that text. Which call a result answers is matched by position, so a gated
+call stays pending when an ungated call sharing its id has already run.
 
 `runtime.decide(session, approval_id, approved, reason=None)` records the same
 decision and also lets an agent plan read it before the run resumes.

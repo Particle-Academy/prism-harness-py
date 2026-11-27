@@ -3,14 +3,37 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from prism_harness.errors import HarnessError
 from prism_harness.stores.base import SessionStore
+from prism_harness.thread_rows import superseding_denials
 
 __all__ = ["Thread", "ThreadMessage"]
+
+#: The (thread key, run id) the RUNTIME is recording rows for, set only around
+#: its own record calls (:func:`record_in_run`). A row recorded under it is
+#: the runtime's own, inside that run; any other row, whatever run id a caller
+#: passes, is outside (DECISION B, G-387 round 13).
+_RECORDING: ContextVar[tuple[str, str] | None] = ContextVar(
+    "prism_harness_recording_in_run", default=None
+)
+
+
+def record_in_run(
+    thread: Thread, messages: Sequence[dict[str, Any]], run_id: str
+) -> list[ThreadMessage]:
+    """Record ``messages`` as the runtime's own rows of run ``run_id``.
+
+    Internal: the runtime's record calls for its own turn rows."""
+    token = _RECORDING.set((thread.key, run_id))
+    try:
+        return thread.record(messages, run_id)
+    finally:
+        _RECORDING.reset(token)
 
 
 @dataclass(frozen=True)
@@ -43,6 +66,10 @@ class Thread:
         self._store = store
         self._key = key
 
+    @property
+    def key(self) -> str:
+        return self._key
+
     def exists(self) -> bool:
         """Read only: no allocation, lock or empty transcript write."""
         return self._store.get(self._key) is not None
@@ -67,9 +94,18 @@ class Thread:
         """Append messages, in order, and return them with their positions.
 
         Read-and-write inside ONE lock. See the class docstring.
+
+        A row that SUPERSEDES the paused step (DECISION B, G-387 round 13) is
+        recorded after one denial for each of that step's calls that has no
+        result: any assistant row with tool calls, and an assistant text row
+        or a user row recorded outside the runs that own the step (see
+        :func:`~prism_harness.thread_rows.superseding_denials`). Nothing of the
+        step runs after it, and no decision is accepted for it.
         """
         if not messages:
             return []
+        recording = _RECORDING.get()
+        inside = run_id if run_id is not None and recording == (self._key, run_id) else None
 
         def append() -> list[ThreadMessage]:
             stored = self._store.get(self._key) or {}
@@ -77,6 +113,19 @@ class Thread:
                 entry for entry in (stored.get("messages") or []) if isinstance(entry, dict)
             ]
             recorded_at = datetime.now(timezone.utc).isoformat()
+            batch = superseding_denials(
+                [
+                    (
+                        entry["message"],
+                        entry.get("run_id") if isinstance(entry.get("run_id"), str) else None,
+                    )
+                    for entry in existing
+                    if isinstance(entry.get("message"), dict)
+                ],
+                list(messages),
+                run_id,
+                inside,
+            )
 
             appended = [
                 {
@@ -85,7 +134,7 @@ class Thread:
                     "run_id": run_id,
                     "recorded_at": recorded_at,
                 }
-                for index, message in enumerate(messages)
+                for index, message in enumerate(batch)
             ]
 
             self._store.put(self._key, {**stored, "messages": [*existing, *appended]})
@@ -93,6 +142,41 @@ class Thread:
             return [self._to_message(entry) for entry in appended]
 
         return self._store.with_lock(self._key, append)
+
+    def supersede_paused_step(self) -> None:
+        """Supersede the paused step now (DECISION B): one denial for each of
+        its gated calls that has no result, recorded with no run id. What a
+        new message does before its turn reads the thread: nothing of the
+        step runs, whatever was decided on it, and no decision is accepted
+        for it afterwards.
+
+        Internal: called by the runtime when a new message starts a turn."""
+
+        def append() -> None:
+            stored = self._store.get(self._key) or {}
+            existing = [
+                entry for entry in (stored.get("messages") or []) if isinstance(entry, dict)
+            ]
+            rows = [
+                (
+                    entry["message"],
+                    entry.get("run_id") if isinstance(entry.get("run_id"), str) else None,
+                )
+                for entry in existing
+                if isinstance(entry.get("message"), dict)
+            ]
+            batch = superseding_denials(rows, [{"type": "user"}], None)
+            if len(batch) == 1:
+                return
+            denial = {
+                "position": len(existing) + 1,
+                "message": batch[0],
+                "run_id": None,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._store.put(self._key, {**stored, "messages": [*existing, denial]})
+
+        self._store.with_lock(self._key, append)
 
     def clear(self) -> None:
         """Forget the conversation.

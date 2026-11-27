@@ -1,7 +1,7 @@
 {
   "suite": "harness-thread-rows",
   "schema_version": 1,
-  "corpus_version": "0.3.0",
+  "corpus_version": "0.4.0",
   "generated_by": "prism-parity:tools/generate-thread-rows.php for php; tools/record-thread-rows.mjs for ts and tools/record_thread_rows.py for py. Every output is execution output, encoded as compact JSON with keys in the order each language wrote them.",
   "pins_note": "The rows a harness stores for a run, and what a stored run is replayed as. A PHP app and a TypeScript or Python agent can share one session. If they store tool calls, approvals or decisions in different shapes, one language resumes the other’s approval against the wrong call or never, or replays a conversation a provider refuses.",
   "cases": [
@@ -637,7 +637,166 @@
       },
       "agrees": true,
       "notes": "G-387: a runner start never acts on a decision recorded on the child; it ends the calls the child was parked on with its task row, each with one fixed result, and marks the row with the approvals they were asked under. That mark is the ONLY thing that makes an ended call read ended, so it is pinned here byte for byte: `harness_ended_by_start` as a top-level key AFTER `tool_approval_responses`, never inside a result (a tool controls its result text, never this key), holding `{approval_ids: [...]}` in CALL order, not in the order the requests were stored (the requests here are deliberately reversed). The two calls carry DISTINCT tool_call ids; calls that share one id are G-392's and are not in this row. A language that wrote another shape, or none, would read a call another language ended as approved, the decision standing for a side effect that never ran."
+    },
+    {
+      "id": "thr-0015",
+      "title": "which approvals read ended when a step repeats a call id and an earlier result row carries it",
+      "since": "0.4.0",
+      "read": "approval_states",
+      "stored": [
+        {
+          "type": "user",
+          "content": "Go",
+          "additional_content": [],
+          "additional_attributes": []
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "c1",
+              "name": "weather",
+              "arguments": {
+                "city": "Rome"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_0",
+              "tool_call_id": "c1"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_id": "c1",
+              "tool_name": "weather",
+              "args": {
+                "city": "Rome"
+              },
+              "result": "Sunny",
+              "tool_call_result_id": null,
+              "artifacts": []
+            }
+          ],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_0",
+              "approved": true,
+              "reason": null
+            }
+          ]
+        },
+        {
+          "type": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "dup",
+              "name": "weather",
+              "arguments": {
+                "city": "Paris"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            },
+            {
+              "id": "dup",
+              "name": "echo",
+              "arguments": {
+                "text": "hi"
+              },
+              "result_id": null,
+              "reasoning_id": null,
+              "reasoning_summary": null
+            }
+          ],
+          "additional_content": {},
+          "tool_approval_requests": [
+            {
+              "approval_id": "apr_1",
+              "tool_call_id": "dup"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_id": "dup",
+              "tool_name": "echo",
+              "args": {
+                "text": "hi"
+              },
+              "result": "hi",
+              "tool_call_result_id": null,
+              "artifacts": []
+            }
+          ],
+          "tool_approval_responses": []
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [],
+          "tool_approval_responses": [
+            {
+              "approval_id": "apr_1",
+              "approved": false,
+              "reason": "Tool call was not run because another call in this step has the same id"
+            }
+          ]
+        },
+        {
+          "type": "tool_result",
+          "tool_results": [
+            {
+              "tool_call_id": "dup",
+              "tool_name": "weather",
+              "args": {
+                "city": "Paris"
+              },
+              "result": "Not run: the delegation this call was proposed under ended.",
+              "tool_call_result_id": null,
+              "artifacts": []
+            }
+          ],
+          "tool_approval_responses": [],
+          "harness_ended_by_start": {
+            "approval_ids": [
+              "apr_1",
+              "apr_0"
+            ]
+          }
+        },
+        {
+          "type": "user",
+          "content": "Start over",
+          "additional_content": [],
+          "additional_attributes": []
+        }
+      ],
+      "approvals": [
+        "apr_0",
+        "apr_1",
+        "apr_9"
+      ],
+      "rows": {
+        "php": "[{\"approval_id\":\"apr_0\",\"ended_by_start\":false},{\"approval_id\":\"apr_1\",\"ended_by_start\":true},{\"approval_id\":\"apr_9\",\"ended_by_start\":false}]",
+        "ts": "[{\"approval_id\":\"apr_0\",\"ended_by_start\":false},{\"approval_id\":\"apr_1\",\"ended_by_start\":true},{\"approval_id\":\"apr_9\",\"ended_by_start\":false}]",
+        "py": "[{\"approval_id\":\"apr_0\",\"ended_by_start\":false},{\"approval_id\":\"apr_1\",\"ended_by_start\":true},{\"approval_id\":\"apr_9\",\"ended_by_start\":false}]"
+      },
+      "agrees": true,
+      "notes": "G-387 round 13: the READ rule for the ended mark. An approval reads ended by a runner start when ANY result row after the assistant row that asked for it, and before the next assistant row, carries `harness_ended_by_start` naming its approval id; nothing else ends it. apr_1 was asked on a step whose two calls share the id `dup`: the ungated echo ran first and its row (no mark) carries `dup`, then the person's decision, then the start's marked row. A reader that stopped at the FIRST result row carrying the call id read apr_1 as not ended, so the decision stood for a call that never ran. apr_0's own step ended at the next assistant row, so a mark naming it after that row does not end it, and apr_9 was never asked. The output is one entry per id in `approvals`, in that order: `{approval_id, ended_by_start}`."
     }
   ],
-  "divergence_note": "thr-0001..thr-0013 agree across PHP, TypeScript and Python. thr-0014 (0.3.0) pins the ended mark, which the three languages wrote in three different shapes before it; it agrees once each port records the PHP reference's row. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised. User rows are out of scope here by decision; a draft of thr-0013 that carried them found PHP writing additional_content and additional_attributes as empty LISTS where both ports write neither key, recorded under G-58 rather than pinned in a suite that says it does not cover them."
+  "divergence_note": "thr-0001..thr-0013 agree across PHP, TypeScript and Python. thr-0015 (0.4.0) pins how the ended mark is READ on a step whose call ids repeat; it agrees once each port reads every result row of the step, not only the first that carries the call id. thr-0014 (0.3.0) pins the ended mark, which the three languages wrote in three different shapes before it; it agrees once each port records the PHP reference's row. Seven did not on the first run: the reference stored an empty provider state as an empty list, [], where the ports store an empty map, {}, and the reference moved. Agreement here means a run stored by one language has the same rows, and replays as the same messages, in the others. It does not mean the decisions in those rows were authorised. User rows are out of scope here by decision; a draft of thr-0013 that carried them found PHP writing additional_content and additional_attributes as empty LISTS where both ports write neither key, recorded under G-58 rather than pinned in a suite that says it does not cover them."
 }

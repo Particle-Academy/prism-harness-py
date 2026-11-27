@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - "*.x"
+      # `*` never matches a `/`, so "*.x" alone skips release/0.5.x.
+      - "release/**"
   pull_request:
 
 permissions:

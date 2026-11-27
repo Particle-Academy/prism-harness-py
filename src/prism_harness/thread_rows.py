@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any
 
 from prism_harness.tool_arguments import usable_arguments
@@ -21,9 +22,13 @@ from prism_harness.tool_arguments import usable_arguments
 __all__ = [
     "ENDED_BY_START",
     "REPEATED_CALL_ID",
+    "SUPERSEDED",
+    "SUPERSEDED_RESULT",
     "ToolCallInput",
     "assistant_row",
+    "call_results",
     "ended_by_start_row",
+    "requested_step",
     "thread_view",
     "tool_result_entry",
     "tool_result_row",
@@ -180,33 +185,61 @@ def approval_run_steps(rows: Sequence[Mapping[str, Any]]) -> int | None:
     return steps
 
 
+def requested_step(rows: Sequence[Mapping[str, Any]]) -> int | None:
+    """THE step a decision may apply to (G-397): the index of the stored
+    assistant row whose approval requests the transcript tail is waiting on,
+    or None.
+
+    Newest first: tool result and decision rows (and any other row that is
+    not a turn: a system note) are skipped; a user turn ends the search, and
+    so does the first assistant row reached when it asked for nothing. Every
+    reader that selects "the paused step" -- the decision checks, the
+    repeated-id guard, the resolver's decisions, a runner start's
+    answerability and the plan readers -- selects it with this function and
+    no other rule, so a row recorded after the park can only make all of them
+    see no step, never make one of them see another.
+
+    A 0.1.0 thread kept a step's requests in rows of their own after it;
+    such a row counts as the step having asked.
+    """
+    asked_apart = False
+    for index in range(len(rows) - 1, -1, -1):
+        row = rows[index]
+        kind = row.get("type")
+        if kind == "user":
+            return None
+        if kind == "tool_approval_request":
+            asked_apart = asked_apart or bool(_dicts(row.get("approvals")))
+            continue
+        if kind != "assistant":
+            continue
+        return index if _dicts(row.get("tool_approval_requests")) or asked_apart else None
+    return None
+
+
 def pending_approval_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     """The approval ids the run paused at the transcript tail is still waiting
     on: issued by the last assistant step and not yet answered (G-354).
 
-    Read from the stored rows, newest first. A user turn, or an assistant step
-    that asked nothing, ends the scope: nothing before it is pending. An id
-    answered once is no longer pending.
+    Read from the stored rows: the step :func:`requested_step` selects (a
+    user turn, or an assistant step that asked nothing, ends the scope), less
+    every id answered after it. An id answered once is no longer pending.
     """
+    index = requested_step(rows)
+    if index is None:
+        return []
     answered: set[str] = set()
-    for row in reversed(rows):
-        kind = row.get("type")
-        if kind == "tool_result":
+    for row in rows[index + 1 :]:
+        if row.get("type") == "tool_result":
             for response in _dicts(row.get("tool_approval_responses")):
                 if isinstance(response.get("approval_id"), str):
                     answered.add(response["approval_id"])
-            continue
-        if kind == "user":
-            return []
-        if kind != "assistant":
-            continue
-        pending: list[str] = []
-        for request in _dicts(row.get("tool_approval_requests")):
-            approval_id = request.get("approval_id")
-            if isinstance(approval_id, str) and approval_id and approval_id not in answered:
-                pending.append(approval_id)
-        return list(dict.fromkeys(pending))
-    return []
+    pending: list[str] = []
+    for request in _dicts(rows[index].get("tool_approval_requests")):
+        approval_id = request.get("approval_id")
+        if isinstance(approval_id, str) and approval_id and approval_id not in answered:
+            pending.append(approval_id)
+    return list(dict.fromkeys(pending))
 
 
 def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -217,39 +250,32 @@ def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     The same scope as :func:`pending_approval_ids`, newest first: a user
     turn, or an assistant step that asked nothing, ends it.
     """
+    index = requested_step(rows)
+    if index is None:
+        return []
     decided: set[str] = set()
-    finished: set[str] = set()
-    for row in reversed(rows):
+    for row in rows[index + 1 :]:
         kind = row.get("type")
         if kind == "tool_result":
-            for result in _dicts(row.get("tool_results")):
-                if isinstance(result.get("tool_call_id"), str):
-                    finished.add(result["tool_call_id"])
-            if "tool_results" not in row and isinstance(row.get("tool_call_id"), str):
-                finished.add(row["tool_call_id"])  # 0.1.0: one row per call
             for response in _dicts(row.get("tool_approval_responses")):
                 if isinstance(response.get("approval_id"), str):
                     decided.add(response["approval_id"])
-            continue
-        if kind == "tool_approval_response":
-            if isinstance(row.get("approval_id"), str):
-                decided.add(row["approval_id"])
-            continue
-        if kind == "user":
-            return []
-        if kind != "assistant":
-            continue
-        found: list[str] = []
-        for request in _dicts(row.get("tool_approval_requests")):
-            approval_id = request.get("approval_id")
-            if (
-                isinstance(approval_id, str)
-                and approval_id in decided
-                and request.get("tool_call_id") not in finished
-            ):
-                found.append(approval_id)
-        return list(dict.fromkeys(found))
-    return []
+        elif kind == "tool_approval_response" and isinstance(row.get("approval_id"), str):
+            decided.add(row["approval_id"])
+    # Which call has a result is matched BY POSITION (G-387 round 13): a
+    # result under a repeated id answers ONE call, never every call that
+    # carries the id.
+    done = call_results(_dicts(rows[index].get("tool_calls")), step_rows(rows, index))
+    found: list[str] = []
+    for request, call in step_requests(rows, index):
+        approval_id = request.get("approval_id")
+        if (
+            isinstance(approval_id, str)
+            and approval_id in decided
+            and (call is None or call not in done)
+        ):
+            found.append(approval_id)
+    return list(dict.fromkeys(found))
 
 
 def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
@@ -261,26 +287,61 @@ def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     APPROVAL ids. A result's text is never read (a tool can return any text),
     and nothing a tool, a model or a host prompt sends reaches that field: a
     tool's output is a result string, its arguments and a provider's state
-    live inside other rows. Scoped to its own turn: a mark ends only approval
+    live inside other rows. Scoped to its own step: a mark ends only approval
     ids the last assistant step before it asked for, never anything matched by
     a tool call id, which providers reuse across turns.
+
+    ANY tool result row after the approval's request row and before the next
+    assistant row counts (G-387 round 13), not only the first one carrying the
+    call's id: a step whose calls share an id has an earlier, unmarked result
+    row for the call that already ran, and that row must not hide the mark the
+    start wrote. The key is the harness's alone, so this is no looser.
     """
+    return _marked(rows, ENDED_BY_START)
+
+
+def superseded_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
+    """The approval ids whose call was denied because a later step replaced
+    the step it was asked on (DECISION B, G-387 round 13): never approved,
+    whatever decision was recorded. Recognised only by :data:`SUPERSEDED`,
+    scoped exactly as :func:`ended_approval_ids` is; and, in a thread the
+    0.5.x line wrote, the approvals of the calls its :data:`REPLACED_STEP`
+    rows answer (G-387 round 13)."""
+    found = _marked(rows, SUPERSEDED)
+    for row in rows:
+        mark = row.get(REPLACED_STEP)
+        if row.get("type") != "tool_result" or not isinstance(mark, dict):
+            continue
+        position = mark.get("position")
+        if type(position) is not int or not 1 <= position <= len(rows):
+            continue
+        step = position - 1
+        if rows[step].get("type") != "assistant":
+            continue
+        answered = call_results(_dicts(rows[step].get("tool_calls")), [row])
+        for request, call in step_requests(rows, step):
+            approval = request.get("approval_id")
+            if call in answered and isinstance(approval, str) and approval:
+                found.add(approval)
+    return found
+
+
+def _marked(rows: Sequence[Mapping[str, Any]], key: str) -> set[str]:
+    """The approval ids a harness mark ``key`` names on a tool result row of
+    the step that asked for them (after its request row, before the next
+    assistant row)."""
     ended: set[str] = set()
     asked: set[str] = set()
     for row in rows:
         kind = row.get("type")
-        if kind == "user":
-            asked = set()
-        elif kind == "assistant" and _dicts(row.get("tool_calls")):
+        if kind == "assistant":
             asked = {
                 request["approval_id"]
                 for request in _dicts(row.get("tool_approval_requests"))
                 if isinstance(request.get("approval_id"), str) and request["approval_id"]
             }
         elif kind == "tool_result":
-            ended.update(
-                approval for approval in _ended_mark(row.get(ENDED_BY_START)) if approval in asked
-            )
+            ended.update(approval for approval in _ended_mark(row.get(key)) if approval in asked)
     return ended
 
 
@@ -304,6 +365,223 @@ def _ended_mark(value: object) -> list[str]:
 ENDED_BY_START = "harness_ended_by_start"
 
 
+#: The field on the tool result row that denies a superseded step's open
+#: gated calls (DECISION B, G-387 round 13): ``{approval_ids: [...]}``, the
+#: PHP reference's shape, last on the row. Written by the harness alone.
+SUPERSEDED = "harness_superseded"
+
+#: The result each open gated call of a superseded step is given: the PHP
+#: reference's text, the same in every language.
+SUPERSEDED_RESULT = "Tool call was not run because a later step replaced it"
+
+
+def superseding_denials(
+    stored: Sequence[tuple[Mapping[str, Any], str | None]],
+    batch: Sequence[dict[str, Any]],
+    run_id: str | None,
+    inside: str | None = None,
+) -> list[dict[str, Any]]:
+    """``batch`` (recorded under ``run_id``) with, before each row of it that
+    SUPERSEDES the paused step, that step's denials (DECISION B, G-387 round
+    13). ``stored`` is the thread so far, each row with the run that recorded
+    it.
+
+    The paused step is the last assistant row with tool calls. Its OWNING
+    runs are the run that recorded it and every run that recorded a result of
+    one of its calls. A later assistant row with tool calls always supersedes
+    it; an assistant text row or a user row supersedes it unless the
+    RUNTIME records it inside one of those runs (``inside``, the run the
+    runtime is recording for; None for any caller). A run id a caller passes,
+    the step's own included, is outside: a host's row always supersedes. Each of
+    its calls with no result (by position, see :func:`call_results`) gets ONE
+    denial, :data:`SUPERSEDED_RESULT`, on one tool result row marked
+    :data:`SUPERSEDED` with the approvals those calls were asked under (each
+    call's own, :func:`step_requests`), in call order. Applied row by row, so
+    a batch holding several steps denies each one it replaces."""
+    rows: list[Mapping[str, Any]] = [row for row, _ in stored]
+    runs: list[str | None] = [run for _, run in stored]
+    out: list[dict[str, Any]] = []
+    for message in batch:
+        denial = _denial_before(rows, runs, message, inside)
+        for row in ([] if denial is None else [denial]) + [message]:
+            out.append(row)
+            rows.append(row)
+            runs.append(run_id)
+    return out
+
+
+def _denial_before(
+    rows: Sequence[Mapping[str, Any]],
+    runs: Sequence[str | None],
+    message: Mapping[str, Any],
+    run_id: str | None,
+) -> dict[str, Any] | None:
+    kind = message.get("type")
+    with_calls = kind == "assistant" and bool(_dicts(message.get("tool_calls")))
+    if not with_calls and kind not in ("assistant", "user"):
+        return None
+    step = next(
+        (
+            index
+            for index in range(len(rows) - 1, -1, -1)
+            if rows[index].get("type") == "assistant" and _dicts(rows[index].get("tool_calls"))
+        ),
+        None,
+    )
+    if step is None:
+        return None
+    calls = _dicts(rows[step].get("tool_calls"))
+    answered: set[int] = set()
+    owners: set[str | None] = {runs[step]}
+    for index in range(step + 1, len(rows)):
+        if not belongs_to(rows[index], step):
+            continue
+        found = call_results(calls, [rows[index]])
+        if found:
+            answered |= set(found)
+            owners.add(runs[index])
+    if not with_calls and run_id is not None and run_id in owners:
+        return None  # the harness's own row, in a run that owns the step
+    open_calls = [index for index in range(len(calls)) if index not in answered]
+    if not open_calls:
+        return None
+    own = {call: request.get("approval_id") for request, call in step_requests(rows, step)}
+    row = tool_result_row(
+        [
+            {
+                "tool_call_id": _text(calls[index].get("id")),
+                "tool_name": _text(calls[index].get("name")),
+                "args": usable_arguments(calls[index].get("arguments")) or {},
+                "result": SUPERSEDED_RESULT,
+                "tool_call_result_id": _nullable_text(calls[index].get("result_id")),
+                "artifacts": [],
+            }
+            for index in open_calls
+        ]
+    )
+    row[SUPERSEDED] = {
+        "approval_ids": list(
+            dict.fromkeys(
+                approval
+                for approval in (own.get(index) for index in open_calls)
+                if isinstance(approval, str) and approval
+            )
+        )
+    }
+    return row
+
+
+#: The key the 0.5.x line writes on the row answering an EARLIER step's
+#: calls that a later step replaced, ``{position: <the thread position of
+#: that step's assistant row>}``, with :data:`SUPERSEDED_RESULT` per call.
+#: Main reads it (G-387 round 13: a 0.27 main reads the threads its released
+#: line wrote) and writes it for the same case: an earlier step of a thread
+#: that line wrote whose calls a later step left with no outcome.
+REPLACED_STEP = "harness_replaced_step"
+
+
+def belongs_to(row: Mapping[str, Any], step: int) -> bool:
+    """Whether a row recorded after the step at index ``step`` may answer it:
+    every row does, except a :data:`REPLACED_STEP` row naming another step
+    (it answers only the step at its position, wherever it sits)."""
+    mark = row.get(REPLACED_STEP)
+    if not isinstance(mark, dict):
+        return True
+    position = mark.get("position")
+    return type(position) is int and position == step + 1
+
+
+def step_rows(rows: Sequence[Mapping[str, Any]], step: int) -> list[Mapping[str, Any]]:
+    """The rows after the step at index ``step`` that may answer it."""
+    return [row for row in rows[step + 1 :] if belongs_to(row, step)]
+
+
+def replaced_earlier_steps(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[tuple[int, list[dict[str, Any]]]]:
+    """Every EARLIER step with tool calls (one a later step with tool calls
+    followed) whose calls have no outcome, by index, with those calls
+    (G-387 round 13). Main denies such calls when the later step is recorded;
+    a thread the 0.5.x line wrote can hold one it never answered. A result
+    counts when recorded between the step and the next one, or marked for it
+    (:data:`REPLACED_STEP`) anywhere after."""
+    steps = [
+        index
+        for index, row in enumerate(rows)
+        if row.get("type") == "assistant" and _dicts(row.get("tool_calls"))
+    ]
+    found: list[tuple[int, list[dict[str, Any]]]] = []
+    for at, following in pairwise(steps):
+        calls = _dicts(rows[at].get("tool_calls"))
+        own = [
+            row
+            for index, row in enumerate(rows)
+            if index > at
+            and (
+                (index < following and belongs_to(row, at))
+                or (isinstance(row.get(REPLACED_STEP), dict) and belongs_to(row, at))
+            )
+        ]
+        answered = call_results(calls, own)
+        open_calls = [call for index, call in enumerate(calls) if index not in answered]
+        if open_calls:
+            found.append((at, open_calls))
+    return found
+
+
+def step_superseded(
+    stored: Sequence[tuple[Mapping[str, Any], str | None]],
+) -> bool:
+    """Whether the last step with tool calls was superseded by a row already
+    in the thread (an assistant or user row recorded outside its owning
+    runs, :func:`superseding_denials`) without being answered for it: a
+    thread the 0.5.x line wrote, which denied a superseded step only when it
+    resumed it. Its calls with no result are then answered with
+    :data:`SUPERSEDED_RESULT` (G-387 round 13)."""
+    rows = [row for row, _ in stored]
+    runs = [run for _, run in stored]
+    step = next(
+        (
+            index
+            for index in range(len(rows) - 1, -1, -1)
+            if rows[index].get("type") == "assistant" and _dicts(rows[index].get("tool_calls"))
+        ),
+        None,
+    )
+    if step is None:
+        return False
+    calls = _dicts(rows[step].get("tool_calls"))
+    owners: set[str | None] = {runs[step]}
+    for index in range(step + 1, len(rows)):
+        if belongs_to(rows[index], step) and call_results(calls, [rows[index]]):
+            owners.add(runs[index])
+    return any(
+        rows[index].get("type") in ("assistant", "user")
+        and (runs[index] is None or runs[index] not in owners)
+        for index in range(step + 1, len(rows))
+    )
+
+
+def replaced_step_row(at: int, calls: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The row answering ``calls`` of the earlier step at index ``at`` with
+    one denial each, in the 0.5.x line's shape."""
+    row = tool_result_row(
+        [
+            {
+                "tool_call_id": _text(call.get("id")),
+                "tool_name": _text(call.get("name")),
+                "args": usable_arguments(call.get("arguments")) or {},
+                "result": SUPERSEDED_RESULT,
+                "tool_call_result_id": _nullable_text(call.get("result_id")),
+                "artifacts": [],
+            }
+            for call in calls
+        ]
+    )
+    row[REPLACED_STEP] = {"position": at + 1}
+    return row
+
+
 #: What a call still pending on a child is answered with when a runner start
 #: gives the child a new task (G-387 round 9): the PHP reference's text (round
 #: 12), so the row reads the same in every language. Nothing reads it to
@@ -319,13 +597,11 @@ def approval_tool_scope(rows: Sequence[Mapping[str, Any]]) -> tuple[list[str], b
         approval_id: decision["approved"] is True
         for approval_id, decision in first_decisions(rows).items()
     }
-    for row in reversed(thread_view(rows)):
-        if row.get("type") == "tool_result":
-            continue
-        if row.get("type") == "user":
-            return None
-        if row.get("type") != "assistant":
-            continue
+    # The step is the one requested_step() selects (G-397), read on the
+    # view, where a 0.1.0 step's separate request rows are folded into it.
+    view = thread_view(rows)
+    at = requested_step(view)
+    for row in [] if at is None else [view[at]]:
         requests = row.get("tool_approval_requests", [])
         if not requests:
             return None
@@ -431,17 +707,13 @@ def paused_approval_row(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] 
     """The stored assistant row whose approvals the transcript tail is waiting
     on, or None.
 
-    Newest first: results and decisions recorded since it are skipped; a user
-    turn, or an assistant step that asked nothing, ends the search.
+    The step :func:`requested_step` selects (G-397), when it carries its
+    requests itself.
     """
-    for row in reversed(rows):
-        kind = row.get("type")
-        if kind == "user":
-            return None
-        if kind != "assistant":
-            continue
-        return row if _dicts(row.get("tool_approval_requests")) else None
-    return None
+    index = requested_step(rows)
+    if index is None or not _dicts(rows[index].get("tool_approval_requests")):
+        return None
+    return rows[index]
 
 
 def carried_agent_spend(value: object) -> tuple[float, int]:
@@ -474,46 +746,120 @@ REPEATED_CALL_ID = "Tool call was not run because another call in this step has 
 
 def repeats_call_ids(assistant: Mapping[str, Any]) -> bool:
     """Whether a tool call id repeats among one step's calls (an empty or
-    missing id counts), or a ``tool_call_id`` among its approval requests
-    (G-392).
+    missing id counts), or a ``tool_call_id`` or an ``approval_id`` among its
+    approval requests (G-392, G-387 round 13).
 
     Such a step cannot say which decision answers which call, so none of its
     gated calls runs.
     """
     ids = [_text(call.get("id")) for call in _dicts(assistant.get("tool_calls"))]
-    asked = [
-        _text(request.get("tool_call_id"))
-        for request in _dicts(assistant.get("tool_approval_requests"))
-    ]
-    return len(set(ids)) != len(ids) or len(set(asked)) != len(asked)
+    requests = _dicts(assistant.get("tool_approval_requests"))
+    asked = [_text(request.get("tool_call_id")) for request in requests]
+    # A repeated APPROVAL id (G-387 round 13) cannot say which call it
+    # decides either: the same step, failed closed.
+    approvals = [_text(request.get("approval_id")) for request in requests]
+    return (
+        len(set(ids)) != len(ids)
+        or len(set(asked)) != len(asked)
+        or len(set(approvals)) != len(approvals)
+    )
 
 
-def paired_requests(assistant: Mapping[str, Any]) -> list[tuple[dict[str, Any], int | None]]:
+def paired_requests(
+    assistant: Mapping[str, Any], ran: Collection[int] = ()
+) -> list[tuple[dict[str, Any], int | None]]:
     """Each approval request of one step with the index of the call it was
     issued for, or None (G-392).
 
     Paired by position: a request takes the first call, in call order, that
     has its ``tool_call_id`` and no request yet. The harness issues requests
     in call order, so with repeated ids every call still gets its own request,
-    never the last one issued under that id.
+    never the last one issued under that id. ``ran`` are the calls the step
+    ran at once (G-387 round 13): a call that ran was asked nothing, so a
+    request never pairs with one of them (it pairs with no call instead); an
+    ungated call never receives an approval.
     """
     calls = _dicts(assistant.get("tool_calls"))
     taken: set[int] = set()
     pairs: list[tuple[dict[str, Any], int | None]] = []
     for request in _dicts(assistant.get("tool_approval_requests")):
         wanted = _text(request.get("tool_call_id"))
-        index = next(
-            (
-                i
-                for i, call in enumerate(calls)
-                if i not in taken and _text(call.get("id")) == wanted
-            ),
-            None,
-        )
+        free = [
+            i for i, call in enumerate(calls) if i not in taken and _text(call.get("id")) == wanted
+        ]
+        index = next((i for i in free if i not in ran), None)
         if index is not None:
             taken.add(index)
         pairs.append((request, index))
     return pairs
+
+
+def step_requests(
+    rows: Sequence[Mapping[str, Any]], index: int
+) -> list[tuple[dict[str, Any], int | None]]:
+    """:func:`paired_requests` for the stored assistant row ``rows[index]``,
+    knowing which of its calls the step ran at once: the ones the tool result
+    row written right after it answers, before any decision (G-387 round 13).
+    A request is never paired with an ungated call that shares its id."""
+    assistant = rows[index]
+    following = rows[index + 1] if index + 1 < len(rows) else None
+    ran: set[int] = set()
+    if (
+        following is not None
+        and belongs_to(following, index)
+        and following.get("type") == "tool_result"
+        and not _dicts(following.get("tool_approval_responses"))
+        and ENDED_BY_START not in following
+    ):
+        ran = set(call_results(_dicts(assistant.get("tool_calls")), [following]))
+    return paired_requests(assistant, ran)
+
+
+def call_results(
+    calls: Sequence[Mapping[str, Any]], rows: Sequence[Mapping[str, Any]]
+) -> dict[int, dict[str, Any]]:
+    """Which of one step's ``calls`` the tool result ``rows`` after it
+    answer, by call INDEX, each with its first result (G-387 round 13).
+
+    Matched BY POSITION, never through a map keyed by call id, where a result
+    under a repeated id would answer every call carrying it. Within each row a
+    result takes one call: the first, in call order, with its id that the row
+    has not matched yet, preferring the one with its tool name and arguments,
+    then its tool name. So a gated call that shares its id with an ungated
+    one that ran stays unanswered. A row that repeats earlier results (a
+    resume's, a start's) matches the same calls again."""
+    matched: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if row.get("type") != "tool_result":
+            continue
+        normalised = _normalise(row, [])
+        if normalised is None:
+            continue
+        taken: set[int] = set()
+        for entry in normalised["tool_results"]:
+            index = _answered_call(calls, entry, taken)
+            if index is not None:
+                taken.add(index)
+                matched.setdefault(index, entry)
+    return matched
+
+
+def _answered_call(
+    calls: Sequence[Mapping[str, Any]], entry: Mapping[str, Any], taken: Collection[int]
+) -> int | None:
+    """The call one stored result answers: see :func:`call_results`."""
+    wanted = _text(entry.get("tool_call_id"))
+    free = [i for i, call in enumerate(calls) if i not in taken and _text(call.get("id")) == wanted]
+    named = [i for i in free if _text(calls[i].get("name")) == entry.get("tool_name")]
+    exact = [
+        i
+        for i in named
+        if (usable_arguments(calls[i].get("arguments")) or {}) == (entry.get("args") or {})
+    ]
+    for found in (exact, named, free):
+        if found:
+            return found[0]
+    return None
 
 
 def ambiguous_calls(assistant: Mapping[str, Any]) -> set[str]:
