@@ -1,0 +1,433 @@
+{
+ "_note": "Threads the prism-harness-py 0.5.x line writes for a replaced (superseded) step, recorded by that line's own runtime (origin/release/0.5.x, 6e46a18) offline: a step of two gated echo calls parks, the first is approved, then a host records a user row or a later assistant step with tool calls; '-resumed' after that line resumed it once, '-parked' before. Rows as stored, with their run ids and positions.",
+ "threads": {
+  "user-resumed": [
+   {
+    "message": {
+     "type": "user",
+     "content": "go"
+    },
+    "run_id": "63560d6c-4e37-4e5d-8717-0d550a1bb2f4",
+    "position": 1
+   },
+   {
+    "message": {
+     "type": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "a",
+       "name": "echo",
+       "arguments": {
+        "token": "t0"
+       },
+       "result_id": null,
+       "reasoning_id": null,
+       "reasoning_summary": null
+      },
+      {
+       "id": "b",
+       "name": "echo",
+       "arguments": {
+        "token": "t1"
+       },
+       "result_id": null,
+       "reasoning_id": null,
+       "reasoning_summary": null
+      }
+     ],
+     "additional_content": {},
+     "tool_approval_requests": [
+      {
+       "approval_id": "apr_03f5b9fe3b7c499aa5158f8be72ba3b7",
+       "tool_call_id": "a",
+       "arguments_format": 1
+      },
+      {
+       "approval_id": "apr_6b03779c48634b35a0c2b2faf640bf29",
+       "tool_call_id": "b",
+       "arguments_format": 1
+      }
+     ],
+     "harness_tool_names": [
+      "echo",
+      "shout"
+     ]
+    },
+    "run_id": "63560d6c-4e37-4e5d-8717-0d550a1bb2f4",
+    "position": 2
+   },
+   {
+    "message": {
+     "type": "tool_result",
+     "tool_results": [],
+     "tool_approval_responses": [
+      {
+       "approval_id": "apr_03f5b9fe3b7c499aa5158f8be72ba3b7",
+       "approved": true,
+       "reason": null
+      }
+     ]
+    },
+    "run_id": "63560d6c-4e37-4e5d-8717-0d550a1bb2f4",
+    "position": 3
+   },
+   {
+    "message": {
+     "type": "user",
+     "content": "Something else."
+    },
+    "run_id": null,
+    "position": 4
+   },
+   {
+    "message": {
+     "type": "tool_result",
+     "tool_results": [
+      {
+       "tool_call_id": "a",
+       "tool_name": "echo",
+       "args": {
+        "token": "t0"
+       },
+       "result": "Tool call was not run because a later step replaced it",
+       "tool_call_result_id": null,
+       "artifacts": []
+      },
+      {
+       "tool_call_id": "b",
+       "tool_name": "echo",
+       "args": {
+        "token": "t1"
+       },
+       "result": "Tool call was not run because a later step replaced it",
+       "tool_call_result_id": null,
+       "artifacts": []
+      }
+     ],
+     "tool_approval_responses": [],
+     "harness_replaced_step": {
+      "position": 2
+     }
+    },
+    "run_id": "4503021e-f296-48a4-9340-ff6b6d79d59e",
+    "position": 5
+   },
+   {
+    "message": {
+     "type": "assistant",
+     "content": "Done.",
+     "tool_calls": [],
+     "additional_content": {},
+     "tool_approval_requests": []
+    },
+    "run_id": "4503021e-f296-48a4-9340-ff6b6d79d59e",
+    "position": 6
+   }
+  ],
+  "user-parked": [
+   {
+    "message": {
+     "type": "user",
+     "content": "go"
+    },
+    "run_id": "59af5a0c-12f9-4bd4-91d4-9d7c18b7bd9f",
+    "position": 1
+   },
+   {
+    "message": {
+     "type": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "a",
+       "name": "echo",
+       "arguments": {
+        "token": "t0"
+       },
+       "result_id": null,
+       "reasoning_id": null,
+       "reasoning_summary": null
+      },
+      {
+       "id": "b",
+       "name": "echo",
+       "arguments": {
+        "token": "t1"
+       },
+       "result_id": null,
+       "reasoning_id": null,
+       "reasoning_summary": null
+      }
+     ],
+     "additional_content": {},
+     "tool_approval_requests": [
+      {
+       "approval_id": "apr_8173ebede9f246a0a345f1c61192552b",
+       "tool_call_id": "a",
+       "arguments_format": 1
+      },
+      {
+       "approval_id": "apr_bd2dfd166c604ea4ba009dfe3c7e4c9d",
+       "tool_call_id": "b",
+       "arguments_format": 1
+      }
+     ],
+     "harness_tool_names": [
+      "echo",
+      "shout"
+     ]
+    },
+    "run_id": "59af5a0c-12f9-4bd4-91d4-9d7c18b7bd9f",
+    "position": 2
+   },
+   {
+    "message": {
+     "type": "tool_result",
+     "tool_results": [],
+     "tool_approval_responses": [
+      {
+       "approval_id": "apr_8173ebede9f246a0a345f1c61192552b",
+       "approved": true,
+       "reason": null
+      }
+     ]
+    },
+    "run_id": "59af5a0c-12f9-4bd4-91d4-9d7c18b7bd9f",
+    "position": 3
+   },
+   {
+    "message": {
+     "type": "user",
+     "content": "Something else."
+    },
+    "run_id": null,
+    "position": 4
+   }
+  ],
+  "later_step-resumed": [
+   {
+    "message": {
+     "type": "user",
+     "content": "go"
+    },
+    "run_id": "235053f4-7bca-4c47-bcf4-ae8ee586752f",
+    "position": 1
+   },
+   {
+    "message": {
+     "type": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "a",
+       "name": "echo",
+       "arguments": {
+        "token": "t0"
+       },
+       "result_id": null,
+       "reasoning_id": null,
+       "reasoning_summary": null
+      },
+      {
+       "id": "b",
+       "name": "echo",
+       "arguments": {
+        "token": "t1"
+       },
+       "result_id": null,
+       "reasoning_id": null,
+       "reasoning_summary": null
+      }
+     ],
+     "additional_content": {},
+     "tool_approval_requests": [
+      {
+       "approval_id": "apr_256f3d24c80e4882b78a3e96297c27a0",
+       "tool_call_id": "a",
+       "arguments_format": 1
+      },
+      {
+       "approval_id": "apr_c158f7e101084188968ff8ee091848b7",
+       "tool_call_id": "b",
+       "arguments_format": 1
+      }
+     ],
+     "harness_tool_names": [
+      "echo",
+      "shout"
+     ]
+    },
+    "run_id": "235053f4-7bca-4c47-bcf4-ae8ee586752f",
+    "position": 2
+   },
+   {
+    "message": {
+     "type": "tool_result",
+     "tool_results": [],
+     "tool_approval_responses": [
+      {
+       "approval_id": "apr_256f3d24c80e4882b78a3e96297c27a0",
+       "approved": true,
+       "reason": null
+      }
+     ]
+    },
+    "run_id": "235053f4-7bca-4c47-bcf4-ae8ee586752f",
+    "position": 3
+   },
+   {
+    "message": {
+     "type": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "a",
+       "name": "shout",
+       "arguments": {
+        "token": "later"
+       }
+      }
+     ],
+     "tool_approval_requests": []
+    },
+    "run_id": null,
+    "position": 4
+   },
+   {
+    "message": {
+     "type": "tool_result",
+     "tool_results": [
+      {
+       "tool_call_id": "a",
+       "tool_name": "echo",
+       "args": {
+        "token": "t0"
+       },
+       "result": "Tool call was not run because a later step replaced it",
+       "tool_call_result_id": null,
+       "artifacts": []
+      },
+      {
+       "tool_call_id": "b",
+       "tool_name": "echo",
+       "args": {
+        "token": "t1"
+       },
+       "result": "Tool call was not run because a later step replaced it",
+       "tool_call_result_id": null,
+       "artifacts": []
+      }
+     ],
+     "tool_approval_responses": [],
+     "harness_replaced_step": {
+      "position": 2
+     }
+    },
+    "run_id": "10b74681-b558-47e2-9060-3f984f306567",
+    "position": 5
+   },
+   {
+    "message": {
+     "type": "assistant",
+     "content": "Done.",
+     "tool_calls": [],
+     "additional_content": {},
+     "tool_approval_requests": []
+    },
+    "run_id": "10b74681-b558-47e2-9060-3f984f306567",
+    "position": 6
+   }
+  ],
+  "later_step-parked": [
+   {
+    "message": {
+     "type": "user",
+     "content": "go"
+    },
+    "run_id": "57861dd3-eb76-4040-842f-2be51254b792",
+    "position": 1
+   },
+   {
+    "message": {
+     "type": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "a",
+       "name": "echo",
+       "arguments": {
+        "token": "t0"
+       },
+       "result_id": null,
+       "reasoning_id": null,
+       "reasoning_summary": null
+      },
+      {
+       "id": "b",
+       "name": "echo",
+       "arguments": {
+        "token": "t1"
+       },
+       "result_id": null,
+       "reasoning_id": null,
+       "reasoning_summary": null
+      }
+     ],
+     "additional_content": {},
+     "tool_approval_requests": [
+      {
+       "approval_id": "apr_942e593a3b7a4e579c4869c177cebbe7",
+       "tool_call_id": "a",
+       "arguments_format": 1
+      },
+      {
+       "approval_id": "apr_a8b713aa0907453694fbff32744ccb26",
+       "tool_call_id": "b",
+       "arguments_format": 1
+      }
+     ],
+     "harness_tool_names": [
+      "echo",
+      "shout"
+     ]
+    },
+    "run_id": "57861dd3-eb76-4040-842f-2be51254b792",
+    "position": 2
+   },
+   {
+    "message": {
+     "type": "tool_result",
+     "tool_results": [],
+     "tool_approval_responses": [
+      {
+       "approval_id": "apr_942e593a3b7a4e579c4869c177cebbe7",
+       "approved": true,
+       "reason": null
+      }
+     ]
+    },
+    "run_id": "57861dd3-eb76-4040-842f-2be51254b792",
+    "position": 3
+   },
+   {
+    "message": {
+     "type": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "a",
+       "name": "shout",
+       "arguments": {
+        "token": "later"
+       }
+      }
+     ],
+     "tool_approval_requests": []
+    },
+    "run_id": null,
+    "position": 4
+   }
+  ]
+ }
+}
