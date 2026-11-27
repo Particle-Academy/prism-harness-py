@@ -150,11 +150,11 @@ def test_the_harness_own_rows_in_its_run_do_not_supersede() -> None:
 
 @pytest.mark.parametrize("step", sorted(STEPS))
 @pytest.mark.parametrize("kind", ["assistant_text", "user"])
-def test_a_forged_own_run_id_gains_nothing(kind: str, step: str) -> None:
-    """A host hands the parked step's own run id to the public API: the row
-    counts as the owning run's, so it is not a supersede, but it still ends
-    the step for every decision reader (G-397): every decision is refused,
-    nothing runs, and each gated call ends with exactly ONE outcome."""
+def test_a_host_row_carrying_the_steps_own_run_id_supersedes_it(kind: str, step: str) -> None:
+    """A run id a CALLER passes is always outside, the step's own included:
+    only the runtime's own in-run recording is inside. The host's row
+    supersedes the step: one denial per open call, every decision refused,
+    nothing runs."""
     world = Recording()
     _, approvals = park(world, *STEPS[step])
     record_approval(world.fresh().root(), approvals[0], True)
@@ -162,6 +162,7 @@ def test_a_forged_own_run_id_gains_nothing(kind: str, step: str) -> None:
 
     host.thread().record([dict(SUPERSEDING[kind])], parked_run_id(host))
 
+    assert marks(world.root()) == [{"approval_ids": approvals}]
     for approval in approvals:
         with pytest.raises(HarnessError) as caught:
             record_approval(world.fresh().root(), approval, True)
@@ -171,8 +172,22 @@ def test_a_forged_own_run_id_gains_nothing(kind: str, step: str) -> None:
     world.text("Again.")
     world.fresh().runtime.send(world.root(), "")
     assert not any(name == "echo" for name, _ in world.ran_with)
-    assert len(outcomes_of(world.root(), 1)) == 1
-    assert len(outcomes_of(world.root(), 2)) == 1
+    assert outcomes_of(world.root(), 1) == [SUPERSEDED_RESULT]
+    assert outcomes_of(world.root(), 2) == [SUPERSEDED_RESULT]
+
+
+@pytest.mark.parametrize(("run", "supersedes"), [("r0", False), ("r1", False), ("r2", True)])
+def test_the_runtime_own_row_is_inside_only_in_an_owning_run(run: str, supersedes: bool) -> None:
+    """The runtime's own recording (record_in_run) is inside when its run owns
+    the step (it recorded the step, r0, or one of its results, r1)."""
+    from prism_harness.thread import record_in_run
+
+    world = Recording()
+    session = _stored_step(world, [("apr_a", "a"), ("apr_b", "b")], "a")
+
+    record_in_run(session.thread(), [{"type": "user", "content": "Later."}], run)
+
+    assert marks(world.root()) == ([{"approval_ids": ["apr_b"]}] if supersedes else [])
 
 
 def test_a_later_step_with_tool_calls_supersedes_even_under_the_steps_own_run_id() -> None:
@@ -253,12 +268,11 @@ def _stored_step(world: Recording, requests: list[tuple[str, str]], prior: str |
     return session
 
 
-@pytest.mark.parametrize(("run", "supersedes"), [("r1", False), ("r0", False), ("r2", True)])
-def test_a_text_or_user_row_supersedes_only_from_outside_the_owning_runs(
-    run: str, supersedes: bool
-) -> None:
-    """The owning runs are the run that recorded the step (r0) and every run
-    that recorded one of its results (r1)."""
+@pytest.mark.parametrize("run", ["r0", "r1", "r2", None])
+def test_a_host_text_or_user_row_supersedes_whatever_run_id_it_carries(run: str | None) -> None:
+    """A run id a caller passes is outside, even an owning run's (the run
+    that recorded the step, r0, or one of its results, r1)."""
+    supersedes = True
     world = Recording()
     session = _stored_step(world, [("apr_a", "a"), ("apr_b", "b")], "a")
 
