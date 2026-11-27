@@ -39,6 +39,7 @@ from prism_harness.thread_rows import (
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
+    is_decided,
     last_step_results,
     last_step_superseded,
     own_approvals,
@@ -1112,7 +1113,14 @@ def record_approval(
     pending, record them all first.
 
     ``approval_id`` is :attr:`PendingApproval.id`, not the tool call id.
+
+    THE FIRST DECISION STANDS. A decision for an approval that already has
+    one records nothing, so a later answer never replaces an earlier one, and
+    the resume acts on the first (G-401).
     """
+    if is_decided([entry.message for entry in session.thread().messages()], approval_id):
+        return
+
     run = session.run()
 
     session.thread().record(

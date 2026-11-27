@@ -369,8 +369,8 @@ def step_answers(
 
     The results are in stored order and NOT folded by call id: folded, a
     result is keyed by its call id, so with a repeated id one call's result
-    reads as another's. A decision is keyed by its approval id, and a later
-    one replaces an earlier one, as the thread view folds them.
+    reads as another's. A decision is keyed by its approval id, and the FIRST
+    one stands, unlike the thread view's fold (G-401).
     """
     view: list[dict[str, Any]] = []
     entries: list[dict[str, Any]] = []
@@ -391,7 +391,7 @@ def step_answers(
         elif normalised["type"] == "tool_result":
             entries.extend(normalised["tool_results"])
             for decision in normalised["tool_approval_responses"]:
-                decisions[decision["approval_id"]] = decision
+                decisions.setdefault(decision["approval_id"], decision)
 
         if normalised["type"] == "tool_result" and view and view[-1]["type"] == "tool_result":
             view[-1] = _fold(view[-1], normalised)
