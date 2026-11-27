@@ -65,8 +65,6 @@ def test_a_host_assistant_row_without_tool_calls_sends_no_tool_item() -> None:
         ]
         assert host, request.messages
         assert all(tool_items(m) == [] for m in host)
-        # What is not a tool item is kept, as stored.
-        assert host[0]["additional_content"]["stop_reason"] == "tool_use"
-        assert host[0]["additional_content"]["content_blocks"] == [
-            {"type": "text", "text": "Checking."}
-        ]
+        # Content that is not the row's own is not sent at all: the row is
+        # sent as its text.
+        assert all(m["additional_content"] == {} for m in host)
