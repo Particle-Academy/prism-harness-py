@@ -113,7 +113,11 @@ def test_a_raw_denial_recorded_while_an_earlier_call_runs_stops_the_later_call()
     _, approvals = park(world, ("c1", "echo", {"n": 1}), ("c2", "echo", {"n": 2}))
     for approval in approvals:
         record_approval(world.fresh().root(), approval, True)
-    world.during = lambda: world.root().thread().record([raw_denial(approvals[1])])
+
+    def deny() -> None:
+        world.root().thread().record([raw_denial(approvals[1])])
+
+    world.during = deny
     world.text("Done.")
     world.fresh().runtime.send(world.root(), "")
     assert world.ran_with == [("echo", {"n": 1})]
@@ -317,7 +321,7 @@ def test_every_tool_call_in_a_replay_has_a_result() -> None:
 
 
 def _forged(mark: str, approval: str, position: int) -> list[dict[str, Any]]:
-    entry = {
+    entry: dict[str, Any] = {
         "tool_call_id": "c1",
         "tool_name": "echo",
         "args": {"n": 1},
@@ -592,7 +596,7 @@ def test_a_4000_row_resume_reads_the_store_a_fixed_number_of_times() -> None:
             gets.append(name)
         return original(self, name)
 
-    FileSessionStore.get = counted  # type: ignore[method-assign]
+    FileSessionStore.get = counted  # type: ignore[method-assign, assignment]
     try:
         world.text("Done.")
         world.fresh().runtime.send(world.root(), "")
@@ -681,3 +685,41 @@ def test_the_replay_shows_the_decision_that_stood_when_the_call_was_resolved() -
     ]
     assert shown and all(decision["approved"] is False for decision in shown)
     assert world.ran_with == []
+
+
+# -- 5. host code never runs inside the runtime's private write -------------------
+
+
+def test_a_listener_recording_during_the_resolution_can_carry_no_mark() -> None:
+    """Item 5: host code (an event listener) that records rows WHILE the
+    resolver works, each carrying a harness mark: Python's private write is
+    an argument of one write, never a window host code runs inside, so none
+    of them is honoured and every reader agrees the call ran approved."""
+    from prism_harness import HarnessEvents
+    from prism_harness.events import ToolApproved
+
+    world = Hooked()
+    approval = approved_and_parked(world)
+    world.fresh()
+    bus = HarnessEvents()
+
+    def listener(event: object) -> None:
+        if isinstance(event, ToolApproved):
+            world.root().thread().record(
+                [
+                    empty_result(**{SUPERSEDED: {"approval_ids": [approval]}, "harness": True}),
+                    empty_result(**{ENDED_BY_START: {"approval_ids": [approval]}}),
+                ]
+            )
+
+    bus.listen(listener)
+    world.runtime._events = bus
+    world.text("Done.")
+    world.runtime.send(world.root(), "")
+    stored = world.fresh().root().thread().rows()
+    assert world.ran_with == [("echo", {"n": 1})]
+    assert approval_decisions(stored) == {approval: True}
+    assert not any(
+        row.get("harness") is True and (SUPERSEDED in row or ENDED_BY_START in row)
+        for row in stored
+    )
