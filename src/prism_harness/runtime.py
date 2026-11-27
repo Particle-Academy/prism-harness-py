@@ -25,10 +25,12 @@ from prism_harness.modes import AgentMode, ModeRegistry
 from prism_harness.session import Session
 from prism_harness.structured import schema_name, schema_problems
 from prism_harness.subagents import RunBudget, RunContext
-from prism_harness.thread import HARNESS_RECORDING, ThreadMessage
+from prism_harness.thread import _HARNESS_RECORDING, ThreadMessage
 from prism_harness.thread_rows import (
     ANSWERS_STEP,
     ARGUMENTS_AS_SENT,
+    INTERRUPTED,
+    NOT_OPEN,
     REPEATED_CALL_ID,
     REPLACED_BY_LATER_STEP,
     REPLACED_STEP,
@@ -43,6 +45,8 @@ from prism_harness.thread_rows import (
     paired_requests,
     repeats_call_ids,
     replaced_steps,
+    started_calls,
+    started_row,
     step_answers,
     step_position,
     thread_view,
@@ -497,7 +501,7 @@ class AgentRuntime:
                         "additional_attributes": {},
                     }
                 )
-                thread.record([turn], run_id, HARNESS_RECORDING)
+                thread.record([turn], run_id, _HARNESS_RECORDING)
 
             return self._loop(session, mode, run, run_id, provider, model, offered, called, schema)
         except Exception as error:
@@ -609,7 +613,7 @@ class AgentRuntime:
             row = assistant_row(response.text, calls, metadata, requests)
             if requests:
                 row["harness_tool_names"] = [tool.name for tool in offered]
-            [recorded_step] = thread.record([row], run_id, HARNESS_RECORDING)
+            [recorded_step] = thread.record([row], run_id, _HARNESS_RECORDING)
             # Every result row the harness writes for this step names it: a
             # step recorded while a call runs never takes its results (G-407).
             answers = {ANSWERS_STEP: {"position": recorded_step.position}}
@@ -633,7 +637,7 @@ class AgentRuntime:
                             }
                         ],
                         run_id,
-                        HARNESS_RECORDING,
+                        _HARNESS_RECORDING,
                     )
                 raise HarnessError.model_step_failed(
                     "error" if finish_reason == "error" else "unknown"
@@ -682,7 +686,7 @@ class AgentRuntime:
                 results.append(self._invoke(offered, call))
 
             if results:
-                thread.record([{**tool_result_row(results), **answers}], run_id, HARNESS_RECORDING)
+                thread.record([{**tool_result_row(results), **answers}], run_id, _HARNESS_RECORDING)
 
             if requests:
                 # FAILS CLOSED. The gated calls have not run, and the requests are
@@ -745,6 +749,7 @@ class AgentRuntime:
             # first, once: each of its gated calls with no result is denied,
             # and none of its decisions runs anything (G-392).
             replaced = self._replaced(live, mode)
+            started_before = started_calls(live.thread().messages()) if replaced else set()
             if replaced:
                 live.thread().record(
                     [
@@ -758,7 +763,9 @@ class AgentRuntime:
                                             arguments=row["arguments"],
                                             result_id=row["result_id"],
                                         ),
-                                        REPLACED_BY_LATER_STEP,
+                                        INTERRUPTED
+                                        if (position, row["id"], row["name"]) in started_before
+                                        else REPLACED_BY_LATER_STEP,
                                     )
                                     for row in rows
                                 ]
@@ -768,7 +775,7 @@ class AgentRuntime:
                         for position, rows in replaced
                     ],
                     run_id,
-                    HARNESS_RECORDING,
+                    _HARNESS_RECORDING,
                 )
 
             work = self._unresolved(live, mode)
@@ -787,6 +794,10 @@ class AgentRuntime:
             resolved: list[dict[str, Any]] = []
             unusable = unusable_stored_calls([entry.message for entry in live.thread().messages()])
 
+            # A call the harness recorded as started and has no result may have
+            # run: it reads interrupted, and never runs again (G-410).
+            started = started_calls(live.thread().messages())
+
             for row, approval_id in zip(calls, approval_ids, strict=True):
                 call = ToolCallInput(
                     id=row["id"],
@@ -800,6 +811,8 @@ class AgentRuntime:
                     # A repeated id cannot say which decision answers which
                     # call, so none of the step's gated calls runs (G-392).
                     resolved.append(tool_result_entry(call, REPEATED_CALL_ID))
+                elif (step, call.id, call.name) in started:
+                    resolved.append(tool_result_entry(call, INTERRUPTED))
                 elif decision is not None and decision["approved"] and call.id in unusable:
                     resolved.append(
                         tool_result_entry(
@@ -823,7 +836,7 @@ class AgentRuntime:
                     )
                     resolved.append(tool_result_entry(cleared, _approval_expired(call.name)))
                 elif decision is not None and decision["approved"]:
-                    entry, ran = self._run_approved(bounded, call)
+                    entry, ran = self._start_and_run(live, bounded, call, approval_id, step, run_id)
                     if ran:
                         # Only a call that was invoked is reported as called.
                         called.append(call.name)
@@ -846,7 +859,7 @@ class AgentRuntime:
                     }
                 ],
                 run_id,
-                HARNESS_RECORDING,
+                _HARNESS_RECORDING,
             )
             return bounded
 
@@ -905,10 +918,8 @@ class AgentRuntime:
             return None
 
         assistant = view[index]
-        # Decisions from EVERY tool result row after the turn, not only the
-        # first run of them, and results from the turn's whole segment: a row
-        # recorded in between must not make a call that already ran read as
-        # unanswered (G-399). Each result is paired with its own call by
+        # Decisions from every tool result row after the turn, and results
+        # from the turn's whole segment (G-399). Each result is paired with its own call by
         # position, never through a map keyed by call id, where an ungated
         # call's result would stand for a gated call sharing its id and leave
         # that call with no outcome (G-392).
@@ -947,6 +958,34 @@ class AgentRuntime:
             repeats_call_ids(assistant),
             step_position(messages),
         )
+
+    @classmethod
+    def _start_and_run(
+        cls,
+        live: Session,
+        offered: Sequence[HarnessTool],
+        call: ToolCallInput,
+        approval_id: str | None,
+        step: int,
+        run_id: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Record that the approved call is starting, then run it (G-410).
+
+        The decision that STANDS for its approval is read again at this
+        moment: a denial recorded since the resume read its history refuses
+        the call. The write-ahead row comes first, so a call whose result the
+        store then fails to record reads interrupted, and never runs again.
+        """
+        if not any(tool.name == call.name for tool in offered):
+            return cls._run_approved(offered, call)
+        messages = live.thread().messages()
+        _, standing = step_answers([entry.message for entry in messages], messages)
+        if approval_id is None or standing.get(approval_id, {}).get("approved") is not True:
+            return tool_result_entry(call, NOT_OPEN), False
+        live.thread().record(
+            [started_row(call.id, call.name, approval_id, step)], run_id, _HARNESS_RECORDING
+        )
+        return cls._run_approved(offered, call)
 
     @classmethod
     def _run_approved(

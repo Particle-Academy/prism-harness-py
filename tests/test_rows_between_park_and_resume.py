@@ -8,8 +8,7 @@ A host may record rows on the thread while an approval is pending.
   replaced it", and nothing runs, whatever was decided before or after.
 - Any other row (a system note, an empty tool result row, another call's
   result) does not: the step is still the one a resume resolves, and its
-  results and decisions are read from EVERY tool result row after it, so a
-  call that already ran is never read as unanswered.
+  results and decisions are read from EVERY tool result row after it.
 - A result recorded for a gated call is that call's one outcome.
 
 Entered at the public seam; the model is scripted.

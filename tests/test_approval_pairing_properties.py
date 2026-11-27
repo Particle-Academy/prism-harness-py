@@ -216,8 +216,8 @@ class Case:
     #: gated calls is asked about under ``old_<token>`` and decided by its own
     #: ``decision``; none of them may ever run.
     earlier: tuple[Call, ...] = ()
-    #: The run has no step left after the step that parked (live only), so a
-    #: resume ends without another model step.
+    #: The mode allows one step (live only): the step that parks is the run's
+    #: last, so a resume takes no model step.
     spent: bool = False
     #: A row written WHILE the first approved call runs (``user``, or
     #: ``tool_step``: a step with an ungated call reusing that call's id), or
@@ -992,7 +992,22 @@ def check(case: Case) -> list[str]:
                 session.thread().record([during_row(case, token)])
 
         gated_tool.during = during
-        return _check(case, session, runtime, ran, expected) + replayed_twice(requests)
+        broken = _check(case, session, runtime, ran, expected) + replayed_twice(requests)
+        # The step budget holds across every send of the case, empty resumes
+        # included: within one turn (since its user row) the model is never
+        # asked more often than max_steps.
+        limit = 1 if case.spent else 8
+        for number, request in enumerate(requests):
+            taken = 0
+            for message in reversed(request.messages):
+                if message.get("type") == "user":
+                    break
+                taken += message.get("type") == "assistant"
+            if taken >= limit:
+                broken.append(
+                    f"budget: request {number} is step {taken + 1} of a turn, max_steps is {limit}"
+                )
+        return broken
 
 
 def replayed_twice(requests: list[LlmRequest]) -> list[str]:
@@ -1486,7 +1501,7 @@ def _shapes() -> dict[str, Shape]:
             for c in k.earlier
         ),
         "earlier open gated call": lambda k, e: any(c.gated and not c.prior for c in k.earlier),
-        "G-399: note after decision, no step left": lambda k, e: (
+        "a row after the decision that does not supersede, steps spent": lambda k, e: (
             k.spent
             and k.insert is not None
             and k.insert.kind in ("system", "tool_empty")
