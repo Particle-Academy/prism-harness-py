@@ -11,6 +11,7 @@ from prism_harness.errors import HarnessError
 from prism_harness.stores.base import SessionStore
 from prism_harness.thread_rows import (
     ANSWERS_STEP,
+    CALL_BINDING,
     HARNESS,
     REPLACED_STEP,
     bound_step,
@@ -61,9 +62,15 @@ class ThreadMessage:
     #: The serialised message -- whatever ``prism-ai-core``'s ``message_from_dict``
     #: can rebuild.
     message: dict[str, Any]
-    #: The run that produced it, when there was one.
+    #: The run that produced it, when there was one. Says who wrote the row,
+    #: never whether its marks count (G-387 round 16): see
+    #: :attr:`written_by_harness`.
     run_id: str | None
     recorded_at: str
+    #: Whether the harness itself wrote the row, through its private in-run
+    #: write (or as the denial a superseding write made it write): the only
+    #: rows whose harness marks count. Never set by a caller.
+    written_by_harness: bool = False
 
 
 class Thread:
@@ -201,13 +208,7 @@ class Thread:
             batch = [
                 (original[id(row)], inside is not None) if id(row) in original else (row, True)
                 for row in superseding_denials(
-                    [
-                        (
-                            row,
-                            entry.get("run_id") if isinstance(entry.get("run_id"), str) else None,
-                        )
-                        for row, entry in zip(readable, listed, strict=True)
-                    ],
+                    [(row, _owner_run(entry)) for row, entry in zip(readable, listed, strict=True)],
                     as_read,
                     run_id,
                     inside,
@@ -268,14 +269,33 @@ class Thread:
             message=message,
             run_id=run_id if isinstance(run_id, str) else None,
             recorded_at=recorded_at if isinstance(recorded_at, str) else "",
+            written_by_harness=entry.get(WRITTEN_BY_HARNESS) is True,
         )
+
+
+def _owner_run(entry: Mapping[str, Any]) -> str | None:
+    """The run that may OWN a step through this entry (run-aware supersede):
+    its run id when the harness wrote it, else None (G-387 round 16): a run id
+    a caller passed never makes its row one of a run's own."""
+    run_id = entry.get("run_id")
+    return run_id if isinstance(run_id, str) and entry.get(WRITTEN_BY_HARNESS) is True else None
+
+
+#: The harness's own keys on an assistant row: read as ABSENT on a row the
+#: harness did not write (G-387 round 16, ONE TRUST SIGNAL), as the
+#: reference reads them.
+_STEP_MARKS = ("harness_steps_used", "harness_steps_left")
 
 
 def _readable(listed: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Stored entries as every reader takes their rows: positions mapped
     (:func:`_indexed`), and each tool result row flagged
     :data:`~prism_harness.thread_rows.HARNESS` exactly when the harness wrote
-    it -- a flag no stored message can carry for itself."""
+    it -- a flag no stored message can carry for itself. On an assistant row
+    the harness did not write, its own keys (``harness_steps_used``,
+    ``harness_steps_left`` and each request's binding,
+    :data:`~prism_harness.thread_rows.CALL_BINDING`) read as absent: a request
+    with no binding binds its own step's call by position."""
     rows = _indexed([entry["message"] for entry in listed], [_position(e) for e in listed])
     return [
         _flagged(row, entry.get(WRITTEN_BY_HARNESS) is True)
@@ -285,14 +305,36 @@ def _readable(listed: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
 def _flagged(row: dict[str, Any], harness: bool) -> dict[str, Any]:
     """A tool result row with the read-only harness flag set exactly to
-    ``harness`` (any copy of the key a message stored dropped); every other
-    row unchanged. Unchanged rows are the same objects."""
+    ``harness`` (any copy of the key a message stored dropped); an assistant
+    row the harness did not write without its own keys; every other row
+    unchanged. Unchanged rows are the same objects."""
+    if row.get("type") == "assistant" and not harness:
+        return _unmarked_step(row)
     if row.get("type") != "tool_result" or (not harness and HARNESS not in row):
         return row
     flagged = {key: value for key, value in row.items() if key != HARNESS}
     if harness:
         flagged[HARNESS] = True
     return flagged
+
+
+def _unmarked_step(row: dict[str, Any]) -> dict[str, Any]:
+    """An assistant row read without the harness's own keys."""
+    requests = row.get("tool_approval_requests")
+    bound = isinstance(requests, list) and any(
+        isinstance(request, dict) and CALL_BINDING in request for request in requests
+    )
+    if not bound and not any(key in row for key in _STEP_MARKS):
+        return row
+    read = {key: value for key, value in row.items() if key not in _STEP_MARKS}
+    if bound and isinstance(requests, list):
+        read["tool_approval_requests"] = [
+            {key: value for key, value in request.items() if key != CALL_BINDING}
+            if isinstance(request, dict)
+            else request
+            for request in requests
+        ]
+    return read
 
 
 def _position(entry: Mapping[str, Any]) -> int:

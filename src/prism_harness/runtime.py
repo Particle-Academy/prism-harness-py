@@ -1714,6 +1714,23 @@ class AgentRuntime:
                     ToolApprovalAsked, session, run_id, call, _offered(offered, call.name), "person"
                 )
 
+            # WRITE-AHEAD for the ungated batch too (G-387 round 16): one
+            # started row per call the step runs at once, in ONE write before
+            # the first of them runs (the reference's shape, approval id
+            # null), so a call that ran and whose results row then failed to
+            # write reads INTERRUPTED ("it may have run"), never "not run",
+            # and is never given a replaced denial.
+            batch = [call for call in calls if call not in gated and call.id not in unusable]
+            if batch:
+                _record_in_run(
+                    thread,
+                    [
+                        started_row({"id": call.id, "name": call.name}, None, step_position)
+                        for call in batch
+                    ],
+                    run_id,
+                )
+
             for call in calls:
                 if call in gated:
                     continue
@@ -1741,15 +1758,6 @@ class AgentRuntime:
                         continue
                     self._tool_decision(ToolAutoAllowed, session, run_id, call, declared, "policy")
 
-                # WRITE-AHEAD for the ungated batch too (G-387 round 16): the
-                # started row first, so a call that ran and whose results row
-                # then failed to write reads INTERRUPTED ("it may have run"),
-                # never "not run", and is never given a replaced denial.
-                _record_in_run(
-                    thread,
-                    [started_row({"id": call.id, "name": call.name}, "", step_position)],
-                    run_id,
-                )
                 called.append(call.name)
                 results.append(self._invoke(offered, call))
 
@@ -1891,8 +1899,16 @@ class AgentRuntime:
             # A step a row in the thread already superseded, never answered
             # for it (a thread the 0.5.x line wrote): each call with no
             # result gets its one replaced-step denial (G-387 round 13).
+            # The owning runs come only from rows the harness wrote (G-387
+            # round 16): a run id a caller passed never makes a row a run's.
             superseded = step_superseded(
-                list(zip(stored, [entry.run_id for entry in entries], strict=True))
+                list(
+                    zip(
+                        stored,
+                        [entry.run_id if entry.written_by_harness else None for entry in entries],
+                        strict=True,
+                    )
+                )
             )
             # Bind calls, decisions and scope from the same locked snapshot.
             # A concurrent narrower approval also bounds the continuation.

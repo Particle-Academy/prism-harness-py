@@ -441,9 +441,12 @@ def test_a_host_binding_is_recomputed() -> None:
     world.text("Hi.")
     world.runtime.send(world.root(), "Go")
     world.root().thread().record(_forged("binding", "apr_forged", 1))
-    stored = world.fresh().root().thread().rows()
+    stored = [entry.message for entry in world.fresh().root().thread().messages()]
     request = stored[-1]["tool_approval_requests"][0]
     assert request[CALL_BINDING]["args_digest"] != "sha256:00"
+    # And read as absent: a host row carries no harness mark at all.
+    read = world.fresh().root().thread().rows()[-1]["tool_approval_requests"][0]
+    assert CALL_BINDING not in read
 
 
 def test_the_harness_own_supersede_denial_is_honoured() -> None:
@@ -723,3 +726,12 @@ def test_a_listener_recording_during_the_resolution_can_carry_no_mark() -> None:
         row.get("harness") is True and (SUPERSEDED in row or ENDED_BY_START in row)
         for row in stored
     )
+
+
+def test_no_lock_error_text_names_a_key() -> None:
+    """Item 6: the generic lock error names no session key, thread key,
+    participant or session name (the reference's text)."""
+    error = HarnessError.session_locked("session:9f8a2389a20c:ada:support:thread", 1)
+    assert error.code == "session_locked"
+    for secret in ("session:", "9f8a2389a20c", "ada", "support", "thread"):
+        assert secret not in str(error)

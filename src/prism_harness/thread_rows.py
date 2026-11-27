@@ -160,7 +160,7 @@ def thread_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     between them) adds no copy of a result or a decision that segment has
     already shown (see :func:`_once`).
     """
-    return _folded(rows)
+    return _as_decided(_folded(rows), rows)
 
 
 def placed_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -202,15 +202,34 @@ def placed_view(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 }
         before |= _asks(original)
         placed.append(row)
-    view = _folded(placed)
+    return _as_decided(_folded(placed), rows)
+
+
+def _as_decided(
+    view: list[dict[str, Any]], rows: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """``view`` (folded from ``rows``) with every decision entry for an
+    approval a step asked for replaced by the one that STANDS
+    (:func:`standing_decisions`), and dropped when none does (every decision
+    came after its call's outcome, or none in its step's own rows); an entry
+    for an approval no step asked for keeps the standing rule over every row.
+    A result row left with neither results nor decisions is dropped (G-387
+    round 16, the reference's replay and fold)."""
     standing = standing_decisions(rows)
+    asked = _step_approvals(rows)
+    out: list[dict[str, Any]] = []
     for row in view:
         if row["type"] == "tool_result" and row["tool_approval_responses"]:
-            row["tool_approval_responses"] = [
+            decisions = [
                 standing.get(decision["approval_id"], decision)
                 for decision in row["tool_approval_responses"]
+                if decision["approval_id"] in standing or decision["approval_id"] not in asked
             ]
-    return view
+            if not decisions and not row["tool_results"]:
+                continue
+            row = {**row, "tool_approval_responses": decisions}
+        out.append(row)
+    return out
 
 
 def _folded(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -237,8 +256,16 @@ def standing_decisions(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str,
     decisions recorded while the approval's call had not been ACTED on yet
     (G-387 round 16, :func:`acted_at`): a decision recorded after its call
     started or got its outcome is not the one that stood when the call was
-    resolved, so it changes no reader and never what the replay shows."""
+    resolved, so it changes no reader and never what the replay shows.
+
+    Read only from the rows that belong to the approval's step (its segment
+    and the rows a harness mark places with it; the step that FIRST asked for
+    it): a decision row anywhere else decides nothing. An approval no step
+    asked for reads every row."""
     acted = acted_at(rows)
+    ix = _index(rows)
+    asked = _step_approvals(rows)
+    owned: dict[int, set[int]] = {}
     found: dict[str, dict[str, Any]] = {}
     for index, row in enumerate(rows):
         kind = row.get("type")
@@ -252,10 +279,30 @@ def standing_decisions(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str,
             approval = response.get("approval_id")
             if not isinstance(approval, str) or not _counts(acted, approval, index):
                 continue
+            step = asked.get(approval)
+            if step is not None:
+                if step not in owned:
+                    owned[step] = set(ix.owned.get(step, ()))
+                if index not in owned[step]:
+                    continue
             current = found.get(approval)
             if current is None or (current["approved"] and response.get("approved") is not True):
                 found[approval] = _decision(response)
     return found
+
+
+def _step_approvals(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """Every approval id a step asked for FIRST, with that step's index."""
+    ix = _index(rows)
+    if ix.asked_by is None:
+        asked: dict[str, int] = {}
+        for step in ix.steps:
+            for request, _ in step_requests(rows, step):
+                approval = request.get("approval_id")
+                if isinstance(approval, str) and approval:
+                    asked.setdefault(approval, step)
+        ix.asked_by = asked
+    return ix.asked_by
 
 
 def acted_at(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
@@ -547,7 +594,7 @@ def pending_approval_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
         return []
     answered: set[str] = ended_approval_ids(rows) | superseded_approval_ids(rows)
     # A started call is answered-in-progress (G-387 round 15), never pending.
-    answered |= set(started_calls(rows, index).values())
+    answered |= {a for a in started_calls(rows, index).values() if isinstance(a, str)}
     for row in rows[index + 1 :]:
         if row.get("type") == "tool_result":
             for response in _dicts(row.get("tool_approval_responses")):
@@ -558,6 +605,7 @@ def pending_approval_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     # approval pending (G-387 round 16), paired exactly as the resolver
     # (:func:`step_requests`, :func:`call_results`) and the replay read it.
     done = set(call_results(step_calls(rows[index]), owned_rows(rows, index)))
+    done |= set(started_calls(rows, index))  # answered-in-progress, or interrupted
     pending: list[str] = []
     # Only the requests the step asked FIRST (G-408): see step_requests().
     for request, call in step_requests(rows, index):
@@ -903,8 +951,11 @@ INTERRUPTED_RESULT = "Tool call was interrupted, it may have run"
 HARNESS = "harness"
 
 
-def started_row(call: Mapping[str, Any], approval_id: str, position: int) -> dict[str, Any]:
-    """The write-ahead row for ``call`` of the step at thread ``position``."""
+def started_row(call: Mapping[str, Any], approval_id: str | None, position: int) -> dict[str, Any]:
+    """The write-ahead row for ``call`` of the step at thread ``position``:
+    ``approval_id`` the approval it runs under, or None for a call the step
+    runs at once (an UNGATED call, G-387 round 16: the reference's shape,
+    ``"approval_id": null``)."""
     return {
         "type": "tool_result",
         "tool_results": [],
@@ -925,7 +976,7 @@ def answering_step(row: Mapping[str, Any], position: int) -> dict[str, Any]:
     return marked
 
 
-def _started_of(row: Mapping[str, Any]) -> tuple[str, str, str] | None:
+def _started_of(row: Mapping[str, Any]) -> tuple[str, str, str | None] | None:
     value = row.get(STARTED)
     if not isinstance(value, dict):
         return None
@@ -934,7 +985,11 @@ def _started_of(row: Mapping[str, Any]) -> tuple[str, str, str] | None:
         value.get("tool_name"),
         value.get("approval_id"),
     )
-    if isinstance(call_id, str) and isinstance(name, str) and isinstance(approval, str):
+    if (
+        isinstance(call_id, str)
+        and isinstance(name, str)
+        and (approval is None or isinstance(approval, str))
+    ):
         return call_id, name, approval
     return None
 
@@ -994,7 +1049,7 @@ def owned_rows(rows: Sequence[Mapping[str, Any]], step: int) -> list[Mapping[str
     return found
 
 
-def started_calls(rows: Sequence[Mapping[str, Any]], step: int) -> dict[int, str]:
+def started_calls(rows: Sequence[Mapping[str, Any]], step: int) -> dict[int, str | None]:
     """The calls of the step at index ``step`` an HONOURED started row names
     (G-387 round 15), by call index, each with the approval it runs under.
     Paired with the call whose own request carries that approval and whose
@@ -1005,7 +1060,7 @@ def started_calls(rows: Sequence[Mapping[str, Any]], step: int) -> dict[int, str
         return dict(memo)
     calls = step_calls(rows[step])
     own = {call: request.get("approval_id") for request, call in step_requests(rows, step)}
-    found: dict[int, str] = {}
+    found: dict[int, str | None] = {}
     candidates = ix.owned.get(step)
     for index in candidates if candidates is not None else range(step + 1, len(rows)):
         if ix.answers[index] != step:
@@ -1378,46 +1433,42 @@ def step_requests(
             ],
         }
     calls = step_calls(assistant)
-    # The calls the step ran at once carry an UNGATED started row (G-387
-    # round 16: one before each, approval id ""), directly after the step:
-    # those are the calls it ran, whatever row follows them.
-    ran: set[int] = set()
-    after = index + 1
-    while after < len(rows) and ix.answers[after] == index and STARTED in rows[after]:
-        started = _started_of(rows[after])
-        if started is not None and started[2] == "":
+    ids = [_text(call.get("id")) for call in calls]
+    # The calls the step RAN at once: those its rows answer BEFORE the first
+    # decision (the reference's CallPairing), and those an UNGATED started
+    # row names (G-387 round 16: approval id null). Only a call whose id
+    # REPEATS in the step can be one a request must skip (G-387 round 13): a
+    # call alone with its id that a request names was gated, so the request
+    # pairs with it whatever answered it (the resolver's "No approval
+    # response provided" included).
+    before: list[Mapping[str, Any]] = []
+    named: set[int] = set()
+    for at in ix.owned.get(index, []):
+        row = rows[at]
+        if row.get("type") == "tool_approval_response" or _dicts(
+            row.get("tool_approval_responses")
+        ):
+            break
+        if any(
+            honoured(row, mark) is not None for mark in (ENDED_BY_START, SUPERSEDED, REPLACED_STEP)
+        ):
+            continue
+        started = _started_of(row) if ix.answers[at] == index else None
+        if started is not None and started[2] is None:
             pick = next(
                 (
                     i
                     for i, call in enumerate(calls)
-                    if i not in ran
+                    if i not in named
                     and _text(call.get("id")) == started[0]
                     and _text(call.get("name")) == started[1]
                 ),
                 None,
             )
             if pick is not None:
-                ran.add(pick)
-        after += 1
-    following = rows[after] if after < len(rows) else None
-    if (
-        not ran
-        and following is not None
-        and belongs_to(rows, after, index)
-        and following.get("type") == "tool_result"
-        and not _dicts(following.get("tool_approval_responses"))
-        and not any(
-            honoured(following, mark) is not None
-            for mark in (ENDED_BY_START, SUPERSEDED, REPLACED_STEP)
-        )
-    ):
-        ids = [_text(call.get("id")) for call in calls]
-        # Only a call whose id REPEATS in the step can be the one a request
-        # must skip (G-387 round 13): a call alone with its id that a
-        # request names was gated, so it never ran at once, and the row after
-        # it is its answer (the resolver's, "No approval response
-        # provided"), never an ungated result (round 16).
-        ran = {index for index in call_results(calls, [following]) if ids.count(ids[index]) > 1}
+                named.add(pick)
+        before.append(row)
+    ran = {call for call in [*call_results(calls, before), *named] if ids.count(ids[call]) > 1}
     pairs = paired_requests(assistant, ran)
     ix.requests[index] = pairs
     return list(pairs)
@@ -1460,9 +1511,10 @@ class _Index:
         self.marked: list[int | None] = []
         self.owned: dict[int, list[int]] = {}
         self.requests: dict[int, list[tuple[dict[str, Any], int | None]]] = {}
-        self.started: dict[int, dict[int, str]] = {}
+        self.started: dict[int, dict[int, str | None]] = {}
         self.started_at: dict[int, dict[int, int]] = {}
         self.acted: dict[str, int] | None = None
+        self.asked_by: dict[str, int] | None = None
         current: int | None = None
         for index in range(count):
             row = rows[index]
@@ -1611,12 +1663,10 @@ def new_results(
 ) -> list[dict[str, Any]]:
     """``entries`` less every result the step at index ``step`` already holds:
     EXACTLY ONE STORED OUTCOME PER CALL. A key (call id, tool name, canonical
-    args) whose occurrences here go no further than the most one owned row
-    already holds is left out whole. One that adds an occurrence beyond it
-    (IDENTICAL calls, one of them still open) is kept whole: results are read
-    row by row, the n-th occurrence of a key answering the n-th call that
-    carries it, so the earlier occurrences must stay in place for the new one
-    to answer its own call."""
+    args) keeps only its occurrences BEYOND the most one owned row already
+    holds, occurrence by occurrence (G-387 round 16, the reference's rule): a
+    new result for one of two IDENTICAL calls answers the first still open
+    (:func:`call_results`), so no earlier result is restated."""
     held = held_results(rows, step)
 
     def key_of(entry: Mapping[str, Any]) -> tuple[str, str, str]:
@@ -1627,10 +1677,14 @@ def new_results(
             _canonical(args if isinstance(args, dict) else {}),
         )
 
-    counts: dict[tuple[str, str, str], int] = {}
+    seen: dict[tuple[str, str, str], int] = {}
+    kept: list[dict[str, Any]] = []
     for entry in entries:
-        counts[key_of(entry)] = counts.get(key_of(entry), 0) + 1
-    return [dict(entry) for entry in entries if counts[key_of(entry)] > held.get(key_of(entry), 0)]
+        key = key_of(entry)
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] > held.get(key, 0):
+            kept.append(dict(entry))
+    return kept
 
 
 def call_results(
@@ -1670,11 +1724,11 @@ def _answered_call(
 ) -> int | None:
     """The call one stored result answers: see :func:`call_results`.
 
-    Among the calls it matches best, a call an EARLIER row already answered
-    with this very result takes it (a row restating results); else the first
-    call still without an outcome; else the first (G-387 round 15: a runtime
-    row no longer restates the results its step holds, so a new result for one
-    of two calls with the same arguments answers the one still open)."""
+    Among the calls it matches best, the first call still without an
+    outcome; else the first not yet taken in its own row (G-387 round 16, the
+    reference's CallPairing: a runtime row never restates the results its
+    step holds, so a new result for one of two calls with the same arguments
+    answers the one still open)."""
     wanted = _text(entry.get("tool_call_id"))
     free = [i for i, call in enumerate(calls) if i not in taken and _text(call.get("id")) == wanted]
     named = [i for i in free if _text(calls[i].get("name")) == entry.get("tool_name")]
@@ -1687,16 +1741,9 @@ def _answered_call(
         if found:
             if earlier is None:
                 return found[0]
-            again = [i for i in found if i in earlier and _same_result(earlier[i], entry)]
             still = [i for i in found if i not in earlier]
-            return (again or still or found)[0]
+            return (still or found)[0]
     return None
-
-
-def _same_result(one: Mapping[str, Any], other: Mapping[str, Any]) -> bool:
-    return all(
-        one.get(key) == other.get(key) for key in ("tool_call_id", "tool_name", "args", "result")
-    )
 
 
 def ambiguous_calls(assistant: Mapping[str, Any]) -> set[str]:

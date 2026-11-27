@@ -120,10 +120,15 @@ class HarnessError(Exception):
 
     @classmethod
     def session_locked(cls, key: str, wait_seconds: float) -> HarnessError:
+        """The session lock was not acquired in time. The text names no key
+        (G-387 round 16, the reference's text): a tool that meets it can hand
+        it to the model, and a session key holds the participant id and the
+        session name. ``key`` is kept for callers; it is never in the text."""
+        del key
         return cls(
             ErrorCode.SESSION_LOCKED,
-            f"Could not acquire the lock on session [{key}] within {wait_seconds}s. "
-            "Another worker is holding it; the callback was NOT run.",
+            f"Timed out after {wait_seconds}s waiting for the harness session lock. "
+            "Another worker is advancing this session.",
         )
 
     @classmethod

@@ -520,7 +520,29 @@ that call no denial. The call's result names its step and pairs to it wherever
 it lands, so every gated call ends with exactly one outcome. A started call
 that never got a result (the process died while it ran) reads "Tool call was
 interrupted, it may have run": it is never run again, and running it again
-needs a new call and a fresh approval.
+needs a new call and a fresh approval. A step's calls that need nobody get a
+started row too, in one write before the first of them runs, so one that ran
+and whose result was never recorded also reads interrupted, never "not run".
+In what the model is sent, every call of a step that is no longer waiting on
+a person has a result: the one recorded, or (none recorded) "Tool call was
+interrupted, it may have run", so no provider request carries a tool call
+without one.
+
+A call recorded on the session while a resume runs (a tool's own `send`, or a
+host) that parks a NEWER step on approval stops that resume before its next
+model step: it raises `HarnessError` coded `run_not_permitted`
+(`parked_elsewhere`), what it ran keeps its result, and the newer step stays
+waiting. A tool that records a decision on its own session while it runs
+waits at most the agent's `lock_wait` and is refused with a fixed text; no
+lock error text names a session, a thread, a participant or a session name.
+
+Only the harness's own rows carry its marks (`harness_started`,
+`harness_answers_step`, `harness_ended_by_start`, `harness_superseded`,
+`harness_replaced_step`, `harness_steps_used`, `harness_steps_left`, and each
+request's `harness_call`): the same keys on a row a host records, under any
+run id or none, read as absent (a 0.5.x `harness_replaced_step` row is still
+read in the one shape that line wrote: replaced denials only). Read the thread through `thread().rows()`,
+which carries that distinction; the stored messages alone do not.
 
 An approval is bound to the exact call the person was shown: every stored
 approval request records the call's tool name and the digest of its
@@ -528,6 +550,11 @@ arguments, and a call runs only when they still match. An approval belongs
 only to the step that first asked for it, so a later row repeating its id
 asks for nothing. Any denial is final: a denial recorded after an approval the
 resume has not acted on yet revokes it; an approval after a denial is refused.
+A decision counts only while its call has neither started nor got an
+outcome: one recorded after (by any writer) changes no reader and never what
+the model is shown, and the resume re-checks that the approval still stands
+right before the call starts. A call that already has an outcome keeps no
+approval pending, and a decision on it is refused `approval_not_pending`.
 A row whose `tool_calls` holds no object call is not a step for any reader.
 
 A decision must answer an approval the session is waiting on. `record_approval()`
