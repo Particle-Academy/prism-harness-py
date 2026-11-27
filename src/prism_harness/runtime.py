@@ -51,8 +51,8 @@ from prism_harness.thread_rows import (
     INTERRUPTED_RESULT,
     NOT_STARTED_RESULT,
     NOT_THE_APPROVED_CALL,
-    START_DENIED,
     REPEATED_CALL_ID,
+    START_DENIED,
     SUPERSEDED,
     SUPERSEDED_RESULT,
     ToolCallInput,
@@ -1810,6 +1810,9 @@ class AgentRuntime:
                 self._plans.after_turn(session)
                 self._settle_child(session, run_id)
                 self._trees.finished(session, run_id)
+                # The approvals still pending once the run's end steps ran
+                # (host code among them may record a row), read again.
+                still = set(pending_approval_ids(thread.rows()))
                 parked = AgentResponse(
                     run_id=run_id,
                     text=text,

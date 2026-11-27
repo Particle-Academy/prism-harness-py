@@ -4,10 +4,21 @@
 
 ### Changed
 
-- Each step's results are replayed directly after it, past any user,
-  assistant text, system or other row written while its calls ran (a host's
-  row, a tool's own nested send), so every request a provider is sent answers
-  each call once, in that step's own result run (G-387 round 17).
+- Each step's results are replayed directly after it, oldest first, past any
+  user, assistant text, system or other row written while its calls ran (a
+  host's row, a tool's own nested send), then the results given to its calls
+  with none. Within a step's results each result answers one call (its own
+  call first), is sent with that call's ids, and one that answers no call is
+  not sent, so every request a provider is sent answers each call once, in
+  that step's own result run (G-387 round 17).
+- A call whose start the standing denial refused is answered "Not run: this
+  call was denied before it started.".
+- A step with no stored offer the harness wrote (a host's step, an older
+  worker's) offers the tools of every call it asked a person about, approved
+  or not; the diagnostic now reads "offering the requested tools only.". A
+  call still runs only on its own approval. A host step's call that needed
+  nobody and has no result is answered "Tool call was interrupted, it may
+  have run" by the resolution.
 - The nested-park stop takes a step's owner only from a row the harness
   wrote: a step recorded under the running turn's own run id stops the run.
   After a step's calls run, a newer step another writer parked stops the run

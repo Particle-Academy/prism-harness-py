@@ -626,9 +626,7 @@ def test_a_call_whose_start_a_standing_denial_refused_says_it_was_denied() -> No
     assert outcomes(world.root(), 3) == [START_DENIED]
 
 
-def test_a_host_steps_unanswered_ungated_call_is_answered_interrupted_by_the_resolution() -> (
-    None
-):
+def test_a_host_steps_unanswered_ungated_call_is_answered_interrupted_by_the_resolution() -> None:
     """Item 3 (the reference's rule): a HOST step holds an ungated call it
     never answered and a gated one; the gated call is approved and resumed.
     The resolution records the ungated call's one outcome, "interrupted, it

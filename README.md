@@ -530,9 +530,16 @@ call could not be started.".
 In what the model is sent, every call of a step that is no longer waiting on
 a person has a result: the one recorded, or (none recorded) "Tool call was
 interrupted, it may have run", so no provider request carries a tool call
-without one. Each step's results are sent directly after it, past any user,
-assistant text, system or other row written while its calls ran, each call
-answered once there, as every provider requires.
+without one. Each step's results are sent directly after it, oldest first,
+past any user, assistant text, system or other row written while its calls
+ran. There each result answers one call of the step (its own call first: id,
+tool name and arguments; then id and tool name; then id) and is sent with
+that call's ids; one that answers no call is not sent. So each call is
+answered once, directly after its step, as every provider requires. A call
+whose start the denial that stands refused is answered "Not run: this call
+was denied before it started.". On a step a host recorded, a call that
+needed nobody and has no result is answered "Tool call was interrupted, it
+may have run" when the step is resolved.
 
 A call recorded on the session while a resume runs (a tool's own `send`, or a
 host) that parks a NEWER step on approval stops that resume before its next
@@ -552,7 +559,9 @@ paused row's `harness_binding`, `harness_agent_spend`, `harness_tree`,
 `harness_plan_ledger` and `harness_tool_names`, and each request's
 `harness_call`): the same keys on a row a host records, under any
 run id or none, read as absent (a 0.5.x `harness_replaced_step` row is still
-read in the one shape that line wrote: replaced denials only). Read the thread through `thread().rows()`,
+read in the one shape that line wrote: replaced denials only). A host's step
+therefore resumes on the session's own binding and tree, offering the tools of
+every call it asked a person about. Read the thread through `thread().rows()`,
 which carries that distinction; the stored messages alone do not.
 
 An approval is bound to the exact call the person was shown: every stored
