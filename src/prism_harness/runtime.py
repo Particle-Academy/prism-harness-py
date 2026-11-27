@@ -48,6 +48,7 @@ from prism_harness.subagents import (
 from prism_harness.thread import Thread, ThreadMessage, _record_in_run
 from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
+    INTERRUPTED_RESULT,
     NOT_STARTED_RESULT,
     NOT_THE_APPROVED_CALL,
     START_DENIED,
@@ -2007,7 +2008,8 @@ class AgentRuntime:
             # Whether the harness wrote this step: then it ran each ungated
             # call itself, in the same turn, so one with neither a started
             # row nor an outcome never started (G-387 round 17). A host's
-            # step answers its own ungated calls.
+            # step's such call may have run (the host runs them): it is
+            # answered interrupted, the reference's rule.
             own_at = _at_position(stored, [entry.position for entry in entries], position)
             harness_step = own_at is not None and entries[own_at].written_by_harness
             # A step a row in the thread already superseded, never answered
@@ -2121,8 +2123,10 @@ class AgentRuntime:
                 # superseding row gave a call meanwhile).
                 at = _at_position(rows, positions, position)
                 every = [*results, *(entry for _, entry in resolved)]
-                if at is not None and harness_step:
-                    every.extend(_never_started(rows, at, {index for index, _ in resolved}))
+                if at is not None:
+                    every.extend(
+                        _never_started(rows, at, {index for index, _ in resolved}, harness_step)
+                    )
                 entries = new_results(rows, at, every) if at is not None else every
                 row = tool_result_row(entries, list(decisions.values()))
                 if superseded:
@@ -2463,13 +2467,16 @@ def _at_position(
 
 
 def _never_started(
-    rows: Sequence[Mapping[str, Any]], at: int, answering: Collection[int]
+    rows: Sequence[Mapping[str, Any]], at: int, answering: Collection[int], own: bool
 ) -> list[dict[str, Any]]:
-    """The one outcome, :data:`NOT_STARTED_RESULT`, of each call of the step
-    at ``at`` that no request asks about (it needed nobody) and that has
-    neither a started row nor an outcome, nor one being written now
-    (``answering``): its started row was never written, so it never ran
-    (G-387 round 17)."""
+    """The one outcome of each call of the step at ``at`` that no request
+    asks about (it needed nobody) and that has neither a started row nor an
+    outcome, nor one being written now (``answering``), recorded with the
+    resolution (G-387 round 17). On a step the harness wrote (``own``) its
+    started row was never written, so it never ran:
+    :data:`NOT_STARTED_RESULT`. On a host's step the host may have run it:
+    :data:`INTERRUPTED_RESULT`, the reference's rule."""
+    text = NOT_STARTED_RESULT if own else INTERRUPTED_RESULT
     calls = step_calls(rows[at])
     requested = {call for _, call in step_requests(rows, at) if call is not None}
     done = set(call_results(calls, owned_rows(rows, at))) | set(started_calls(rows, at))
@@ -2481,7 +2488,7 @@ def _never_started(
                 arguments=usable_arguments(call.get("arguments")) or {},
                 result_id=call.get("result_id") if isinstance(call.get("result_id"), str) else None,
             ),
-            NOT_STARTED_RESULT,
+            text,
         )
         for index, call in enumerate(calls)
         if index not in requested and index not in done and index not in answering
