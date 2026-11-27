@@ -322,10 +322,16 @@ What one run tree is:
   it as absent until then (read from the thread, never confirmed by another
   write), so a start that fails first leaves the child unbound, whether or not
   its housekeeping undo lands; its session mode reads as the one before it.
-  Absent never widens anything: until then the child still reads as in the
+  The start's own run reads its own records: from the commit to the end of
+  that run, the Session object it uses (handed to tool providers, factories,
+  the authorizer and the plan service) reads the committed mode, binding,
+  references, depth, ceiling and run, while every other reader keeps the
+  provisional rule. Absent never widens anything: until then the child still reads as in the
   run tree and shared plan budget it was last confirmed in. The task row ends
   every call still pending on the child as not run (read as ended, never as
-  approved); a runner start never acts on a recorded decision, and a decision
+  approved, and recognised only by the `harness_ended_by_start` field the
+  harness writes on that row, for the approvals of that turn: never by a
+  result's text or a reused tool call id); a runner start never acts on a recorded decision, and a decision
   a person recorded that a resume could still act on refuses the start like
   a pending approval does, so the host resumes it first.
   After that a stop only stops model steps. The

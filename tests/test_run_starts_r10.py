@@ -408,8 +408,12 @@ def test_a_tool_provider_reading_the_child_during_a_runner_start(
 
     assert "Child answer." in text
     assert seen and writes == ["refused"] * len(seen)
-    assert seen[-1]["provisional"] is True
-    assert seen[-1]["binding"] is None  # the start's own records: absent until its task row
+    # Inside the start's own run (its own Session's view), the start's own
+    # records read as committed (G-387 round 11); outside readers keep the
+    # provisional rule (the invariant matrix).
+    assert seen[-1]["provisional"] is False
+    assert seen[-1]["binding"] is not None
+    assert seen[-1]["mode"] == "work"
 
 
 # -- 6. end events only after the task row is durable ---------------------------

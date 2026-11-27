@@ -19,6 +19,7 @@ from typing import Any
 from prism_harness.tool_arguments import usable_arguments
 
 __all__ = [
+    "ENDED_BY_START",
     "ToolCallInput",
     "assistant_row",
     "thread_view",
@@ -223,22 +224,45 @@ def decided_unresolved_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
 
 def ended_approval_ids(rows: Sequence[Mapping[str, Any]]) -> set[str]:
     """The approval ids whose call a runner start ended, recorded as not run
-    (G-387 round 10): never approved, whatever decision was recorded."""
-    ended_calls = {
-        result["tool_call_id"]
-        for row in rows
-        if row.get("type") == "tool_result"
-        for result in _dicts(row.get("tool_results"))
-        if isinstance(result.get("tool_call_id"), str) and result.get("result") == DELEGATION_ENDED
-    }
-    return {
-        request["approval_id"]
-        for row in rows
-        if row.get("type") == "assistant"
-        for request in _dicts(row.get("tool_approval_requests"))
-        if isinstance(request.get("approval_id"), str)
-        and request.get("tool_call_id") in ended_calls
-    }
+    (G-387 rounds 10 and 11): never approved, whatever decision was recorded.
+
+    Recognised ONLY by :data:`ENDED_BY_START`, the field the harness writes on
+    the tool result row its task row closes the calls with, naming the ended
+    APPROVAL ids. A result's text is never read (a tool can return any text),
+    and nothing a tool, a model or a host prompt sends reaches that field: a
+    tool's output is a result string, its arguments and a provider's state
+    live inside other rows. Scoped to its own turn: a mark ends only approval
+    ids the last assistant step before it asked for, never anything matched by
+    a tool call id, which providers reuse across turns.
+    """
+    ended: set[str] = set()
+    asked: set[str] = set()
+    for row in rows:
+        kind = row.get("type")
+        if kind == "user":
+            asked = set()
+        elif kind == "assistant" and _dicts(row.get("tool_calls")):
+            asked = {
+                request["approval_id"]
+                for request in _dicts(row.get("tool_approval_requests"))
+                if isinstance(request.get("approval_id"), str) and request["approval_id"]
+            }
+        elif kind == "tool_result":
+            marked = row.get(ENDED_BY_START)
+            if isinstance(marked, list):
+                ended.update(
+                    approval
+                    for approval in marked
+                    if isinstance(approval, str) and approval in asked
+                )
+    return ended
+
+
+#: The field a runner start's task row writes on the tool result row that
+#: closes the calls still pending on the child (G-387 round 11): the approval
+#: ids it ended. Written by the harness alone, and the only thing that marks a
+#: call as ended by a start.
+ENDED_BY_START = "harness_ended_by_start"
 
 
 #: What a call still pending on a child is answered with when a runner start
