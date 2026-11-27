@@ -169,11 +169,6 @@ def thread_view(
     marks = _valid_marks(entries)
 
     for index, row in enumerate(rows):
-        if is_replaced_row(row) and index in marks:
-            # Answers an EARLIER step, written after a later one: folded in
-            # here it would stand for the later step's calls that share an id.
-            continue
-
         normalised = _normalise(row, view)
 
         if normalised is None:
@@ -187,24 +182,34 @@ def thread_view(
             continue
 
         anchor = marks.get(index)
-        if (
-            normalised["type"] == "tool_result"
-            and anchor is not None
-            and anchor != current
-            and anchor in steps
-        ):
-            # Resolution results for an EARLIER step that landed after a later
-            # one: shown in that step's place, as that step's (G-392).
+        if normalised["type"] == "tool_result" and anchor is not None and anchor in steps:
+            # A result row the harness wrote for a step is shown RIGHT AFTER
+            # that step, wherever it landed: after a row recorded while a call
+            # ran, or after a later step. A provider requires each tool call
+            # to be answered by the turn right after it (G-412).
+            at = steps[anchor] + 1
             if anchor in answers:
-                view[answers[anchor]] = _fold(view[answers[anchor]], normalised)
-            else:
+                # The step's results row moves right after the step, with this
+                # row folded in, if a row recorded in between pushed it down.
+                held = answers.pop(anchor)
+                merged = _fold(view.pop(held), normalised)
+                steps = {k: v - (v > held) for k, v in steps.items()}
+                answers = {k: v - (v > held) for k, v in answers.items()}
+                if segment_results is not None and segment_results > held:
+                    segment_results -= 1
+                elif segment_results == held:
+                    segment_results = None
                 at = steps[anchor] + 1
-                view.insert(at, normalised)
-                steps = {k: v + (v >= at) for k, v in steps.items()}
-                answers = {k: v + (v >= at) for k, v in answers.items()}
-                if segment_results is not None and segment_results >= at:
-                    segment_results += 1
-                answers[anchor] = at
+            else:
+                merged = normalised
+            view.insert(at, merged)
+            steps = {k: v + (v >= at) for k, v in steps.items()}
+            answers = {k: v + (v >= at) for k, v in answers.items()}
+            if segment_results is not None and segment_results >= at:
+                segment_results += 1
+            answers[anchor] = at
+            if anchor == current:
+                segment_results = at
             continue
 
         if normalised["type"] == "tool_result" and segment_results is not None:
