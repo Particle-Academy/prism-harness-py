@@ -117,3 +117,22 @@ def test_a_deny_after_the_step_was_resolved_runs_nothing_more() -> None:
     runtime.send(session, "")
 
     assert counts == {"echo": 1}
+
+
+def test_an_approve_never_acted_on_then_a_deny_runs_nothing() -> None:
+    # (d): the approve is stored, a turn fails before acting on it, then a
+    # deny arrives. A call a person denied never runs.
+    session = a_session("guarded")
+    counts: dict[str, int] = {}
+    runtime = guarded_runtime(once([LlmToolCall("p", "echo", {"value": "P"})]), counts)
+
+    approval = runtime.send(session, "go").pending_approvals[0].id
+    record_approval(session, approval, True)
+    with pytest.raises(HarnessError):
+        # Refused before any decision is acted on.
+        runtime.send(session, "", ["not-a-tool"])
+    record_approval(session, approval, False, "no")
+    runtime.send(session, "")
+    runtime.send(session, "")
+
+    assert counts == {}
