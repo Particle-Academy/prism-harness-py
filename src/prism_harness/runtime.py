@@ -36,8 +36,8 @@ from prism_harness.thread_rows import (
     approval_run_steps,
     approval_tool_scope,
     assistant_row,
+    last_step_results,
     paired_requests,
-    paired_results,
     repeats_call_ids,
     replaced_steps,
     step_answers,
@@ -861,7 +861,8 @@ class AgentRuntime:
         """The gated calls of the last tool-calling turn that have no result
         yet, each with the approval id of its OWN request (or None), and
         whether the turn repeats a call id (G-392)."""
-        rows = [entry.message for entry in session.thread().messages()]
+        messages = session.thread().messages()
+        rows = [entry.message for entry in messages]
         view = thread_view(rows)
         index = next(
             (
@@ -881,14 +882,15 @@ class AgentRuntime:
             return None
 
         assistant = view[index]
-        # Results and decisions from EVERY tool result row after the turn, not
-        # only the first run of them: a row recorded in between must not make a
-        # call that already ran read as unanswered (G-399). Each result is
-        # paired with its own call by position, never through a map keyed by
-        # call id, where an ungated call's result would stand for a gated call
-        # sharing its id and leave that call with no outcome (G-392).
-        entries, decisions = step_answers(rows)
-        results = paired_results(assistant, entries)
+        # Decisions from EVERY tool result row after the turn, not only the
+        # first run of them, and results from the turn's whole segment: a row
+        # recorded in between must not make a call that already ran read as
+        # unanswered (G-399). Each result is paired with its own call by
+        # position, never through a map keyed by call id, where an ungated
+        # call's result would stand for a gated call sharing its id and leave
+        # that call with no outcome (G-392).
+        _, decisions = step_answers(rows)
+        results = last_step_results([(entry.position, entry.message) for entry in messages])
         # Each request paired with its own call by position, never through a
         # map keyed by call id, where the last request under a repeated id
         # would answer every call carrying it (G-392).
