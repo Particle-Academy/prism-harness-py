@@ -48,6 +48,7 @@ from prism_harness.thread_rows import (
     ARGUMENTS_AS_SENT,
     DELEGATION_ENDED,
     ENDED_BY_START,
+    REPEATED_CALL_ID,
     ToolCallInput,
     ambiguous_calls,
     approval_run_steps,
@@ -56,8 +57,10 @@ from prism_harness.thread_rows import (
     carried_agent_spend,
     decided_unresolved_ids,
     first_decisions,
+    paired_requests,
     paused_approval_row,
     pending_approval_ids,
+    repeats_call_ids,
     thread_view,
     tool_result_entry,
     tool_result_row,
@@ -1247,17 +1250,18 @@ class AgentRuntime:
             rows: list[dict[str, Any]] = []
             work = self._unresolved(live, mode)
             if work is not None:
-                calls, results, decisions, approval_ids, _, _ = work
+                calls, results, decisions, approval_ids, _, _, _ = work
                 closed: list[dict[str, Any]] = []
                 approvals: list[str] = []
-                for row in calls:
+                # Each call ends with its OWN approval id (G-392).
+                for row, approval_id in zip(calls, approval_ids, strict=True):
                     call = ToolCallInput(
                         id=row["id"], name=row["name"], arguments={}, result_id=row["result_id"]
                     )
                     ended.append(call)
                     closed.append(tool_result_entry(call, _DELEGATION_ENDED))
-                    if row["id"] in approval_ids:
-                        approvals.append(approval_ids[row["id"]])
+                    if approval_id is not None:
+                        approvals.append(approval_id)
                 closing = tool_result_row([*results.values(), *closed], list(decisions.values()))
                 closing[ENDED_BY_START] = list(dict.fromkeys(approvals))
                 rows.append(closing)
@@ -1696,7 +1700,7 @@ class AgentRuntime:
             if work is None:
                 return list(offered)
 
-            calls, results, decisions, approval_ids, scope, ambiguous = work
+            calls, results, decisions, approval_ids, scope, ambiguous, repeated = work
             # Bind calls, decisions and scope from the same locked snapshot.
             # A concurrent narrower approval also bounds the continuation.
             if scope is not None and scope[1] and not legacy_diagnostic_emitted:
@@ -1709,18 +1713,22 @@ class AgentRuntime:
                 [entry.message for entry in live.thread().messages()]
             ) | {row["id"] for row in calls if not _digestible(row["arguments"])}
 
-            for row in calls:
+            for row, approval_id in zip(calls, approval_ids, strict=True):
                 call = ToolCallInput(
                     id=row["id"],
                     name=row["name"],
                     arguments=row["arguments"],
                     result_id=row["result_id"],
                 )
-                approval_id = approval_ids.get(row["id"])
                 decision = decisions.get(approval_id) if approval_id is not None else None
 
                 declared = _offered(bounded, call.name)
-                if decision is not None and decision["approved"] and call.id in unusable:
+                if repeated:
+                    # A repeated id cannot say which decision answers which
+                    # call, so none of the step's gated calls runs (G-392).
+                    self._tool_decision(ToolDenied, live, run_id, call, declared, "policy")
+                    resolved.append(tool_result_entry(call, REPEATED_CALL_ID))
+                elif decision is not None and decision["approved"] and call.id in unusable:
                     resolved.append(
                         tool_result_entry(
                             call, f"Not run: the arguments for {call.name} are not a JSON object."
@@ -1771,13 +1779,16 @@ class AgentRuntime:
             list[dict[str, Any]],
             dict[str, dict[str, Any]],
             dict[str, dict[str, Any]],
-            dict[str, str],
+            list[str | None],
             tuple[list[str], bool] | None,
             set[str],
+            bool,
         ]
         | None
     ):
-        """The gated calls of the last tool-calling turn that have no result yet."""
+        """The gated calls of the last tool-calling turn that have no result
+        yet, each with the approval id of its OWN request (or None), and
+        whether the turn repeats a call id (G-392)."""
         rows = [entry.message for entry in session.thread().messages()]
         view = thread_view(rows)
         index = next(
@@ -1798,29 +1809,34 @@ class AgentRuntime:
         # Which decision counts comes from the stored rows, the FIRST recorded
         # for an approval id standing; the view folds later over earlier.
         decisions = first_decisions(rows)
-        approval_ids = {
-            r["tool_call_id"]: r["approval_id"] for r in assistant["tool_approval_requests"]
+        # Each request paired with its own call by position, never through a
+        # map keyed by call id, where the last request under a repeated id
+        # would answer every call carrying it (G-392).
+        requested: dict[int, str] = {
+            index: request["approval_id"]
+            for request, index in paired_requests(assistant)
+            if index is not None
         }
 
         # A call that has a result is DONE, whatever its decision says. A call that
         # needs nobody is not this method's to run.
-        calls = [
-            row
-            for row in assistant["tool_calls"]
-            if row["id"] not in results
-            and (row["id"] in approval_ids or mode.needs_approval(row["name"]))
+        pending = [
+            (row, requested.get(index))
+            for index, row in enumerate(assistant["tool_calls"])
+            if row["id"] not in results and (index in requested or mode.needs_approval(row["name"]))
         ]
 
-        if not calls:
+        if not pending:
             return None
 
         return (
-            calls,
+            [row for row, _ in pending],
             results,
             decisions,
-            approval_ids,
+            [approval_id for _, approval_id in pending],
             approval_tool_scope(rows),
             ambiguous_calls(assistant),
+            repeats_call_ids(assistant),
         )
 
     @classmethod

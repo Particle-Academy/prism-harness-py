@@ -10,7 +10,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from prism_harness.thread_rows import ended_approval_ids, pending_approval_ids
+from prism_harness.thread_rows import (
+    ended_approval_ids,
+    paired_requests,
+    pending_approval_ids,
+    repeats_call_ids,
+)
 from prism_harness.tool_policy import args_digest
 
 __all__ = [
@@ -34,14 +39,14 @@ def _approval_call(rows: Rows, approval_id: str) -> dict[str, Any] | None:
     for row in reversed(rows):
         if row.get("type") != "assistant":
             continue
-        for request in _dicts(row.get("tool_approval_requests")):
-            if request.get("approval_id") != approval_id:
+        # Each request names its own call, paired by position (G-392).
+        calls = _dicts(row.get("tool_calls"))
+        for request, index in paired_requests(row):
+            if request.get("approval_id") != approval_id or index is None:
                 continue
-            for call in _dicts(row.get("tool_calls")):
-                if call.get("id") == request.get("tool_call_id") and isinstance(
-                    call.get("name"), str
-                ):
-                    return {"name": call["name"], "arguments": call.get("arguments")}
+            call = calls[index]
+            if isinstance(call.get("name"), str):
+                return {"name": call["name"], "arguments": call.get("arguments")}
     return None
 
 
@@ -97,6 +102,9 @@ def approved_calls_awaiting_result(rows: Rows, name: str, digest: str) -> int:
                     decided[response["approval_id"]] = response.get("approved") is True
             continue
         if kind != "assistant":
+            return 0
+        if repeats_call_ids(row):
+            # No call of a step with a repeated id is approved (G-392).
             return 0
         approved = {approval_id for approval_id, yes in decided.items() if yes}
         approved_calls = {
