@@ -658,3 +658,35 @@ def test_a_host_steps_unanswered_ungated_call_is_answered_interrupted_by_the_res
     world.fresh().runtime.send(world.root(), "Later.")
     for request in world.requests:
         assert misplaced(list(request.messages)) == []
+
+
+@pytest.mark.parametrize("row", ["user", "assistant_text"])
+def test_a_run_whose_step_was_replaced_meanwhile_never_reports_an_empty_park(row: str) -> None:
+    """Decision 8: a row recorded when the gated call's approval is asked
+    replaces the step, and no newer step waits. The run does not return
+    awaiting_approval with an empty pending list: it says the step was
+    replaced."""
+    world = Hooked()
+    bus = HarnessEvents()
+    fired: list[int] = []
+
+    def listener(event: object) -> None:
+        if isinstance(event, ToolApprovalAsked) and not fired:
+            fired.append(1)
+            message = (
+                {"type": "user", "content": "notified"}
+                if row == "user"
+                else {
+                    "type": "assistant",
+                    "content": "Waiting for your approval.",
+                    "tool_calls": [],
+                }
+            )
+            world.root().thread().record([message])
+
+    bus.listen(listener)
+    world.runtime._events = bus
+    say(world, ("u1", "lookup", {"n": 5}), ("c1", "echo", {"n": 1}))
+    response = world.runtime.send(world.root(), "Go")
+    assert response.finish_reason != "awaiting_approval"
+    assert response.pending_approvals == []

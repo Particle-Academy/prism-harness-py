@@ -211,12 +211,10 @@ def test_a_new_message_on_a_parked_step_replays_each_result_once() -> None:
 
 def test_a_later_different_result_for_a_call_after_a_host_row_is_not_replayed() -> None:
     """A second result for a call that already has one in its segment, with
-    a host row between them, is never sent as a SECOND answer: the call is
-    answered once, directly after its step. Since G-387 round 17 (the PHP
-    reference's placement) every result row the step owns is placed in its
-    one result run, so the fold merges them and the later result under the
-    same key replaces the earlier one in place, as it does for rows stored
-    next to each other (the outcome readers still count the first)."""
+    a host row between them, is never sent: the call is answered once,
+    directly after its step, with the FIRST result, the one every outcome
+    reader counts (G-387 round 17, decision 7: the replay and the readers
+    agree)."""
     session = a_session("guarded")
     requests: list[LlmRequest] = []
     runtime = guarded_runtime(once([], requests), {})
@@ -237,4 +235,4 @@ def test_a_later_different_result_for_a_call_after_a_host_row_is_not_replayed() 
 
     runtime.send(session, "Next")
 
-    assert replayed_results(requests[-1]) == [("shout", "two", "S")]
+    assert replayed_results(requests[-1]) == [("shout", "one", "S")]
