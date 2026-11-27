@@ -180,11 +180,11 @@ def in_the_window(world: World, patch: pytest.MonkeyPatch, act: Callable[[], Non
     original = Plans.context
     ran: list[int] = []
 
-    def hooked(self: Plans, session: Session, prompt: str) -> str:
+    def hooked(self: Plans, session: Session, prompt: str, *args: Any) -> str:
         if is_child(session) and not ran:
             ran.append(1)
             act()
-        return original(self, session, prompt)
+        return original(self, session, prompt, *args)
 
     patch.setattr(Plans, "context", hooked)
     return ran

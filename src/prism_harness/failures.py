@@ -11,12 +11,19 @@ error code where one exists, and nothing else.
 
 from __future__ import annotations
 
+import re
+
 from prism_harness.errors import ErrorCode, HarnessError
 from prism_harness.plans.budget import EXHAUSTED as PLAN_BUDGET_EXHAUSTED
 from prism_harness.plans.refusal import MESSAGES as PLAN_REFUSALS
 from prism_harness.run_starts import START_REFUSED
 
-__all__ = ["HARNESS_CODES", "failure_of", "harness_code", "named"]
+__all__ = ["HARNESS_CODES", "class_label", "failure_of", "harness_code", "named"]
+
+#: What a class with no identifier-shaped name in its whole lineage is called.
+UNNAMED = "an unnamed exception"
+
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 
 #: Every code the harness itself raises. A code outside this set is not one the
 #: harness wrote, and is never repeated.
@@ -40,11 +47,31 @@ def harness_code(error: BaseException) -> str | None:
     return code if type(code) is str and code in HARNESS_CODES else None
 
 
+def class_label(error: BaseException) -> str:
+    """The exception's class as the harness names it (G-387 round 10): an
+    identifier-shaped name only (ASCII letters, digits and ``_``, at most 128).
+    A class whose ``__name__`` is anything else (set to a path, a dotted
+    module path, text with spaces or line breaks) is named by the first
+    ancestor that has one, else a fixed text. Never a file path or a line."""
+    try:
+        lineage = list(type(error).__mro__)
+    except Exception:  # noqa: BLE001 - a lineage that cannot be read names nothing
+        return UNNAMED
+    for klass in lineage:
+        try:
+            name = klass.__name__
+        except Exception:  # noqa: BLE001, S112 - a name that cannot be read is skipped
+            continue
+        if type(name) is str and _IDENTIFIER.fullmatch(name):
+            return name
+    return UNNAMED
+
+
 def named(error: BaseException, code: str | None = None) -> str:
     """An exception named by its class and, for a harness error, its code:
     never its message. ``code`` is one already read with
     :func:`harness_code`, so a getter is never read twice."""
-    name = type(error).__name__
+    name = class_label(error)
     found = code if code is not None else harness_code(error)
     return f"{name} ({found})" if found is not None else name
 

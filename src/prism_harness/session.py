@@ -148,12 +148,37 @@ class Session:
     # -- the ephemeral half ------------------------------------------------
 
     def mode(self) -> str | None:
+        """The session's mode. One a runner start wrote is ABSENT until that
+        start's task row is in the thread (G-387 round 10), like every other
+        record the start writes: the mode it replaced is read meanwhile."""
         if self._resolved_mode is not None:
             return self._resolved_mode
-        return self._read_str("mode")
+        return self._mode_of(self.state())
+
+    def _mode_of(self, state: Mapping[str, Any]) -> str | None:
+        if _MODE_PROVISIONAL in state:
+            mark = state[_MODE_PROVISIONAL]
+            if not (type(mark) is str and mark != "" and mark in self._task_runs()):
+                # Unconfirmed: the mode before the start. A mark that is not a
+                # run id never confirms, and reads as no mode at all.
+                prior = state.get(_MODE_PRIOR) if type(mark) is str and mark != "" else None
+                return prior if isinstance(prior, str) else None
+        value = state.get("mode")
+        return value if isinstance(value, str) else None
 
     def using_mode(self, mode: str) -> Session:
-        return self._write("mode", mode)
+        """Set the session's mode. Written by the host, it is confirmed: any
+        mark a runner start left on the mode goes with the old value."""
+        self._assert_writable()
+        state = {
+            name: value
+            for name, value in self.state().items()
+            if name not in (_MODE_PROVISIONAL, _MODE_PRIOR)
+        }
+        state["mode"] = mode
+        self._ephemeral.put(self._ephemeral_key(), state, self._ttl_seconds)
+        self._cached_state = state
+        return self
 
     def model(self) -> str | None:
         return self._read_str("model")
@@ -286,11 +311,14 @@ class Session:
 
         Internal: written by the runtime when the subagent runner starts a
         child run."""
-        if self.child_provisional():
-            # A runner start that has not recorded its task: still a child
-            # the runner started, under no tree and no plan budget, so every
-            # turn on it is refused as a child with no binding.
-            return {"tree": None, "plan_ledger": None}
+        stored = self._durable.get(self._child_key())
+        if isinstance(stored, dict) and not self._confirmed(stored):
+            # A runner start that has not recorded its task: still a child the
+            # runner started (so every turn on it is refused as a child with no
+            # binding), and still in the run tree and plan budget it was last
+            # CONFIRMED in (G-387 round 10). Keeping a tree or a plan budget
+            # only narrows; reading none would let a later start drop them.
+            return _refs_pair(stored.get(_CONFIRMED_REFS))
         refs = self._child_field("child_refs")
         if not isinstance(refs, dict):
             return None
@@ -540,6 +568,14 @@ class Session:
             for name in ("child_binding", "child_depth", "child_ceiling", "child_refs"):
                 if name not in current and name in legacy:
                     current[name] = deepcopy(legacy[name])
+            # The refs a reader sees while this start is unconfirmed: the last
+            # CONFIRMED ones (G-387 round 10), carried over an earlier start
+            # that never confirmed either.
+            confirmed_refs = (
+                current.get(_CONFIRMED_REFS)
+                if isinstance(stored, dict) and not self._confirmed(stored)
+                else current.get("child_refs")
+            )
             written = {
                 **current,
                 "child_steps": {
@@ -550,6 +586,7 @@ class Session:
                 # Everything here is ABSENT to every reader until this run's
                 # task row is in the thread (G-387 round 9).
                 _PROVISIONAL: run_id,
+                _CONFIRMED_REFS: _refs_pair(confirmed_refs),
                 "child_binding": deepcopy(binding),
                 "child_depth": depth,
                 "child_ceiling": ceiling,
@@ -565,7 +602,14 @@ class Session:
             self._durable.put(key, written)
             if mode is not None:
                 try:
-                    following = {**before, "mode": mode}
+                    # Provisional too (G-387 round 10): absent, with the mode
+                    # a reader sees now kept beside it, until the task row.
+                    following = {
+                        **before,
+                        "mode": mode,
+                        _MODE_PROVISIONAL: run_id,
+                        _MODE_PRIOR: self._mode_of(before),
+                    }
                     self._ephemeral.put(self._ephemeral_key(), following, self._ttl_seconds)
                     self._cached_state = following
                 except BaseException:
@@ -579,8 +623,11 @@ class Session:
                 {
                     "prior": deepcopy(stored) if isinstance(stored, dict) else None,
                     "written": deepcopy(written),
-                    "mode_present": "mode" in before,
-                    "mode_prior": before.get("mode"),
+                    "mode_before": {
+                        name: before[name]
+                        for name in ("mode", _MODE_PROVISIONAL, _MODE_PRIOR)
+                        if name in before
+                    },
                     "mode_written": mode,
                 }
             )
@@ -620,12 +667,13 @@ class Session:
                 return
             state = self._ephemeral.get(self._ephemeral_key())
             current = dict(state) if isinstance(state, dict) else {}
-            if current.get("mode") != written_mode:
+            if current.get("mode") != written_mode or current.get(_MODE_PROVISIONAL) != run_id:
                 return
-            if handle.get("mode_present"):
-                current["mode"] = handle.get("mode_prior")
-            else:
-                current.pop("mode", None)
+            for name in ("mode", _MODE_PROVISIONAL, _MODE_PRIOR):
+                current.pop(name, None)
+            mode_before = handle.get("mode_before")
+            if isinstance(mode_before, dict):
+                current.update(deepcopy(mode_before))
             self._ephemeral.put(self._ephemeral_key(), current, self._ttl_seconds)
             self._cached_state = current
 
@@ -691,20 +739,30 @@ class Session:
             stored = self._durable.get(key)
             if isinstance(stored, dict) and stored.get(_PROVISIONAL) == run_id:
                 self._durable.put(
-                    key, {name: value for name, value in stored.items() if name != _PROVISIONAL}
+                    key,
+                    {
+                        name: value
+                        for name, value in stored.items()
+                        if name not in (_PROVISIONAL, _CONFIRMED_REFS)
+                    },
                 )
 
         self._durable.with_lock(key, change, 10, 5)
-        run = self.state().get("run")
+        state = dict(self.state())
+        changed = False
+        run = state.get("run")
         if isinstance(run, dict) and run.get("id") == run_id and _PROVISIONAL in run:
-            self._write(
-                "run",
-                {
-                    name: value
-                    for name, value in run.items()
-                    if name not in (_PROVISIONAL, _PREVIOUS)
-                },
-            )
+            state["run"] = {
+                name: value for name, value in run.items() if name not in (_PROVISIONAL, _PREVIOUS)
+            }
+            changed = True
+        if state.get(_MODE_PROVISIONAL) == run_id:
+            state.pop(_MODE_PROVISIONAL, None)
+            state.pop(_MODE_PRIOR, None)
+            changed = True
+        if changed:
+            self._ephemeral.put(self._ephemeral_key(), state, self._ttl_seconds)
+            self._cached_state = state
 
     def _child_field(self, name: str) -> Any:
         """A saved child field: from the child key, or, for a child saved
@@ -1003,6 +1061,25 @@ class Session:
 
     def _finish_run(self, run_id: str, status: str, extra: dict[str, Any]) -> Session:
         current = self.run()
+        raw = self.state().get("run")
+        if (
+            current is None
+            and isinstance(raw, dict)
+            and raw.get("id") == run_id
+            and _PROVISIONAL in raw
+        ):
+            # An unconfirmed runner start that replaced no readable run
+            # (G-387 round 10): its outcome is written WITH its mark, so it
+            # stays absent and never becomes the session's current run.
+            return self._write(
+                "run",
+                {
+                    **raw,
+                    "status": status,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    **extra,
+                },
+            )
 
         # A run that is not the one in flight does not overwrite it. A late
         # worker reporting on a superseded run would otherwise mark the live one
@@ -1022,6 +1099,15 @@ class Session:
         )
 
 
+def _refs_pair(value: object) -> dict[str, dict[str, str] | None]:
+    """Saved run tree and plan budget refs, normalised: none for anything else."""
+    refs = value if isinstance(value, dict) else {}
+    return {
+        "tree": _stored_pair(refs.get("tree"), "session", "run"),
+        "plan_ledger": _stored_pair(refs.get("plan_ledger"), "session", "plan"),
+    }
+
+
 def _stored_pair(value: object, first: str, second: str) -> dict[str, str] | None:
     """A saved run tree or plan budget reference; None when absent or malformed."""
     if not isinstance(value, dict):
@@ -1039,6 +1125,15 @@ _PROVISIONAL = "provisional"
 
 #: Beside a provisional run state: the run it replaced, read meanwhile.
 _PREVIOUS = "previous"
+
+#: Beside a provisional child record: the run tree and plan budget refs it
+#: replaced that were CONFIRMED, read meanwhile (G-387 round 10).
+_CONFIRMED_REFS = "confirmed_refs"
+
+#: Beside a mode a runner start wrote: its run id, and the mode a reader saw
+#: before it, read until the task row exists (G-387 round 10).
+_MODE_PROVISIONAL = "mode_provisional"
+_MODE_PRIOR = "mode_prior"
 
 #: The code a runner start is refused with when a turn on the child still
 #: holds steps from its delegation count.
