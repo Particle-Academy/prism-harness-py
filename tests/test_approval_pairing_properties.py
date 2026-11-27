@@ -223,6 +223,10 @@ class Case:
     #: refused (``session_locked``) and changes nothing: the call keeps its
     #: one outcome, its real result.
     concurrent: str | None = None
+    #: The first resume is a NEW message, not an empty prompt (G-387 round
+    #: 14): it supersedes the step, so its open gated calls are denied once,
+    #: whatever was decided, and nothing of it runs.
+    new_message: bool = False
 
     def describe(self) -> str:
         return json.dumps(
@@ -295,6 +299,7 @@ class Case:
                 **({"cross_forged": self.cross_forged} if self.cross_forged is not None else {}),
                 **({"stray": self.stray} if self.stray is not None else {}),
                 **({"concurrent": self.concurrent} if self.concurrent is not None else {}),
+                **({"new_message": True} if self.new_message else {}),
             }
         )
 
@@ -466,8 +471,12 @@ def generate(seed: int) -> Case:
         earlier=tuple(earlier),
         spent=path == "live" and rng.random() < 0.8,
     )
+    concurrent = concurrent_supersede(seed)
     return replace(
-        forgeries(case), stray=stray_result(seed, calls), concurrent=concurrent_supersede(seed)
+        forgeries(case),
+        stray=stray_result(seed, calls),
+        concurrent=concurrent,
+        new_message=concurrent is None and random.Random(seed ^ 0x5E5E5E).random() < 0.25,
     )
 
 
@@ -557,7 +566,9 @@ def oracle(case: Case) -> Expected:
     # was decided before or after (G-397). A forged result IN THE CALL'S OWN
     # SEGMENT is its only outcome; a result in another segment never is
     # (G-387 round 13b). Any other row changes nothing (G-399).
-    superseded = case.insert is not None and case.insert.kind in SUPERSEDES
+    superseded = (
+        case.insert is not None and case.insert.kind in SUPERSEDES
+    ) or case.new_message
     forged = (
         case.insert.call if case.insert is not None and case.insert.kind == "tool_result" else -1
     )
@@ -1011,7 +1022,9 @@ def _check(
 
         during.append(supersede)
     before = len(ran)
-    resumed = a_send(runtime, session, case.resumes[0], "")
+    resumed = a_send(
+        runtime, session, case.resumes[0], "Something else." if case.new_message else ""
+    )
     if during:
         during.clear()  # no approved call ran: nothing was in flight
     elif case.concurrent is not None and refused != ["session_locked"]:
@@ -1307,6 +1320,10 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     assert sorted(
         generate(seed).concurrent or "" for seed in CONCURRENT_SEEDS if oracle(generate(seed)).runs
     ) == sorted(SUPERSEDES)
+    # A new message as the first resume, on a step a person approved.
+    assert any(
+        k.new_message and any(c.gated and c.decision == "approve" for c in k.calls) for k in fast
+    )
 
 
 # -- fixed regression cases (G-387 round 13) ----------------------------------------
