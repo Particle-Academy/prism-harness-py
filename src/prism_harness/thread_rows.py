@@ -289,7 +289,7 @@ def _folded(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
 @_reading
 def standing_decisions(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
     """The decision that STANDS for every approval id the thread holds one
-    for (G-401, the recommended rule): the first DENIAL when any decision
+    for (G-401, decided by the owner: denial wins): the first DENIAL when any decision
     recorded for it is one, else the first approval -- counting only the
     decisions recorded while the approval's call had not been ACTED on yet
     (G-387 round 16, :func:`acted_at`): a decision recorded after its call

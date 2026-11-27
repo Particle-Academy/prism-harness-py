@@ -523,16 +523,25 @@ interrupted, it may have run": it is never run again, and running it again
 needs a new call and a fresh approval. A step's calls that need nobody get a
 started row too, in one write before the first of them runs, so one that ran
 and whose result was never recorded also reads interrupted, never "not run".
+That write checks each call is still open: one a row recorded since the step
+was written already replaced keeps that one outcome and never runs. One whose
+started row could not be written never ran, and is answered "Not run: the
+call could not be started.".
 In what the model is sent, every call of a step that is no longer waiting on
 a person has a result: the one recorded, or (none recorded) "Tool call was
 interrupted, it may have run", so no provider request carries a tool call
-without one.
+without one. Each step's results are sent directly after it, past any user,
+assistant text, system or other row written while its calls ran, each call
+answered once there, as every provider requires.
 
 A call recorded on the session while a resume runs (a tool's own `send`, or a
 host) that parks a NEWER step on approval stops that resume before its next
 model step: it raises `HarnessError` coded `run_not_permitted`
 (`parked_elsewhere`), what it ran keeps its result, and the newer step stays
-waiting. A tool that records a decision on its own session while it runs
+waiting. The same holds for a step parked while a step's own calls ran, and
+for a row recorded under the running turn's own run id: a run id never says a
+row is the harness's. A run that parks reports only the approvals still
+pending when it returns. A tool that records a decision on its own session while it runs
 waits at most the agent's `lock_wait` and is refused with a fixed text; no
 lock error text names a session, a thread, a participant or a session name.
 

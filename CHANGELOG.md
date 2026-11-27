@@ -4,6 +4,22 @@
 
 ### Changed
 
+- Each step's results are replayed directly after it, past any user,
+  assistant text, system or other row written while its calls ran (a host's
+  row, a tool's own nested send), so every request a provider is sent answers
+  each call once, in that step's own result run (G-387 round 17).
+- The nested-park stop takes a step's owner only from a row the harness
+  wrote: a step recorded under the running turn's own run id stops the run.
+  After a step's calls run, a newer step another writer parked stops the run
+  (`parked_elsewhere`), and a run that parks reports only approvals still
+  pending.
+- A step's calls that need nobody start in one guarded write: a call a row
+  recorded meanwhile already replaced keeps that one outcome and never runs.
+  A call whose started row could not be written is answered "Not run: the
+  call could not be started.".
+- The readers' shared index is reused only while a list still holds the same
+  rows, so a list edited in place is read afresh.
+
 - One authority for a run's step allowance (G-387). How many model steps a run
   may take is worked out once, when the run begins, by the pure
   `RunBudgets.allowance` (`prism_harness.run_budgets`), and every consumer
