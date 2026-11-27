@@ -791,10 +791,10 @@
       ],
       "rows": {
         "php": "[{\"approval_id\":\"apr_0\",\"ended_by_start\":false},{\"approval_id\":\"apr_1\",\"ended_by_start\":true},{\"approval_id\":\"apr_9\",\"ended_by_start\":false}]",
-        "ts": "",
-        "py": ""
+        "ts": "[{\"approval_id\":\"apr_0\",\"ended_by_start\":false},{\"approval_id\":\"apr_1\",\"ended_by_start\":true},{\"approval_id\":\"apr_9\",\"ended_by_start\":false}]",
+        "py": "[{\"approval_id\":\"apr_0\",\"ended_by_start\":false},{\"approval_id\":\"apr_1\",\"ended_by_start\":true},{\"approval_id\":\"apr_9\",\"ended_by_start\":false}]"
       },
-      "agrees": false,
+      "agrees": true,
       "notes": "G-387 round 13: the READ rule for the ended mark. An approval reads ended by a runner start when ANY result row after the assistant row that asked for it, and before the next assistant row, carries `harness_ended_by_start` naming its approval id; nothing else ends it. apr_1 was asked on a step whose two calls share the id `dup`: the ungated echo ran first and its row (no mark) carries `dup`, then the person's decision, then the start's marked row. A reader that stopped at the FIRST result row carrying the call id read apr_1 as not ended, so the decision stood for a call that never ran. apr_0's own step ended at the next assistant row, so a mark naming it after that row does not end it, and apr_9 was never asked. The output is one entry per id in `approvals`, in that order: `{approval_id, ended_by_start}`."
     }
   ],

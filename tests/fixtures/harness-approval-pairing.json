@@ -66,6 +66,10 @@
           "free": 0,
           "ran": [
             2
+          ],
+          "decided": [
+            false,
+            true
           ]
         },
         "py": {
@@ -73,10 +77,14 @@
           "free": 0,
           "ran": [
             2
+          ],
+          "decided": [
+            false,
+            true
           ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0002",
@@ -139,6 +147,10 @@
           "free": 0,
           "ran": [
             1
+          ],
+          "decided": [
+            true,
+            false
           ]
         },
         "py": {
@@ -146,10 +158,14 @@
           "free": 0,
           "ran": [
             1
+          ],
+          "decided": [
+            true,
+            false
           ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0003",
@@ -215,6 +231,10 @@
           "ran": [
             1,
             2
+          ],
+          "decided": [
+            true,
+            true
           ]
         },
         "py": {
@@ -223,10 +243,14 @@
           "ran": [
             1,
             2
+          ],
+          "decided": [
+            true,
+            true
           ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0004",
@@ -283,15 +307,23 @@
         "ts": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "py": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0005",
@@ -348,15 +380,23 @@
         "ts": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "py": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0006",
@@ -413,15 +453,23 @@
         "ts": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "py": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0007",
@@ -478,15 +526,23 @@
         "ts": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "py": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0008",
@@ -556,15 +612,25 @@
         "ts": {
           "approvals": 3,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false,
+            false
+          ]
         },
         "py": {
           "approvals": 3,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false,
+            false
+          ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0009",
@@ -626,15 +692,23 @@
         "ts": {
           "approvals": 2,
           "free": 1,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         },
         "py": {
           "approvals": 2,
           "free": 1,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            false
+          ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0010",
@@ -693,15 +767,23 @@
         "ts": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            null
+          ]
         },
         "py": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            null
+          ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0011",
@@ -760,15 +842,23 @@
         "ts": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            null
+          ]
         },
         "py": {
           "approvals": 2,
           "free": 0,
-          "ran": []
+          "ran": [],
+          "decided": [
+            false,
+            null
+          ]
         }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0012",
@@ -814,10 +904,24 @@
             false
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        },
+        "py": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0013",
@@ -863,10 +967,24 @@
             false
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        },
+        "py": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0014",
@@ -912,10 +1030,24 @@
             false
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        },
+        "py": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0015",
@@ -961,10 +1093,24 @@
             false
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        },
+        "py": {
+          "approvals": 1,
+          "free": 1,
+          "ran": [],
+          "decided": [
+            false
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0016",
@@ -1033,10 +1179,40 @@
             "approval_not_pending"
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0017",
@@ -1105,10 +1281,40 @@
             "approval_not_pending"
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0018",
@@ -1177,10 +1383,40 @@
             "approval_not_pending"
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0019",
@@ -1249,10 +1485,40 @@
             "approval_not_pending"
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     },
     {
       "id": "apr-0020",
@@ -1321,10 +1587,40 @@
             "approval_not_pending"
           ]
         },
-        "ts": null,
-        "py": null
+        "ts": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        },
+        "py": {
+          "approvals": 2,
+          "free": 0,
+          "ran": [],
+          "decided": [
+            null,
+            null
+          ],
+          "outcomes": [
+            "Tool call was not run because a later step replaced it",
+            "Tool call was not run because a later step replaced it"
+          ],
+          "refusals": [
+            "approval_not_pending"
+          ]
+        }
       },
-      "agrees": false
+      "agrees": true
     }
   ]
 }
