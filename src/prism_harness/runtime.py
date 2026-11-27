@@ -61,6 +61,7 @@ from prism_harness.thread_rows import (
     paused_approval_row,
     pending_approval_ids,
     repeats_call_ids,
+    requested_step,
     step_requests,
     thread_view,
     tool_result_entry,
@@ -1863,8 +1864,12 @@ class AgentRuntime:
         answered = call_results(assistant["tool_calls"], rows[at + 1 :])
         results = [answered[i] for i in sorted(answered)]
         # Which decision counts comes from the stored rows, the FIRST recorded
-        # for an approval id standing; the view folds later over earlier.
-        decisions = first_decisions(rows)
+        # for an approval id standing; the view folds later over earlier. A
+        # decision applies ONLY to the step whose approvals were requested,
+        # selected by the one rule every decision reader uses (G-397): when
+        # the step this resolves is not that step (a row recorded after the
+        # park ended it), none of its calls is acted on as decided.
+        decisions = first_decisions(rows) if requested_step(rows) == at else {}
         # Each request paired with its own call by position, never through a
         # map keyed by call id, where the last request under a repeated id
         # would answer every call carrying it (G-392); and never with a call

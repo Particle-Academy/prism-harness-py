@@ -14,6 +14,7 @@ from prism_harness.thread_rows import (
     ended_approval_ids,
     pending_approval_ids,
     repeats_call_ids,
+    requested_step,
     step_requests,
 )
 from prism_harness.tool_policy import args_digest
@@ -36,20 +37,20 @@ def _digest(arguments: object) -> str:
 
 
 def _approval_call(rows: Rows, approval_id: str) -> dict[str, Any] | None:
-    for at in range(len(rows) - 1, -1, -1):
-        row = rows[at]
-        if row.get("type") != "assistant":
+    # Only the step requested_step() selects (G-397): never a request of
+    # another step that happens to carry the id.
+    at = requested_step(rows)
+    if at is None:
+        return None
+    # Each request names its own call, paired by position (G-392), and never
+    # an ungated call that shares its id and already ran (G-387 round 13).
+    calls = _dicts(rows[at].get("tool_calls"))
+    for request, index in step_requests(rows, at):
+        if request.get("approval_id") != approval_id or index is None:
             continue
-        # Each request names its own call, paired by position (G-392), and
-        # never an ungated call that shares its id and already ran (G-387
-        # round 13).
-        calls = _dicts(row.get("tool_calls"))
-        for request, index in step_requests(rows, at):
-            if request.get("approval_id") != approval_id or index is None:
-                continue
-            call = calls[index]
-            if isinstance(call.get("name"), str):
-                return {"name": call["name"], "arguments": call.get("arguments")}
+        call = calls[index]
+        if isinstance(call.get("name"), str):
+            return {"name": call["name"], "arguments": call.get("arguments")}
     return None
 
 
@@ -92,9 +93,10 @@ def approved_calls_awaiting_result(rows: Rows, name: str, digest: str) -> int:
     """
     decided: dict[str, bool] = {}
     finished: set[str] = set()
-    for row in reversed(rows):
-        kind = row.get("type")
-        if kind == "tool_result":
+    # Only the step requested_step() selects (G-397).
+    at = requested_step(rows)
+    for row in reversed(rows[at + 1 :] if at is not None else []):
+        if row.get("type") == "tool_result":
             for result in _dicts(row.get("tool_results")):
                 if isinstance(result.get("tool_call_id"), str):
                     finished.add(result["tool_call_id"])
@@ -103,9 +105,7 @@ def approved_calls_awaiting_result(rows: Rows, name: str, digest: str) -> int:
             for response in reversed(_dicts(row.get("tool_approval_responses"))):
                 if isinstance(response.get("approval_id"), str):
                     decided[response["approval_id"]] = response.get("approved") is True
-            continue
-        if kind != "assistant":
-            return 0
+    for row in [] if at is None else [rows[at]]:
         if repeats_call_ids(row):
             # No call of a step with a repeated id is approved (G-392).
             return 0
