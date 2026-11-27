@@ -30,6 +30,7 @@ call ran even when ids repeat.
 
 ``PRISM_PROPERTY_EXAMPLES`` sets the example count, ``PRISM_PROPERTY_BASE_SEED``
 the first seed of the sequence, and ``PRISM_PROPERTY_SEED`` replays one seed.
+Each, when set, must be a whole number >= 1; anything else is refused.
 A failure prints the seed and the smallest failing case found by dropping
 calls and requests. No third-party generator: the PRNG is the standard
 library's ``random.Random``, seeded per example.
@@ -64,10 +65,11 @@ from prism_harness import (
     ToolRegistry,
     record_approval,
 )
-from prism_harness.thread_rows import pending_approval_ids
 
 REPEATED = "Tool call was not run because another call in this step has the same id"
-SUPERSEDED = "Not run: a later step replaced it."
+#: Main's text for a replaced (superseded) step's call: the PHP reference's
+#: (DECISION B, G-387 round 13), the same in every language on main.
+REPLACED_BY_LATER_STEP = "Not run: a later step replaced it."
 NO_DECISION = "No approval response provided"
 DEFAULT_DENIAL = "User denied tool execution"
 
@@ -87,6 +89,35 @@ MODES = ModeRegistry(
         },
     }
 )
+
+SPENT = ModeRegistry(
+    {
+        "default": "guarded",
+        "modes": {
+            "guarded": {
+                "system_prompt": "Careful.",
+                "tools": [GATED, UNGATED],
+                "max_steps": 1,
+                "requires_approval": [GATED],
+            }
+        },
+    }
+)
+
+#: The rows a host may record while an approval is pending (G-397, G-399),
+#: the same kinds as prism-harness-ts's generator. ``system`` is drawn twice.
+INSERT_KINDS = (
+    "assistant_text",
+    "assistant_call",
+    "user",
+    "system",
+    "system",
+    "tool_empty",
+    "tool_result",
+)
+
+#: A kind that supersedes the parked step (G-397).
+SUPERSEDES = ("assistant_text", "assistant_call", "user")
 
 SCHEMA: dict[str, Any] = {
     "name": "answer",
@@ -131,6 +162,17 @@ class Request:
 
 
 @dataclass(frozen=True)
+class Insert:
+    """A row recorded between the park and the resume (G-397, G-399)."""
+
+    kind: str
+    when: str  # before_decision | after_decision
+    #: assistant_call: the step call whose id the inserted (ungated) call
+    #: reuses; tool_result: the open gated call the forged result names.
+    call: int
+
+
+@dataclass(frozen=True)
 class Case:
     seed: int
     path: str  # live | stored
@@ -142,11 +184,24 @@ class Case:
     decision_order: tuple[int, ...] = ()
     #: The shape of each resume: text or structured.
     resumes: tuple[str, ...] = ("text", "text")
-    #: The shape of the first send (live only).
+    #: The shape of the send that takes the step (live only).
     first: str = "text"
-    #: A row recorded between the park and the decisions (G-397): none, or an
-    #: assistant, user, system or tool row (see ``INSERTED``).
-    inserted: str = "none"
+    #: A row a host records while the approval is pending, or None.
+    insert: Insert | None = None
+    #: Stored only: an EARLIER parked step the case's step followed. Each of its
+    #: gated calls is asked about under ``old_<token>`` and decided by its own
+    #: ``decision``; none of them may ever run.
+    earlier: tuple[Call, ...] = ()
+    #: The run has no step left after the step that parked (live only), so a
+    #: resume ends without another model step.
+    spent: bool = False
+    #: Stored with an earlier step only: the earlier call (index into
+    #: ``earlier``) a forged result names, recorded in the EARLIER segment,
+    #: between the earlier step and the case's step (G-387 round 13).
+    earlier_forged: int | None = None
+    #: With an ``assistant_call`` insert only: the case call (index) a forged
+    #: result names, recorded in the LATER segment, after the later step.
+    later_forged: int | None = None
 
     def describe(self) -> str:
         return json.dumps(
@@ -154,7 +209,6 @@ class Case:
                 "seed": self.seed,
                 "path": self.path,
                 "first": self.first,
-                **({"inserted": self.inserted} if self.inserted != "none" else {}),
                 "resumes": list(self.resumes),
                 "calls": [
                     {
@@ -183,51 +237,92 @@ class Case:
                     else {}
                 ),
                 "decision_order": list(self.decision_order),
+                **(
+                    {
+                        "insert": {
+                            "kind": self.insert.kind,
+                            "when": self.insert.when,
+                            "call": self.insert.call,
+                        }
+                    }
+                    if self.insert is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "earlier": [
+                            {
+                                "id": c.id,
+                                "tool": GATED if c.gated else UNGATED,
+                                "token": c.token,
+                                **({"decision": c.decision} if c.gated else {}),
+                                **({"prior_result": True} if c.prior else {}),
+                            }
+                            for c in self.earlier
+                        ]
+                    }
+                    if self.earlier
+                    else {}
+                ),
+                **({"spent": True} if self.spent else {}),
+                **(
+                    {"earlier_forged": self.earlier_forged}
+                    if self.earlier_forged is not None
+                    else {}
+                ),
+                **({"later_forged": self.later_forged} if self.later_forged is not None else {}),
             }
         )
 
 
-#: The rows G-397 records between the park and the decisions (``Thread.record``
-#: is public, and the host records them with no run id). An assistant row or a
-#: user row ends the step a decision may apply to and SUPERSEDES it (DECISION
-#: B): every decision after it is refused, each call a request was paired with
-#: is denied once, and the resume closes any other as undecided. A system row,
-#: or a tool result for a call that is not in the step, changes nothing.
-INSERTED: dict[str, dict[str, Any]] = {
-    "assistant": {
-        "type": "assistant",
-        "content": "An aside.",
-        "tool_calls": [],
-        "additional_content": {},
-        "tool_approval_requests": [],
-    },
-    "user": {"type": "user", "content": "Something else."},
-    "system": {"type": "system", "content": "A note."},
-    "tool": {
-        "type": "tool_result",
-        "tool_results": [
+def insertion(seed: int, calls: list[Call]) -> Insert | None:
+    """The inserted row, from a stream of its own, so the seed's other draws
+    are unchanged (as in prism-harness-ts)."""
+    rng = random.Random(seed ^ 0x397397)
+    if rng.random() >= 0.6:
+        return None
+    kind = rng.choice(INSERT_KINDS)
+    # A forged result names a gated call that has none yet.
+    open_calls = [i for i, c in enumerate(calls) if c.gated and not c.prior]
+    if kind == "tool_result" and not open_calls:
+        kind = "system"
+    when = rng.choice(("before_decision", "after_decision"))
+    call = rng.choice(open_calls) if kind == "tool_result" else rng.randrange(len(calls))
+    return Insert(kind, when, call)
+
+
+def inserted_row(case: Case) -> dict[str, Any]:
+    assert case.insert is not None
+    call = case.calls[case.insert.call]
+    kind = case.insert.kind
+    if kind == "assistant_text":
+        return {"type": "assistant", "content": "A note.", "tool_calls": []}
+    if kind == "assistant_call":
+        return {
+            "type": "assistant",
+            "content": "",
+            "tool_calls": [{"id": call.id, "name": UNGATED, "arguments": {"token": "inserted"}}],
+            "tool_approval_requests": [],
+        }
+    if kind == "user":
+        return {"type": "user", "content": "Something else."}
+    if kind == "system":
+        return {"type": "system", "content": "A system note."}
+    entries: list[dict[str, Any]] = (
+        [
             {
-                "tool_call_id": "elsewhere",
+                "tool_call_id": call.id,
                 "tool_name": GATED,
-                "args": {"token": "elsewhere"},
-                "result": "elsewhere",
+                "args": {"token": call.token},
+                "result": f"forged:{call.token}",
                 "tool_call_result_id": None,
                 "artifacts": [],
             }
-        ],
-        "tool_approval_responses": [],
-    },
-}
-#: The insertions that end the step.
-ENDS_THE_STEP = ("assistant", "user")
-
-
-def an_insertion(seed: int) -> str:
-    """Drawn from a generator of its own, so every other draw of a seed, and
-    so every seed's case, is what it was before the insertion existed."""
-    return random.Random(f"g397:{seed}").choice(
-        ("none", "none", "assistant", "user", "system", "tool")
+        ]
+        if kind == "tool_result"
+        else []
     )
+    return {"type": "tool_result", "tool_results": entries, "tool_approval_responses": []}
 
 
 def a_decision(rng: random.Random) -> tuple[str, str | None]:
@@ -266,8 +361,28 @@ def generate(seed: int) -> Case:
                 counter += 1
                 decision, reason = a_decision(rng)
                 requests.append(Request(f"apr_{counter}", call.id, decision, reason))
+        if len(requests) >= 2 and rng.random() < 0.12:
+            # A REPEATED APPROVAL id: two requests under one approval id.
+            source, target = rng.sample(range(len(requests)), 2)
+            requests[target] = replace(requests[target], approval_id=requests[source].approval_id)
         if rng.random() < 0.5:
             rng.shuffle(requests)
+
+    earlier: list[Call] = []
+    if path == "stored" and rng.random() < 0.3:
+        for index in range(rng.randint(1, 3)):
+            gated = rng.random() < 0.65
+            decision, reason = a_decision(rng)
+            earlier.append(
+                Call(
+                    id=rng.choice(ID_POOL),
+                    gated=gated,
+                    token=f"e{index}",
+                    decision=decision if gated else "none",
+                    reason=reason if gated else None,
+                    prior=not gated or rng.random() < 0.25,
+                )
+            )
 
     decidable = (
         [i for i, c in enumerate([c for c in calls if c.gated])]
@@ -276,19 +391,39 @@ def generate(seed: int) -> Case:
     )
     rng.shuffle(decidable)
     resumes = tuple(rng.choice(("text", "structured")) for _ in range(2))
-    return Case(
+    case = Case(
         seed=seed,
         path=path,
         calls=tuple(calls),
         requests=tuple(requests),
         decision_order=tuple(decidable),
         resumes=resumes,
-        # The step that parks is taken through send(): a structured turn that
-        # stops for a person is not a shape this release returns, so only
-        # the resumes vary their shape.
-        first="text",
-        inserted=an_insertion(seed),
+        first=rng.choice(("text", "structured")),
+        insert=insertion(seed, calls),
+        earlier=tuple(earlier),
+        spent=path == "live" and rng.random() < 0.8,
     )
+    return forgeries(case)
+
+
+def forgeries(case: Case) -> Case:
+    """The NO-BLIND-SPOT combinations (G-387 round 13): a later step together
+    with inserted rows, with forged results in the earlier segment and in the
+    later one. From a stream of their own, so every other draw of a seed is
+    the release line's."""
+    rng = random.Random(case.seed ^ 0x13013)
+    earlier_open = [i for i, c in enumerate(case.earlier) if c.gated and not c.prior]
+    case_open = [i for i, c in enumerate(case.calls) if c.gated and not c.prior]
+    earlier_forged = rng.choice(earlier_open) if earlier_open and rng.random() < 0.6 else None
+    later_forged = (
+        rng.choice(case_open)
+        if case.insert is not None
+        and case.insert.kind == "assistant_call"
+        and case_open
+        and rng.random() < 0.7
+        else None
+    )
+    return replace(case, earlier_forged=earlier_forged, later_forged=later_forged)
 
 
 # -- the oracle: an independent model of the rule ----------------------------------
@@ -303,25 +438,6 @@ class Expected:
     repeated: bool = False
 
 
-def asked_calls(case: Case) -> set[int]:
-    """The calls an approval request is paired with, by position: each
-    request, in stored order, takes the first call in call order with its id
-    that has no request yet and no prior result. A live step's requests are
-    its gated calls."""
-    if case.path == "live":
-        return {i for i, c in enumerate(case.calls) if c.gated}
-    taken: set[int] = set()
-    for request in case.requests:
-        free = [
-            i
-            for i, c in enumerate(case.calls)
-            if c.id == request.tool_call_id and i not in taken and not c.prior
-        ]
-        if free:
-            taken.add(free[0])
-    return taken
-
-
 def oracle(case: Case) -> Expected:
     ids = [c.id for c in case.calls]
     if case.path == "live":
@@ -329,9 +445,33 @@ def oracle(case: Case) -> Expected:
         asked = [c.id for c in case.calls if c.gated]
     else:
         asked = [r.tool_call_id for r in case.requests]
-    repeated = len(set(ids)) != len(ids) or len(set(asked)) != len(asked)
+    approvals = [r.approval_id for r in case.requests]
+    repeated = (
+        len(set(ids)) != len(ids)
+        or len(set(asked)) != len(asked)
+        or len(set(approvals)) != len(approvals)
+    )
     expected = Expected(repeated=repeated)
-    asked_for = asked_calls(case)
+    # A user row or an assistant row after the park supersedes the step: each
+    # open gated call gets one replaced-step denial, and nothing runs, whatever
+    # was decided before or after (G-397). A forged result is its call's only
+    # outcome. Any other row changes nothing (G-399).
+    superseded = case.insert is not None and case.insert.kind in SUPERSEDES
+    forged = (
+        case.insert.call if case.insert is not None and case.insert.kind == "tool_result" else -1
+    )
+
+    # A later step replaced the earlier one: its gated calls never run, and
+    # each one with no result gets one denial.
+    for index, call in enumerate(case.earlier):
+        if call.gated:
+            expected.outcomes[call.token] = (
+                f"prior:{call.token}"
+                if call.prior
+                else f"forged:{call.token}"
+                if index == case.earlier_forged
+                else REPLACED_BY_LATER_STEP
+            )
 
     for index, call in enumerate(case.calls):
         if not call.gated:
@@ -339,15 +479,11 @@ def oracle(case: Case) -> Expected:
         if call.prior:
             expected.outcomes[call.token] = f"prior:{call.token}"
             continue
-        if case.inserted in ENDS_THE_STEP:
-            # A host-recorded assistant or user row supersedes the step
-            # (DECISION B): each call a request was paired with is denied
-            # once; any other is closed undecided by the resume, and no
-            # decision applies after it (G-397).
-            if index in asked_for:
-                expected.outcomes[call.token] = SUPERSEDED
-            else:
-                expected.outcomes[call.token] = REPEATED if repeated else NO_DECISION
+        if index == forged:
+            expected.outcomes[call.token] = f"forged:{call.token}"
+            continue
+        if superseded:
+            expected.outcomes[call.token] = REPLACED_BY_LATER_STEP
             continue
         if repeated:
             expected.outcomes[call.token] = REPEATED
@@ -423,10 +559,9 @@ def a_send(runtime: AgentRuntime, session: Session, shape: str, prompt: str) -> 
     return runtime.send(session, prompt)
 
 
-def store_step(session: Session, case: Case) -> None:
-    """The step as another writer left it in the thread."""
+def stored_rows(calls: tuple[Call, ...], requests: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    """One step as another writer left it: the assistant row and its results."""
     rows: list[dict[str, Any]] = [
-        {"type": "user", "content": "go"},
         {
             "type": "assistant",
             "content": "",
@@ -439,21 +574,17 @@ def store_step(session: Session, case: Case) -> None:
                     "reasoning_id": None,
                     "reasoning_summary": None,
                 }
-                for c in case.calls
+                for c in calls
             ],
             "additional_content": {},
             "tool_approval_requests": [
-                {
-                    "approval_id": r.approval_id,
-                    "tool_call_id": r.tool_call_id,
-                    "arguments_format": 1,
-                }
-                for r in case.requests
+                {"approval_id": approval, "tool_call_id": call_id, "arguments_format": 1}
+                for approval, call_id in requests
             ],
             "harness_tool_names": [GATED, UNGATED],
         },
     ]
-    priors = [c for c in case.calls if c.prior]
+    priors = [c for c in calls if c.prior]
     if priors:
         rows.append(
             {
@@ -472,55 +603,84 @@ def store_step(session: Session, case: Case) -> None:
                 "tool_approval_responses": [],
             }
         )
+    return rows
+
+
+def store_step(session: Session, case: Case) -> None:
+    """The step (and any earlier parked step) as another writer left them."""
+    rows: list[dict[str, Any]] = [{"type": "user", "content": "go"}]
+    if case.earlier:
+        rows += stored_rows(
+            case.earlier, [(f"old_{c.token}", c.id) for c in case.earlier if c.gated]
+        )
+        if case.earlier_forged is not None:
+            rows.append(forged_row(case.earlier[case.earlier_forged]))
+    rows += stored_rows(case.calls, [(r.approval_id, r.tool_call_id) for r in case.requests])
     session.thread().record(rows)
 
 
-def insert_row(session: Session, case: Case, broken: list[str]) -> None:
-    """G-397: the case's row, recorded between the park and the decisions."""
-    if case.inserted == "none":
-        return
-    session.thread().record([json.loads(json.dumps(INSERTED[case.inserted]))])
-    if case.inserted in ENDS_THE_STEP and session.thread() is not None:
-        rows = [entry.message for entry in session.thread().messages()]
-        if pending_approval_ids(rows):
-            broken.append(f"G-397: approvals still pending after a {case.inserted} row")
+def forged_row(call: Call) -> dict[str, Any]:
+    """A host-written result for ``call``, as another writer could store it."""
+    return {
+        "type": "tool_result",
+        "tool_results": [
+            {
+                "tool_call_id": call.id,
+                "tool_name": GATED,
+                "args": {"token": call.token},
+                "result": f"forged:{call.token}",
+                "tool_call_result_id": None,
+                "artifacts": [],
+            }
+        ],
+        "tool_approval_responses": [],
+    }
 
 
-def a_decision_is_recorded(
-    session: Session,
-    case: Case,
-    approval: str,
-    approved: bool,
-    reason: str | None,
-    broken: list[str],
-) -> bool:
-    """Record one decision; after a row that ended the step it must be
-    refused (``approval_not_pending``), and nowhere else."""
-    try:
-        record_approval(session, approval, approved, reason)
-    except HarnessError as error:
-        if case.inserted in ENDS_THE_STEP and error.code == "approval_not_pending":
-            return False
-        raise
-    if case.inserted in ENDS_THE_STEP:
-        broken.append(f"G-397: a decision was recorded after a {case.inserted} row ended the step")
-    return True
+def insert_between(session: Session, case: Case, when: str) -> None:
+    if case.insert is not None and case.insert.when == when:
+        session.thread().record([inserted_row(case)])
+        if case.later_forged is not None:
+            # In the LATER segment: after the later step. It names a call of
+            # the replaced step, so it belongs to no call of the step it is
+            # recorded in, and the replaced call keeps its one denial.
+            session.thread().record([forged_row(case.calls[case.later_forged])])
 
 
 def outcomes_by_token(session: Session) -> dict[str, list[str]]:
     """Every stored result, by the token of the call it answers, as STORED (never
-    the provider view, which folds results by call id). A resume row restates
-    the results it found, so one outcome may be stored more than once; what may
-    not happen is two DIFFERENT outcomes, or none."""
+    the provider view, which folds results by call id), from EVERY row after
+    the first step through the end of the thread, each attributed to the step
+    it was recorded in (the last step with tool calls before it): a result
+    counts for a call of THAT step only. A resume row restates the results it
+    found, so one outcome may be stored more than once; what may not happen is
+    two DIFFERENT outcomes, or none."""
     found: dict[str, list[str]] = {}
+    step_tokens: set[str] = set()
     for entry in session.thread().messages():
         row = entry.message
+        if row.get("type") == "assistant" and row.get("tool_calls"):
+            step_tokens = {
+                str((call.get("arguments") or {}).get("token", ""))
+                for call in row["tool_calls"]
+                if isinstance(call, dict)
+            }
+            continue
         if row.get("type") != "tool_result":
             continue
         for result in row.get("tool_results", []):
             token = str((result.get("args") or {}).get("token", ""))
-            found.setdefault(token, []).append(str(result.get("result")))
+            if token in step_tokens:
+                found.setdefault(token, []).append(str(result.get("result")))
     return found
+
+
+def late_decision(session: Session, approval: str, approved: bool, reason: str | None) -> None:
+    try:
+        record_approval(session, approval, approved, reason)
+    except HarnessError as error:
+        if error.code != "approval_not_pending":
+            raise
 
 
 def late(session: Session, approval: str) -> None:
@@ -533,12 +693,41 @@ def late(session: Session, approval: str) -> None:
             raise
 
 
+def decide(
+    session: Session,
+    case: Case,
+    approval: str,
+    approved: bool,
+    reason: str | None,
+    broken: list[str],
+) -> bool:
+    """Record one decision. After a row that superseded the step it must be
+    refused, ``approval_not_pending``; a repeated approval id is answered
+    once (the second answer is refused the same way)."""
+    superseded = (
+        case.insert is not None
+        and case.insert.kind in SUPERSEDES
+        and case.insert.when == "before_decision"
+    )
+    try:
+        record_approval(session, approval, approved, reason)
+    except HarnessError as error:
+        if error.code == "approval_not_pending" and (
+            superseded or [r.approval_id for r in case.requests].count(approval) > 1
+        ):
+            return False
+        raise
+    if superseded and case.insert is not None:
+        broken.append(f"G-397: a decision was recorded after a {case.insert.kind} row")
+    return True
+
+
 def check(case: Case) -> list[str]:
     """Run one case and return every invariant it breaks."""
     expected = oracle(case)
     ran: list[tuple[str, str]] = []
     tools = ToolRegistry().register(TokenTool(GATED, ran)).register(TokenTool(UNGATED, ran))
-    runtime = AgentRuntime(client=a_model(case), modes=MODES, tools=tools)
+    runtime = AgentRuntime(client=a_model(case), modes=SPENT if case.spent else MODES, tools=tools)
     with tempfile.TemporaryDirectory(
         prefix="prism-harness-pairing-", ignore_cleanup_errors=True
     ) as directory:
@@ -581,25 +770,28 @@ def _check(
             broken.append(f"6: the first step reported tool_calls {first.tool_calls}")
         for call, p in zip(gated, pending, strict=True):
             approval_of[call.token] = p.id
-        insert_row(session, case, broken)
+        insert_between(session, case, "before_decision")
         for index in case.decision_order:
             call = gated[index]
             if call.decision == "none":
                 continue
             approval = approval_of[call.token]
             assert approval is not None
-            if a_decision_is_recorded(
-                session, case, approval, call.decision == "approve", call.reason, broken
-            ):
+            if decide(session, case, approval, call.decision == "approve", call.reason, broken):
                 decided[approval] = (call.decision, call.reason)
     else:
         store_step(session, case)
-        insert_row(session, case, broken)
+        for old in case.earlier:
+            if old.gated and old.decision != "none":
+                # The earlier step is not the step whose approvals are
+                # requested (G-397): refused is as good as ignored.
+                late_decision(session, f"old_{old.token}", old.decision == "approve", old.reason)
+        insert_between(session, case, "before_decision")
         for index in case.decision_order:
             request = case.requests[index]
             if request.decision == "none":
                 continue
-            if a_decision_is_recorded(
+            if decide(
                 session,
                 case,
                 request.approval_id,
@@ -612,6 +804,7 @@ def _check(
             own = [r.approval_id for r in case.requests if r.tool_call_id == call.id]
             approval_of[call.token] = own[0] if len(own) == 1 else None
 
+    insert_between(session, case, "after_decision")
     before = len(ran)
     resumed = a_send(runtime, session, case.resumes[0], "")
     ran_now = [token for name, token in ran[before:] if name == GATED]
@@ -643,15 +836,13 @@ def _check(
         broken.append(f"6: the run record says {run and run.get('tool_calls')}, ran {ran_now}")
 
     # 3. Nothing runs twice: resume again, decide everything late, resume again.
-    # G-399: a row that ends no step (system, tool) is recorded again between
-    # the resumes, so a result is never hidden from the next one.
-    if case.inserted not in ("none", *ENDS_THE_STEP):
-        insert_row(session, case, broken)
     after = len(ran)
     a_send(runtime, session, case.resumes[1], "")
-    for approval in [a for a in approval_of.values() if a is not None] + [
-        r.approval_id for r in case.requests
-    ]:
+    for approval in (
+        [a for a in approval_of.values() if a is not None]
+        + [r.approval_id for r in case.requests]
+        + [f"old_{c.token}" for c in case.earlier if c.gated]
+    ):
         late(session, approval)
     a_send(runtime, session, case.resumes[0], "")
     if ran[after:]:
@@ -665,6 +856,13 @@ def _check(
 
     # 5 and 6. Every gated call has exactly one outcome, and the thread says what ran.
     stored = outcomes_by_token(session)
+    for call in [c for c in case.earlier if c.gated]:
+        recorded = stored.get(call.token, [])
+        if recorded != [expected.outcomes[call.token]] or counts.get(call.token):
+            broken.append(
+                f"1/5: earlier-step call {call.token} ran {counts.get(call.token, 0)}x and is "
+                f"recorded as {recorded}, the rule says once {expected.outcomes[call.token]!r}"
+            )
     for call in gated:
         texts = set(stored.get(call.token, []))
         if len(texts) != 1:
@@ -688,6 +886,14 @@ def _check(
 def without_call(case: Case, index: int) -> Case:
     gone = case.calls[index]
     calls = case.calls[:index] + case.calls[index + 1 :]
+    insert = case.insert
+    if insert is not None:
+        insert = (
+            None
+            if insert.call == index
+            else replace(insert, call=insert.call - (insert.call > index))
+        )
+    case = replace(case, insert=insert)
     if case.path == "live":
         gated_before = [i for i, c in enumerate(case.calls) if c.gated]
         order = case.decision_order
@@ -705,31 +911,88 @@ def without_request(case: Case, index: int) -> Case:
     return replace(case, requests=requests, decision_order=order)
 
 
+def safe_check(case: Case) -> list[str]:
+    """``check``, with a raise reported as a broken case rather than losing the seed."""
+    try:
+        return check(case)
+    except Exception as error:  # noqa: BLE001 - any raise is a failure to report
+        return [f"raised {type(error).__name__}: {error}"]
+
+
+def without_earlier(case: Case, index: int) -> Case:
+    return replace(case, earlier=case.earlier[:index] + case.earlier[index + 1 :])
+
+
 def shrink(case: Case) -> tuple[Case, list[str]]:
-    broken = check(case)
+    broken = safe_check(case)
     progress = True
     while progress:
         progress = False
-        candidates = [without_call(case, i) for i in range(len(case.calls))] + [
-            without_request(case, i) for i in range(len(case.requests))
-        ]
+        candidates = (
+            [without_call(case, i) for i in range(len(case.calls))]
+            + [without_request(case, i) for i in range(len(case.requests))]
+            + [without_earlier(case, i) for i in range(len(case.earlier))]
+        )
         for candidate in candidates:
             if not candidate.calls:
                 continue
-            found = check(candidate)
+            found = safe_check(candidate)
             if found:
                 case, broken, progress = candidate, found, True
                 break
     return case, broken
 
 
+#: The fast set the normal test run uses: a fixed base seed and few enough
+#: examples to stay well under a minute on every CI runner.
+DEFAULT_EXAMPLES = 50
+DEFAULT_BASE_SEED = 0x392
+
+
+def setting(name: str, default: int | None) -> int | None:
+    """A whole number >= 1 from the environment, or the default when UNSET.
+
+    Set but not a whole number >= 1 is refused, never read as the default: a
+    property run that quietly examined nothing (``0``) or the wrong count
+    would pass without testing anything.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    text = raw.strip()
+    if not text.isascii() or not text.isdigit() or int(text) < 1:
+        raise ValueError(f"{name} must be a whole number >= 1, got {raw!r}.")
+    return int(text)
+
+
 def seeds() -> list[int]:
-    replay = os.environ.get("PRISM_PROPERTY_SEED")
-    if replay:
-        return [int(replay, 0)]
-    base = int(os.environ.get("PRISM_PROPERTY_BASE_SEED", "0x392"), 0)
-    count = int(os.environ.get("PRISM_PROPERTY_EXAMPLES", "300"))
+    replay = setting("PRISM_PROPERTY_SEED", None)
+    base = setting("PRISM_PROPERTY_BASE_SEED", DEFAULT_BASE_SEED)
+    count = setting("PRISM_PROPERTY_EXAMPLES", DEFAULT_EXAMPLES)
+    if replay is not None:
+        return [replay]
+    assert base is not None and count is not None
     return [base + i for i in range(count)]
+
+
+@pytest.mark.parametrize("value", ["0", "-3", "", " ", "1.5", "ten", "0x10", "١"])
+@pytest.mark.parametrize(
+    "name", ["PRISM_PROPERTY_EXAMPLES", "PRISM_PROPERTY_SEED", "PRISM_PROPERTY_BASE_SEED"]
+)
+def test_a_property_setting_that_is_set_must_be_a_whole_number_of_at_least_one(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=f"^{name} must be a whole number >= 1"):
+        seeds()
+
+
+def test_unset_property_settings_use_the_fast_fixed_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("PRISM_PROPERTY_EXAMPLES", "PRISM_PROPERTY_SEED", "PRISM_PROPERTY_BASE_SEED"):
+        monkeypatch.delenv(name, raising=False)
+    assert seeds() == [DEFAULT_BASE_SEED + i for i in range(DEFAULT_EXAMPLES)]
+    monkeypatch.setenv("PRISM_PROPERTY_SEED", "929")
+    assert seeds() == [929]
 
 
 def test_every_generated_step_obeys_the_approval_pairing_rule() -> None:
@@ -737,7 +1000,7 @@ def test_every_generated_step_obeys_the_approval_pairing_rule() -> None:
     print(f"approval pairing properties: {len(examined)} examples from seed {examined[0]}")
     for seed in examined:
         case = generate(seed)
-        broken = check(case)
+        broken = safe_check(case)
         if broken:
             smallest, why = shrink(case)
             pytest.fail(
@@ -752,7 +1015,7 @@ def test_every_generated_step_obeys_the_approval_pairing_rule() -> None:
 
 def test_the_generator_reaches_every_branch_of_the_rule() -> None:
     # A property that never generates the hard case passes vacuously.
-    examined = [generate(seed) for seed in range(0x392, 0x392 + 300)]
+    examined = [generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + 300)]
     expectations = [oracle(case) for case in examined]
     assert any(e.repeated and any(c.gated for c in k.calls) for k, e in zip(examined, expectations))
     assert any(not e.repeated and e.runs for e in expectations)
@@ -765,14 +1028,48 @@ def test_the_generator_reaches_every_branch_of_the_rule() -> None:
         for k in examined
     )
     assert any("structured" in k.resumes for k in examined)
-    # Every G-397 insertion, on both paths, with repeated ids and without.
-    for kind in INSERTED:
-        for path in ("live", "stored"):
-            assert any(k.inserted == kind and k.path == path for k in examined), (kind, path)
-        assert any(k.inserted == kind and e.repeated for k, e in zip(examined, expectations))
-        assert any(k.inserted == kind and not e.repeated for k, e in zip(examined, expectations))
+    assert any(k.path == "live" and k.first == "structured" for k in examined)
+    # Every inserted kind, before and after the decision (as prism-harness-ts).
+    for kind in set(INSERT_KINDS):
+        for when in ("before_decision", "after_decision"):
+            assert any(
+                k.insert is not None and k.insert.kind == kind and k.insert.when == when
+                for k in examined
+            ), (kind, when)
+    assert any(any(c.gated and not c.prior for c in k.earlier) for k in examined)
+    assert any(len({r.approval_id for r in k.requests}) != len(k.requests) for k in examined)
+    # The shape that ran an approved call again (G-399): a row that does not
+    # supersede, recorded after the decision, and no model step after the
+    # resume. Reached by the FIXED set the normal test run uses.
+    fast = [
+        generate(seed) for seed in range(DEFAULT_BASE_SEED, DEFAULT_BASE_SEED + DEFAULT_EXAMPLES)
+    ]
+    assert any(
+        k.spent
+        and k.insert is not None
+        and k.insert.kind in ("system", "tool_empty")
+        and k.insert.when == "after_decision"
+        and oracle(k).runs
+        for k in fast
+    )
+    # NO BLIND SPOT (G-387 round 13): a later step together with every kind
+    # of inserted row, and forged results in the earlier and in the later
+    # segment, each generated at least once, or the run fails.
+    later = [k for k in examined if k.earlier]
+    for kind in set(INSERT_KINDS):
+        assert any(k.insert is not None and k.insert.kind == kind for k in later), kind
+    assert any(k.earlier_forged is not None and k.insert is not None for k in later)
+    assert any(
+        k.earlier_forged is not None and k.insert is not None and k.insert.kind in SUPERSEDES
+        for k in later
+    )
+    assert any(k.later_forged is not None for k in examined)
+    assert any(k.later_forged is not None and k.earlier for k in examined) or any(
+        k.later_forged is not None and k.path == "live" for k in examined
+    )
     outcomes = {text for e in expectations for text in e.outcomes.values()}
-    assert {REPEATED, NO_DECISION, DEFAULT_DENIAL} <= outcomes
+    assert {REPEATED, NO_DECISION, DEFAULT_DENIAL, REPLACED_BY_LATER_STEP} <= outcomes
+    assert any(text.startswith("forged:") for text in outcomes)
 
 
 # -- fixed regression cases (G-387 round 13) ----------------------------------------

@@ -2,12 +2,15 @@
 gated calls, once.
 
 A parked step is SUPERSEDED by any later assistant row with tool calls, or by
-an assistant text row or a user row recorded OUTSIDE the harness run in
-progress (no run id, another run id, or a run id handed to the public
-``Thread.record`` outside that run). Each of its gated calls with no result
-then gets ONE denial, "Not run: a later step replaced it.", on a tool result
-row marked ``harness_superseded``; nothing of it runs, and a later decision
-is refused. The harness's own rows inside its run never supersede.
+an assistant text row or a user row recorded OUTSIDE the runs that own it (the
+run that recorded it, and every run that recorded one of its results): no run
+id, or another run. Each of its calls with no result then gets ONE denial,
+"Not run: a later step replaced it.", on a tool result row marked
+``harness_superseded``; nothing of it runs, and a later decision is refused.
+The harness's own rows in the runs resolving it never supersede, and a host
+that hands the step's own run id to the public ``Thread.record`` gains
+nothing: its row still ends the step for every decision reader (G-397), and
+nothing of the step runs.
 """
 
 from __future__ import annotations
@@ -21,7 +24,6 @@ from test_repeated_call_ids import Recording, park, rows
 
 from prism_harness import HarnessError, Session, record_approval
 from prism_harness.plans.thread_facts import approval_decisions
-from prism_harness.thread import enter_run
 from prism_harness.thread_rows import (
     SUPERSEDED,
     SUPERSEDED_RESULT,
@@ -96,7 +98,7 @@ def marks(session: Session) -> list[Any]:
 
 
 @pytest.mark.parametrize("step", sorted(STEPS))
-@pytest.mark.parametrize("run", ["none", "another", "forged"])
+@pytest.mark.parametrize("run", ["none", "another"])
 @pytest.mark.parametrize("kind", sorted(SUPERSEDING))
 def test_a_host_recorded_row_supersedes_the_parked_step(kind: str, run: str, step: str) -> None:
     world = Recording()
@@ -104,7 +106,7 @@ def test_a_host_recorded_row_supersedes_the_parked_step(kind: str, run: str, ste
     # A person approves the first call while the step is answerable.
     record_approval(world.fresh().root(), approvals[0], True)
     host = world.fresh().root()
-    run_id = {"none": None, "another": "host-run", "forged": parked_run_id(host)}[run]
+    run_id = {"none": None, "another": "host-run"}[run]
 
     host.thread().record([dict(SUPERSEDING[kind])], run_id)
 
@@ -146,46 +148,39 @@ def test_the_harness_own_rows_in_its_run_do_not_supersede() -> None:
     assert marks(world.root()) == []
 
 
+@pytest.mark.parametrize("step", sorted(STEPS))
 @pytest.mark.parametrize("kind", ["assistant_text", "user"])
-def test_a_text_or_user_row_inside_the_harness_run_does_not_supersede(kind: str) -> None:
-    """The rule at the seam every row goes through: a text or user row the
-    harness records under the run in progress on that thread is in the run."""
+def test_a_forged_own_run_id_gains_nothing(kind: str, step: str) -> None:
+    """A host hands the parked step's own run id to the public API: the row
+    counts as the owning run's, so it is not a supersede, but it still ends
+    the step for every decision reader (G-397): every decision is refused,
+    nothing runs, and each gated call ends with exactly ONE outcome."""
     world = Recording()
-    park(world, ("a", "echo", {"n": 1}))
-    root = world.fresh().root()
-    leave = enter_run(f"{root.key()}:thread", "run-in-progress")
-    try:
-        root.thread().record([dict(SUPERSEDING[kind])], "run-in-progress")
-    finally:
-        leave()
+    _, approvals = park(world, *STEPS[step])
+    record_approval(world.fresh().root(), approvals[0], True)
+    host = world.fresh().root()
 
-    assert marks(world.root()) == []
+    host.thread().record([dict(SUPERSEDING[kind])], parked_run_id(host))
 
-
-def test_a_run_id_named_outside_its_run_is_outside() -> None:
-    """A run id handed to the public API from inside ANOTHER thread's run is
-    outside: it supersedes."""
-    world = Recording()
-    _, approvals = park(world, ("a", "echo", {"n": 1}))
-    root = world.fresh().root()
-    leave = enter_run("someone-else:thread", "run-x")
-    try:
-        root.thread().record([dict(SUPERSEDING["user"])], "run-x")
-    finally:
-        leave()
-
-    assert marks(world.root()) == [{"approval_ids": approvals}]
+    for approval in approvals:
+        with pytest.raises(HarnessError) as caught:
+            record_approval(world.fresh().root(), approval, True)
+        assert caught.value.code == "approval_not_pending"
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+    world.text("Again.")
+    world.fresh().runtime.send(world.root(), "")
+    assert not any(name == "echo" for name, _ in world.ran_with)
+    assert len(outcomes_of(world.root(), 1)) == 1
+    assert len(outcomes_of(world.root(), 2)) == 1
 
 
-def test_a_later_step_with_tool_calls_supersedes_even_inside_the_run() -> None:
+def test_a_later_step_with_tool_calls_supersedes_even_under_the_steps_own_run_id() -> None:
     world = Recording()
     _, approvals = park(world, ("a", "echo", {"n": 1}))
     root = world.fresh().root()
-    leave = enter_run(f"{root.key()}:thread", "run-in-progress")
-    try:
-        root.thread().record([dict(SUPERSEDING["assistant_step"])], "run-in-progress")
-    finally:
-        leave()
+
+    root.thread().record([dict(SUPERSEDING["assistant_step"])], parked_run_id(root))
 
     assert marks(world.root()) == [{"approval_ids": approvals}]
 
@@ -223,3 +218,98 @@ def test_a_new_message_supersedes_the_parked_step(decided: bool) -> None:
     for approval in approvals:
         with pytest.raises(HarnessError):
             record_approval(world.fresh().root(), approval, True)
+
+
+# -- the release lines' rules (G-387 round 13) ----------------------------------------
+
+
+def _stored_step(world: Recording, requests: list[tuple[str, str]], prior: str | None) -> Session:
+    """A step as another writer left it: echo calls a (n=1) and b (n=2), the
+    requests given, and (optionally) a result for one call recorded under the
+    run ``r1``."""
+    from prism_harness.thread_rows import (
+        ToolCallInput,
+        assistant_row,
+        tool_result_entry,
+        tool_result_row,
+    )
+
+    session = world.root()
+    calls = [ToolCallInput("a", "echo", {"n": 1}), ToolCallInput("b", "echo", {"n": 2})]
+    step = assistant_row(
+        "",
+        calls,
+        {},
+        [
+            {"approval_id": approval, "tool_call_id": call, "arguments_format": 1}
+            for approval, call in requests
+        ],
+    )
+    step["harness_tool_names"] = ["echo", "lookup"]
+    session.thread().record([{"type": "user", "content": "go"}, step], "r0")
+    if prior is not None:
+        call = calls[0] if prior == "a" else calls[1]
+        session.thread().record([tool_result_row([tool_result_entry(call, "prior")])], "r1")
+    return session
+
+
+@pytest.mark.parametrize(("run", "supersedes"), [("r1", False), ("r0", False), ("r2", True)])
+def test_a_text_or_user_row_supersedes_only_from_outside_the_owning_runs(
+    run: str, supersedes: bool
+) -> None:
+    """The owning runs are the run that recorded the step (r0) and every run
+    that recorded one of its results (r1)."""
+    world = Recording()
+    session = _stored_step(world, [("apr_a", "a"), ("apr_b", "b")], "a")
+
+    session.thread().record([{"type": "user", "content": "Later."}], run)
+
+    assert marks(world.root()) == ([{"approval_ids": ["apr_b"]}] if supersedes else [])
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+    assert not any(name == "echo" for name, _ in world.ran_with)
+    assert len(outcomes_of(world.root(), 2)) == 1
+
+
+def test_a_repeated_approval_id_across_distinct_calls_fails_closed() -> None:
+    world = Recording()
+    _stored_step(world, [("apr_same", "a"), ("apr_same", "b")], None)
+
+    record_approval(world.fresh().root(), "apr_same", True)
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+
+    assert world.ran_with == []
+    repeated = "Tool call was not run because another call in this step has the same id"
+    assert outcomes_of(world.root(), 1) == [repeated]
+    assert outcomes_of(world.root(), 2) == [repeated]
+    decisions = [
+        response
+        for row in rows(world.root())
+        if row.get("type") == "tool_result"
+        for response in row.get("tool_approval_responses", [])
+    ]
+    assert decisions and all(response["approved"] is False for response in decisions)
+
+
+@pytest.mark.parametrize("how", ["record_approval", "decide"])
+def test_a_second_decision_on_a_decided_approval_stays_refused(how: str) -> None:
+    """G-401: an approval answered once is answered; a second answer, either
+    way, is refused with nothing written, and only the first one counts."""
+    world = Recording()
+    _, approvals = park(world, ("a", "echo", {"n": 1}))
+    record_approval(world.fresh().root(), approvals[0], False, "no")
+    before = rows(world.fresh().root())
+
+    with pytest.raises(HarnessError) as caught:
+        if how == "record_approval":
+            record_approval(world.fresh().root(), approvals[0], True)
+        else:
+            world.fresh().runtime.decide(world.root(), approvals[0], True)
+
+    assert caught.value.code == "approval_not_pending"
+    assert rows(world.fresh().root()) == before
+    world.text("Done.")
+    world.fresh().runtime.send(world.root(), "")
+    assert world.ran_with == []
+    assert outcomes_of(world.root(), 1) == ["no"]
