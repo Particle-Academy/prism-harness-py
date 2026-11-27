@@ -223,6 +223,12 @@ class Case:
     #: ``tool_step``: a step with an ungated call reusing that call's id), or
     #: None. It must change no call's outcome.
     during: str | None = None
+    #: A host's COPY of the paused step that keeps its approval requests and
+    #: holds NEW calls under the gated calls' ids (``mixed``: after a call that
+    #: is not an object; ``new-only``), recorded at ``copy_when``, or None. An
+    #: approval belongs to the step that first asked for it (G-408).
+    copy: str | None = None
+    copy_when: str = "before_decision"
     #: After the first resume, a later row in the SAME segment holds a result
     #: under this call's id and tool with OTHER arguments (index of the call,
     #: or None). Every call already has its own result by then, so the stray
@@ -306,6 +312,11 @@ class Case:
                 **({"spent": True} if self.spent else {}),
                 **({"stray": self.stray} if self.stray is not None else {}),
                 **({"during": self.during} if self.during is not None else {}),
+                **(
+                    {"copy": self.copy, "copy_when": self.copy_when}
+                    if self.copy is not None
+                    else {}
+                ),
                 **({"string_arguments": True} if self.string_arguments else {}),
             }
         )
@@ -359,6 +370,33 @@ def later_row(case: Case) -> dict[str, Any]:
             }
         ],
         "tool_approval_requests": [],
+    }
+
+
+def a_copy(seed: int, path: str, calls: list[Call], insert: Insert | None) -> str | None:
+    """The copy of the paused step, from a stream of its own, or None. Only
+    beside no other inserted row, so the oracle stays a few lines."""
+    rng = random.Random(seed ^ 0x408408)
+    if insert is not None or not any(c.gated for c in calls) or rng.random() >= 0.2:
+        return None
+    return rng.choice(("mixed", "new-only"))
+
+
+def copy_row(session: Session, case: Case) -> dict[str, Any]:
+    """The copy: the stored paused step, its requests kept, its calls new."""
+    parked = next(
+        m.message
+        for m in reversed(session.thread().messages())
+        if m.message.get("type") == "assistant" and m.message.get("tool_calls")
+    )
+    new = [
+        {"id": c.id, "name": GATED, "arguments": {"token": f"copy{i}"}}
+        for i, c in enumerate(case.calls)
+        if c.gated
+    ]
+    return {
+        **json.loads(json.dumps(parked)),
+        "tool_calls": (["not an object", *new] if case.copy == "mixed" else new),
     }
 
 
@@ -571,6 +609,8 @@ def generate(seed: int) -> Case:
         first=rng.choice(("text", "structured")),
         insert=(insert := insertion(seed, calls)),
         stray=stray_result(seed, calls),
+        copy=a_copy(seed, path, calls, insert),
+        copy_when=random.Random(seed ^ 0x408409).choice(("before_decision", "after_decision")),
         during=(
             random.Random(seed ^ 0x404404).choice(("user", "tool_step"))
             if random.Random(seed ^ 0x404405).random() < 0.25
@@ -600,6 +640,11 @@ class Expected:
     repeated: bool = False
 
 
+def copied(case: Case) -> bool:
+    """Whether the case records a copy of the paused step (G-408)."""
+    return case.copy is not None and case.later is None
+
+
 def oracle(case: Case) -> Expected:
     ids = [c.id for c in case.calls]
     if case.path == "live":
@@ -618,9 +663,22 @@ def oracle(case: Case) -> Expected:
     # open gated call gets one replaced-step denial, and nothing runs, whatever
     # was decided before or after (G-397). A forged result is its call's only
     # outcome. Any other row changes nothing (G-399).
-    superseded = (case.insert is not None and case.insert.kind in SUPERSEDES) or (
-        case.later is not None
+    superseded = (
+        (case.insert is not None and case.insert.kind in SUPERSEDES)
+        or case.later is not None
+        or copied(case)
     )
+    if copied(case):
+        # The copy's calls have no request of their own: the requests it
+        # repeats belong to the paused step (G-408).
+        gated_ids = [c.id for c in case.calls if c.gated]
+        copy_repeated = len(set(gated_ids)) != len(gated_ids) or (
+            case.path == "stored"
+            and (len(set(asked)) != len(asked) or len(set(approvals)) != len(approvals))
+        )
+        for i, c in enumerate(case.calls):
+            if c.gated:
+                expected.outcomes[f"copy{i}"] = REPEATED if copy_repeated else NO_DECISION
     # The later step is itself superseded by a superseding row recorded after
     # it; otherwise it is the step a resume resolves, and nobody decided it.
     if case.later is not None and case.later.gated:
@@ -829,6 +887,8 @@ def insert_between(session: Session, case: Case, when: str) -> None:
             rows.insert(0, later_row(case))
         else:
             rows.append(later_row(case))
+    if case.copy is not None and case.copy_when == when and case.later is None:
+        rows.append(copy_row(session, case))
     if rows:
         session.thread().record(rows)
 
@@ -1114,6 +1174,15 @@ def _check(
             )
     stored = outcomes_by_token(session)
     current_tokens = {c.token for c in case.calls}
+    for i, c in enumerate(case.calls):
+        if copied(case) and c.gated:
+            token = f"copy{i}"
+            texts = set(stored.get(token, []))
+            if texts != {expected.outcomes[token]} or counts.get(token):
+                broken.append(
+                    f"1/5: the copy's call {token} ran {counts.get(token, 0)}x and is recorded "
+                    f"as {sorted(texts)}, the rule says once {expected.outcomes[token]!r}"
+                )
     if case.later is not None and case.later.gated:
         later = set(stored.get("later", []))
         wanted_later = set() if expected.later_credited else {expected.outcomes["later"]}
@@ -1379,6 +1448,23 @@ def _shapes() -> dict[str, Shape]:
         "outcome: no decision": lambda k, e: NO_DECISION in e.outcomes.values(),
         "outcome: repeated id": lambda k, e: REPEATED in e.outcomes.values(),
         "outcome: replaced": lambda k, e: REPLACED_BY_LATER_STEP in e.outcomes.values(),
+        "copy of the paused step, mixed, before the decision": lambda k, e: (
+            copied(k) and k.copy == "mixed" and k.copy_when == "before_decision"
+        ),
+        "copy of the paused step, mixed, after the decision": lambda k, e: (
+            copied(k) and k.copy == "mixed" and k.copy_when == "after_decision"
+        ),
+        "copy of the paused step, new calls only, before the decision": lambda k, e: (
+            copied(k) and k.copy == "new-only" and k.copy_when == "before_decision"
+        ),
+        "copy of the paused step, an approved call": lambda k, e: (
+            copied(k)
+            and (
+                any(c.gated and c.decision == "approve" for c in k.calls)
+                if k.path == "live"
+                else any(r.decision == "approve" for r in k.requests)
+            )
+        ),
         "outcome: forged result": lambda k, e: any(
             text.startswith("forged:") for text in e.outcomes.values()
         ),
