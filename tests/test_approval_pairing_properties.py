@@ -566,9 +566,7 @@ def oracle(case: Case) -> Expected:
     # was decided before or after (G-397). A forged result IN THE CALL'S OWN
     # SEGMENT is its only outcome; a result in another segment never is
     # (G-387 round 13b). Any other row changes nothing (G-399).
-    superseded = (
-        case.insert is not None and case.insert.kind in SUPERSEDES
-    ) or case.new_message
+    superseded = (case.insert is not None and case.insert.kind in SUPERSEDES) or case.new_message
     forged = (
         case.insert.call if case.insert is not None and case.insert.kind == "tool_result" else -1
     )
